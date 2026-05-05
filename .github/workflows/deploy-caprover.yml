@@ -1,0 +1,28 @@
+# Auto-deploy SimpliTest to CapRover on push to main.
+# Required GitHub repo secrets (Settings → Secrets and variables → Actions):
+#   CAPROVER_SERVER       e.g. https://captain.your-domain.com
+#   CAPROVER_APP_NAME     CapRover app name (e.g. simplitest)
+#   CAPROVER_APP_TOKEN    App-specific deploy token from CapRover dashboard
+
+name: Deploy to CapRover
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy SimpliTest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create deployment tarball
+        run: tar -czvf deploy.tar --exclude='./.git' --exclude='./node_modules' --exclude='./.next' .
+
+      - name: Deploy to CapRover
+        uses: caprover/deploy-from-github@v1.0.1
+        with:
+          server: ${{ secrets.CAPROVER_SERVER }}
+          app: ${{ secrets.CAPROVER_APP_NAME }}
+          token: ${{ secrets.CAPROVER_APP_TOKEN }}

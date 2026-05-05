@@ -157,7 +157,7 @@ export function useStore() {
     showToast('Test case duplicated');
   }, [showToast]);
 
-  const createTC = useCallback((tc: Omit<TestCase, 'id' | 'created' | 'updatedFull' | 'updated'> & { module: string }) => {
+  const createTC = useCallback((tc: Omit<TestCase, 'id' | 'created' | 'updatedFull' | 'updated' | 'sub' | 'author'> & { module: string }) => {
     const key = `${tc.module}:${tc.feature}`;
     const newCase: TestCase = {
       id: nextTestCaseId(),
