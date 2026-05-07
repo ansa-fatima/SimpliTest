@@ -3,26 +3,30 @@
 import { useState } from 'react';
 import { Module, Page } from '@/types';
 import { cn } from '@/lib/utils';
+import { Logo } from '@/components/ui/Logo';
+import { SessionUser } from '@/hooks/useStore';
 
 interface SidebarProps {
   modules: Module[];
   currentKey: string;
   page: Page;
+  user: SessionUser | null;
   onNavigate: (mod: string, feat: string) => void;
   onAddModule: (name: string) => void;
   onAddFeature: (modName: string, featName: string) => void;
   onShowDashboard: () => void;
   onShowTestRuns: () => void;
   onShowTestCases: () => void;
+  onLogout: () => void;
 }
 
 const TESTCASE_PAGES: Page[] = ['list', 'view', 'edit', 'create'];
 const TESTRUN_PAGES: Page[] = ['cycles', 'cycle'];
 
 export function Sidebar({
-  modules, currentKey, page,
+  modules, currentKey, page, user,
   onNavigate, onAddModule, onAddFeature,
-  onShowDashboard, onShowTestRuns, onShowTestCases,
+  onShowDashboard, onShowTestRuns, onShowTestCases, onLogout,
 }: SidebarProps) {
   const [openModules, setOpenModules] = useState<Record<string, boolean>>({
     Authentication: true,
@@ -65,9 +69,7 @@ export function Sidebar({
     <aside className="w-[220px] min-w-[220px] bg-white border-r border-slate-200 flex flex-col">
       {/* Logo */}
       <div className="px-4 py-3.5 border-b border-slate-200 flex items-center gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
-          ST
-        </div>
+        <Logo size={28} />
         <span className="text-[15px] font-semibold text-slate-900">SimpliTest</span>
       </div>
 
@@ -219,6 +221,29 @@ export function Sidebar({
 
       {/* Filler when folders aren't shown */}
       {!onTestCases && <div className="flex-1" />}
+
+      {/* Account block — always visible at the very bottom */}
+      {user && (
+        <div className="px-3 py-3 border-t border-slate-200 flex items-center gap-2">
+          <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-bold flex items-center justify-center flex-shrink-0">
+            {(user.name || user.username).charAt(0).toUpperCase()}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-semibold text-slate-800 truncate">{user.name || user.username}</p>
+            <p className="text-[10px] text-slate-400 truncate">{user.email}</p>
+          </div>
+          <button
+            onClick={onLogout}
+            title="Sign out"
+            className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 cursor-pointer transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
+              <path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" />
+              <path d="M11 11l3-3-3-3M14 8H6" />
+            </svg>
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

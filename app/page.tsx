@@ -17,6 +17,7 @@ export default function Home() {
     state,
     currentCases,
     login,
+    logout,
     navFeature,
     viewTC,
     showEdit,
@@ -38,8 +39,17 @@ export default function Home() {
     submitResult,
   } = useStore();
 
-  const { page, currentKey, currentTC, toast, modules,
+  const { page, currentKey, currentTC, toast, modules, user, authChecked,
     cycles, currentCycle, runs, summary, cyclesLoading, runsLoading } = state;
+
+  // Show a tiny loading state while we check the session on mount.
+  if (!authChecked) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50 text-sm text-slate-400">
+        Loading…
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
@@ -49,12 +59,14 @@ export default function Home() {
           modules={modules}
           currentKey={currentKey}
           page={page}
+          user={user}
           onNavigate={navFeature}
           onAddModule={addModule}
           onAddFeature={addFeature}
           onShowDashboard={showDashboard}
           onShowTestRuns={showCycles}
           onShowTestCases={showTestCases}
+          onLogout={logout}
         />
       )}
 
@@ -96,6 +108,7 @@ export default function Home() {
         {page === 'view' && currentTC && (
           <TestCaseView
             tc={currentTC}
+            cases={currentCases}
             currentKey={currentKey}
             onBack={() => navFeature(currentKey.split(':')[0], currentKey.split(':')[1])}
             onEdit={showEdit}
@@ -105,6 +118,7 @@ export default function Home() {
               }
             }}
             onDuplicate={duplicateTC}
+            onView={viewTC}
           />
         )}
 

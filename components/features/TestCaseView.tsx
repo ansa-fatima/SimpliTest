@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { TestCase } from '@/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -7,15 +8,39 @@ import { priorityBadge, severityBadge, typeBadge } from '@/lib/utils';
 
 interface TestCaseViewProps {
   tc: TestCase;
+  cases: TestCase[];
   currentKey: string;
   onBack: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
+  onView: (id: string) => void;
 }
 
-export function TestCaseView({ tc, currentKey, onBack, onEdit, onDelete, onDuplicate }: TestCaseViewProps) {
+export function TestCaseView({ tc, cases, currentKey, onBack, onEdit, onDelete, onDuplicate, onView }: TestCaseViewProps) {
   const [mod, feat] = currentKey.split(':');
+
+  const currentIndex = cases.findIndex(c => c.id === tc.id);
+  const total = cases.length;
+  const hasPrev = currentIndex > 0;
+  const hasNext = currentIndex >= 0 && currentIndex < total - 1;
+
+  const goPrev = () => { if (hasPrev) onView(cases[currentIndex - 1].id); };
+  const goNext = () => { if (hasNext) onView(cases[currentIndex + 1].id); };
+
+  // Keyboard shortcuts: Left/Right arrows navigate between cases.
+  // Skipped when typing in an input/textarea/contenteditable element.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (e.key === 'ArrowLeft') goPrev();
+      if (e.key === 'ArrowRight') goNext();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [currentIndex, total]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -27,7 +52,33 @@ export function TestCaseView({ tc, currentKey, onBack, onEdit, onDelete, onDupli
         >
           ← Back
         </button>
-        <div className="flex-1 text-xs text-slate-400">
+
+        {/* Prev / Next navigation */}
+        <div className="flex items-center gap-1 ml-2">
+          <button
+            onClick={goPrev}
+            disabled={!hasPrev}
+            title="Previous test case (←)"
+            className="flex items-center gap-1 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent px-2 py-1.5 rounded-lg transition-colors cursor-pointer"
+          >
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}><path d="M10 3L5 8l5 5"/></svg>
+            Prev
+          </button>
+          <span className="text-[11px] text-slate-400 font-mono px-1.5 whitespace-nowrap">
+            {currentIndex >= 0 ? `${currentIndex + 1} of ${total}` : `— of ${total}`}
+          </span>
+          <button
+            onClick={goNext}
+            disabled={!hasNext}
+            title="Next test case (→)"
+            className="flex items-center gap-1 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent px-2 py-1.5 rounded-lg transition-colors cursor-pointer"
+          >
+            Next
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}><path d="M6 3l5 5-5 5"/></svg>
+          </button>
+        </div>
+
+        <div className="flex-1 text-xs text-slate-400 ml-2 truncate">
           {mod} / {feat} / <span className="font-mono font-semibold text-slate-800">{tc.id}</span>
         </div>
         <div className="flex items-center gap-1.5">

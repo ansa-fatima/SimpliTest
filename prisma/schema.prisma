@@ -14,6 +14,37 @@ datasource db {
 }
 
 // ────────────────────────────────────────────────────────────
+// Auth — Users & Sessions
+// ────────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  email        String    @unique
+  passwordHash String?
+  name         String    @default("")
+  avatarUrl    String?
+  googleId     String?   @unique
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  sessions     Session[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ────────────────────────────────────────────────────────────
 // 1.2  Modules & Features
 // ────────────────────────────────────────────────────────────
 

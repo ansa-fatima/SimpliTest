@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   TestCase, Page, Module, MODULES,
   TestCycle, ApiTestRun, CycleSummary, CycleScopeType, RunResult,
@@ -9,6 +9,13 @@ import { SEED_DATA } from '@/data/testCases';
 import { nextTestCaseId, todayStr } from '@/lib/utils';
 import { api } from '@/lib/client';
 
+export interface SessionUser {
+  id: string;
+  username: string;
+  email: string;
+  name: string;
+}
+
 export interface AppState {
   page: Page;
   data: Record<string, TestCase[]>;
@@ -16,6 +23,10 @@ export interface AppState {
   currentKey: string;
   currentTC: TestCase | null;
   toast: { msg: string; type?: 'success' | 'error' } | null;
+
+  // ─── Auth ────────────────────────────────────────────────────
+  user: SessionUser | null;
+  authChecked: boolean;
 
   // ─── Cycles (API-backed) ────────────────────────────────────
   cycles: TestCycle[];
@@ -34,6 +45,8 @@ export function useStore() {
     currentKey: 'Authentication:Password Reset',
     currentTC: null,
     toast: null,
+    user: null,
+    authChecked: false,
     cycles: [],
     currentCycle: null,
     runs: [],
@@ -41,6 +54,23 @@ export function useStore() {
     cyclesLoading: false,
     runsLoading: false,
   });
+
+  // Check session on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const { user } = await api.get<{ user: SessionUser | null }>('/api/auth/me');
+        setState(s => ({
+          ...s,
+          user,
+          authChecked: true,
+          page: user ? 'dashboard' : 'login',
+        }));
+      } catch {
+        setState(s => ({ ...s, authChecked: true, page: 'login' }));
+      }
+    })();
+  }, []);
 
   const update = useCallback((patch: Partial<AppState>) => {
     setState(s => ({ ...s, ...patch }));
@@ -51,9 +81,16 @@ export function useStore() {
     setTimeout(() => setState(s => ({ ...s, toast: null })), 2800);
   }, []);
 
-  const login = useCallback(() => {
-    update({ page: 'dashboard', currentKey: 'Authentication:Password Reset' });
-  }, [update]);
+  const login = useCallback((user: SessionUser) => {
+    setState(s => ({ ...s, user, page: 'dashboard', currentKey: 'Authentication:Password Reset' }));
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      await api.post('/api/auth/logout');
+    } catch { /* ignore */ }
+    setState(s => ({ ...s, user: null, page: 'login' }));
+  }, []);
 
   const showDashboard = useCallback(() => update({ page: 'dashboard' }), [update]);
 
@@ -280,7 +317,7 @@ export function useStore() {
   return {
     state,
     currentCases,
-    login, navFeature,
+    login, logout, navFeature,
     viewTC, showEdit, showCreate, cancelCreate,
     saveEdit, deleteTC, duplicateTC, createTC,
     addModule, addFeature, showToast,
