@@ -15,6 +15,7 @@ interface CyclesListProps {
   modules: Module[];
   onOpen: (id: string) => void;
   onArchive: (id: string) => void;
+  onDelete: (id: string) => void;
   onCreate: (input: any) => Promise<void>;
 }
 
@@ -24,7 +25,7 @@ const STATUS_BADGE: Record<CycleStatus, string> = {
   Archived:  'bg-slate-100 text-slate-500 border border-slate-200',
 };
 
-export function CyclesList({ cycles, loading, modules, onOpen, onArchive, onCreate }: CyclesListProps) {
+export function CyclesList({ cycles, loading, modules, onOpen, onArchive, onDelete, onCreate }: CyclesListProps) {
   const [filter, setFilter] = useState<CycleStatus | 'All'>('All');
   const [showCreate, setShowCreate] = useState(false);
   const [reportFor, setReportFor] = useState<string | null>(null);
@@ -153,6 +154,14 @@ export function CyclesList({ cycles, loading, modules, onOpen, onArchive, onCrea
                             Archive
                           </button>
                         )}
+                        <button
+                          onClick={() => {
+                            if (confirm(`Permanently delete "${c.name}" and all its runs?\n\nThis cannot be undone.`)) onDelete(c.id);
+                          }}
+                          className="px-2 py-0.5 border border-slate-200 rounded text-[11px] text-slate-500 bg-white hover:bg-red-50 hover:text-red-700 hover:border-red-200 cursor-pointer"
+                        >
+                          Delete
+                        </button>
                       </div>
                     </td>
                   </tr>

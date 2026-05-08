@@ -20,11 +20,14 @@ export async function POST(req: Request) {
     });
 
     // Constant-ish timing — always do a hash compare even if user doesn't exist
-    const valid = user
-      ? await verifyPassword(password, user.passwordHash)
-      : await verifyPassword(password, '$2a$10$invalid.invalid.invalid.invalid.invalid.invalid.invalid.in');
+    // or doesn't have a password (Google-only accounts).
+    const dummyHash = '$2a$10$invalid.invalid.invalid.invalid.invalid.invalid.invalid.in';
+    const hashToCheck = user?.passwordHash ?? dummyHash;
+    const valid = await verifyPassword(password, hashToCheck);
 
-    if (!user || !valid) return bad('Invalid username/email or password', 401);
+    if (!user || !user.passwordHash || !valid) {
+      return bad('Invalid username/email or password', 401);
+    }
 
     const { token, expiresAt } = await createSession(user.id);
     const res = ok({

@@ -29,6 +29,8 @@ export default function Home() {
     createTC,
     addModule,
     addFeature,
+    deleteModule,
+    deleteFeature,
     showDashboard,
     showTestCases,
     showCycles,
@@ -36,6 +38,7 @@ export default function Home() {
     backToCycles,
     createCycle,
     archiveCycle,
+    deleteCycle,
     submitResult,
   } = useStore();
 
@@ -63,6 +66,8 @@ export default function Home() {
           onNavigate={navFeature}
           onAddModule={addModule}
           onAddFeature={addFeature}
+          onDeleteModule={deleteModule}
+          onDeleteFeature={deleteFeature}
           onShowDashboard={showDashboard}
           onShowTestRuns={showCycles}
           onShowTestCases={showTestCases}
@@ -139,6 +144,7 @@ export default function Home() {
             modules={modules}
             onOpen={openCycle}
             onArchive={archiveCycle}
+            onDelete={deleteCycle}
             onCreate={createCycle}
           />
         )}

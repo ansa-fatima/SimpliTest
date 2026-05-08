@@ -14,6 +14,8 @@ interface SidebarProps {
   onNavigate: (mod: string, feat: string) => void;
   onAddModule: (name: string) => void;
   onAddFeature: (modName: string, featName: string) => void;
+  onDeleteModule: (modName: string) => void;
+  onDeleteFeature: (modName: string, featName: string) => void;
   onShowDashboard: () => void;
   onShowTestRuns: () => void;
   onShowTestCases: () => void;
@@ -25,7 +27,7 @@ const TESTRUN_PAGES: Page[] = ['cycles', 'cycle'];
 
 export function Sidebar({
   modules, currentKey, page, user,
-  onNavigate, onAddModule, onAddFeature,
+  onNavigate, onAddModule, onAddFeature, onDeleteModule, onDeleteFeature,
   onShowDashboard, onShowTestRuns, onShowTestCases, onLogout,
 }: SidebarProps) {
   const [openModules, setOpenModules] = useState<Record<string, boolean>>({
@@ -140,13 +142,28 @@ export function Sidebar({
                       {mod.features.length}
                     </span>
                   </button>
-                  <button
-                    title="Add folder"
-                    onClick={() => startAddFeature(mod.name)}
-                    className="opacity-0 group-hover/mod:opacity-100 mr-1.5 px-1.5 text-[14px] leading-none text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded cursor-pointer transition-all"
-                  >
-                    +
-                  </button>
+                  <div className="flex items-center opacity-0 group-hover/mod:opacity-100 transition-opacity mr-1.5">
+                    <button
+                      title="Add sub-folder"
+                      onClick={() => startAddFeature(mod.name)}
+                      className="px-1.5 text-[14px] leading-none text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded cursor-pointer transition-colors"
+                    >
+                      +
+                    </button>
+                    <button
+                      title="Delete folder"
+                      onClick={() => {
+                        const subCount = mod.features.length;
+                        const msg = subCount > 0
+                          ? `Delete "${mod.name}" and its ${subCount} sub-folder${subCount === 1 ? '' : 's'}?`
+                          : `Delete "${mod.name}"?`;
+                        if (confirm(msg)) onDeleteModule(mod.name);
+                      }}
+                      className="px-1.5 py-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded cursor-pointer transition-colors"
+                    >
+                      <TrashIcon />
+                    </button>
+                  </div>
                 </div>
 
                 {openModules[mod.name] && (
@@ -154,19 +171,33 @@ export function Sidebar({
                     {mod.features.map(feat => {
                       const active = currentMod === mod.name && currentFeat === feat;
                       return (
-                        <button
+                        <div
                           key={feat}
-                          onClick={() => onNavigate(mod.name, feat)}
                           className={cn(
-                            'w-full flex items-center gap-2 px-3 py-1 pl-7 text-xs transition-colors',
-                            active
-                              ? 'bg-indigo-50 text-blue-600 font-semibold'
-                              : 'text-slate-500 hover:bg-slate-50'
+                            'group/feat relative flex items-center w-full transition-colors',
+                            active ? 'bg-indigo-50' : 'hover:bg-slate-50'
                           )}
                         >
-                          <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', active ? 'bg-blue-600' : 'bg-slate-300')} />
-                          <span className="flex-1 text-left truncate">{feat}</span>
-                        </button>
+                          <button
+                            onClick={() => onNavigate(mod.name, feat)}
+                            className={cn(
+                              'flex-1 flex items-center gap-2 px-3 py-1 pl-7 text-xs',
+                              active ? 'text-blue-600 font-semibold' : 'text-slate-500'
+                            )}
+                          >
+                            <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', active ? 'bg-blue-600' : 'bg-slate-300')} />
+                            <span className="flex-1 text-left truncate">{feat}</span>
+                          </button>
+                          <button
+                            title="Delete folder"
+                            onClick={() => {
+                              if (confirm(`Delete sub-folder "${feat}"?`)) onDeleteFeature(mod.name, feat);
+                            }}
+                            className="opacity-0 group-hover/feat:opacity-100 mr-1.5 px-1.5 py-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded cursor-pointer transition-colors"
+                          >
+                            <TrashIcon />
+                          </button>
+                        </div>
                       );
                     })}
 
@@ -265,10 +296,19 @@ function NavItem({ active, onClick, icon, label }: { active: boolean; onClick: (
   );
 }
 
+
 function FolderIcon() {
   return (
     <svg className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
       <path d="M2 4a1 1 0 0 1 1-1h3l1.5 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4z" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
+      <path d="M2 4h12M5 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1M10 8v5M6 8v5M3 4l1 9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-9" />
     </svg>
   );
 }

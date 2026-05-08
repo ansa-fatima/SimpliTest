@@ -47,14 +47,12 @@ export async function PATCH(req: Request, { params }: Ctx) {
   }
 }
 
-// DELETE /api/cycles/:id  — archive only (no hard delete)
+// DELETE /api/cycles/:id  — permanently delete cycle and all its runs (cascade)
+// Use PATCH status='Archived' for soft-delete instead.
 export async function DELETE(_req: Request, { params }: Ctx) {
   try {
-    const cycle = await prisma.testCycle.update({
-      where: { id: params.id },
-      data: { status: 'Archived' },
-    });
-    return ok({ archived: true, cycle });
+    await prisma.testCycle.delete({ where: { id: params.id } });
+    return ok({ deleted: true });
   } catch (e) {
     return prismaError(e) ?? serverError(e);
   }

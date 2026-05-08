@@ -16,10 +16,18 @@ export interface SessionUser {
   name: string;
 }
 
+interface ApiModuleData {
+  id: string;
+  name: string;
+  features: { id: string; name: string }[];
+}
+
 export interface AppState {
   page: Page;
   data: Record<string, TestCase[]>;
   modules: Module[];
+  moduleIds: Record<string, string>;          // moduleName → id
+  featureIds: Record<string, string>;         // "modName:featName" → id
   currentKey: string;
   currentTC: TestCase | null;
   toast: { msg: string; type?: 'success' | 'error' } | null;
@@ -42,6 +50,8 @@ export function useStore() {
     page: 'login',
     data: JSON.parse(JSON.stringify(SEED_DATA)),
     modules: JSON.parse(JSON.stringify(MODULES)),
+    moduleIds: {},
+    featureIds: {},
     currentKey: 'Authentication:Password Reset',
     currentTC: null,
     toast: null,
@@ -55,6 +65,29 @@ export function useStore() {
     runsLoading: false,
   });
 
+  // Fetch the live folder tree from the DB.
+  const reloadModules = useCallback(async () => {
+    try {
+      const apiModules = await api.get<ApiModuleData[]>('/api/modules');
+      const modules: Module[] = apiModules.map(m => ({
+        name: m.name,
+        features: m.features.map(f => f.name),
+      }));
+      const moduleIds: Record<string, string> = Object.fromEntries(
+        apiModules.map(m => [m.name, m.id]),
+      );
+      const featureIds: Record<string, string> = {};
+      for (const m of apiModules) {
+        for (const f of m.features) {
+          featureIds[`${m.name}:${f.name}`] = f.id;
+        }
+      }
+      setState(s => ({ ...s, modules, moduleIds, featureIds }));
+    } catch (e) {
+      console.error('[reloadModules]', e);
+    }
+  }, []);
+
   // Check session on mount
   useEffect(() => {
     (async () => {
@@ -66,11 +99,12 @@ export function useStore() {
           authChecked: true,
           page: user ? 'dashboard' : 'login',
         }));
+        if (user) await reloadModules();
       } catch {
         setState(s => ({ ...s, authChecked: true, page: 'login' }));
       }
     })();
-  }, []);
+  }, [reloadModules]);
 
   const update = useCallback((patch: Partial<AppState>) => {
     setState(s => ({ ...s, ...patch }));
@@ -83,7 +117,8 @@ export function useStore() {
 
   const login = useCallback((user: SessionUser) => {
     setState(s => ({ ...s, user, page: 'dashboard', currentKey: 'Authentication:Password Reset' }));
-  }, []);
+    reloadModules();
+  }, [reloadModules]);
 
   const logout = useCallback(async () => {
     try {
@@ -113,44 +148,100 @@ export function useStore() {
   const showCreate = useCallback(() => update({ page: 'create' }), [update]);
   const cancelCreate = useCallback(() => update({ page: 'list' }), [update]);
 
-  const addModule = useCallback((name: string) => {
+  const addModule = useCallback(async (name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    setState(s => {
-      if (s.modules.some(m => m.name.toLowerCase() === trimmed.toLowerCase())) {
-        return { ...s, toast: { msg: 'Module already exists', type: 'error' } };
-      }
-      return {
-        ...s,
-        modules: [...s.modules, { name: trimmed, features: [] }],
-        toast: { msg: `Module "${trimmed}" added ✓`, type: 'success' },
-      };
-    });
-    setTimeout(() => setState(s => ({ ...s, toast: null })), 2800);
-  }, []);
+    try {
+      await api.post('/api/modules', { name: trimmed });
+      await reloadModules();
+      showToast(`Folder "${trimmed}" added ✓`, 'success');
+    } catch (e) {
+      showToast((e as Error).message, 'error');
+    }
+  }, [reloadModules, showToast]);
 
-  const addFeature = useCallback((modName: string, featName: string) => {
+  const addFeature = useCallback(async (modName: string, featName: string) => {
     const trimmed = featName.trim();
     if (!trimmed) return;
-    setState(s => {
-      const mod = s.modules.find(m => m.name === modName);
-      if (!mod) return s;
-      if (mod.features.some(f => f.toLowerCase() === trimmed.toLowerCase())) {
-        return { ...s, toast: { msg: 'Feature already exists', type: 'error' } };
+    setState(currentState => {
+      const moduleId = currentState.moduleIds[modName];
+      if (!moduleId) {
+        showToast(`Folder "${modName}" not found`, 'error');
+        return currentState;
       }
-      const modules = s.modules.map(m =>
-        m.name === modName ? { ...m, features: [...m.features, trimmed] } : m
-      );
-      return {
-        ...s,
-        modules,
-        currentKey: `${modName}:${trimmed}`,
-        page: 'list',
-        toast: { msg: `Feature "${trimmed}" added ✓`, type: 'success' },
-      };
+      // fire-and-forget; we'll reload below
+      api.post('/api/features', { name: trimmed, moduleId })
+        .then(async () => {
+          await reloadModules();
+          setState(s => ({ ...s, currentKey: `${modName}:${trimmed}`, page: 'list' }));
+          showToast(`Folder "${trimmed}" added ✓`, 'success');
+        })
+        .catch(e => showToast((e as Error).message, 'error'));
+      return currentState;
     });
-    setTimeout(() => setState(s => ({ ...s, toast: null })), 2800);
-  }, []);
+  }, [reloadModules, showToast]);
+
+  const deleteModule = useCallback(async (modName: string) => {
+    setState(currentState => {
+      const id = currentState.moduleIds[modName];
+      if (!id) {
+        showToast(`Folder "${modName}" not found`, 'error');
+        return currentState;
+      }
+      api.del(`/api/modules/${id}`)
+        .then(async () => {
+          await reloadModules();
+          // If currentKey was under this module, fall back to first remaining
+          setState(s => {
+            const data: Record<string, TestCase[]> = {};
+            for (const k of Object.keys(s.data)) {
+              if (!k.startsWith(`${modName}:`)) data[k] = s.data[k];
+            }
+            let currentKey = s.currentKey;
+            if (currentKey.startsWith(`${modName}:`)) {
+              const first = s.modules[0];
+              currentKey = first && first.features[0] ? `${first.name}:${first.features[0]}` : '';
+            }
+            return { ...s, data, currentKey };
+          });
+          showToast(`Folder "${modName}" deleted`, 'success');
+        })
+        .catch(e => showToast((e as Error).message, 'error'));
+      return currentState;
+    });
+  }, [reloadModules, showToast]);
+
+  const deleteFeature = useCallback(async (modName: string, featName: string) => {
+    setState(currentState => {
+      const id = currentState.featureIds[`${modName}:${featName}`];
+      if (!id) {
+        showToast(`Folder "${featName}" not found`, 'error');
+        return currentState;
+      }
+      api.del(`/api/features/${id}`)
+        .then(async () => {
+          await reloadModules();
+          setState(s => {
+            const key = `${modName}:${featName}`;
+            const { [key]: _removed, ...data } = s.data;
+            let currentKey = s.currentKey;
+            if (currentKey === key) {
+              const mod = s.modules.find(m => m.name === modName);
+              if (mod && mod.features.length > 0) {
+                currentKey = `${modName}:${mod.features[0]}`;
+              } else {
+                const first = s.modules.find(m => m.features.length > 0);
+                currentKey = first ? `${first.name}:${first.features[0]}` : '';
+              }
+            }
+            return { ...s, data, currentKey };
+          });
+          showToast(`Folder "${featName}" deleted`, 'success');
+        })
+        .catch(e => showToast((e as Error).message, 'error'));
+      return currentState;
+    });
+  }, [reloadModules, showToast]);
 
   const saveEdit = useCallback((patch: Partial<TestCase>) => {
     setState(s => {
@@ -285,11 +376,21 @@ export function useStore() {
 
   const archiveCycle = useCallback(async (cycleId: string) => {
     try {
-      await api.del<{ archived: boolean }>(`/api/cycles/${cycleId}`);
-      showToast('Cycle archived');
+      await api.patch<TestCycle>(`/api/cycles/${cycleId}`, { status: 'Archived' });
+      showToast('Test run archived');
       await loadCycles();
     } catch (e) {
       showToast(`Failed to archive: ${(e as Error).message}`, 'error');
+    }
+  }, [loadCycles, showToast]);
+
+  const deleteCycle = useCallback(async (cycleId: string) => {
+    try {
+      await api.del<{ deleted: boolean }>(`/api/cycles/${cycleId}`);
+      showToast('Test run deleted');
+      await loadCycles();
+    } catch (e) {
+      showToast(`Failed to delete: ${(e as Error).message}`, 'error');
     }
   }, [loadCycles, showToast]);
 
@@ -320,10 +421,10 @@ export function useStore() {
     login, logout, navFeature,
     viewTC, showEdit, showCreate, cancelCreate,
     saveEdit, deleteTC, duplicateTC, createTC,
-    addModule, addFeature, showToast,
+    addModule, addFeature, deleteModule, deleteFeature, showToast,
     showDashboard, showTestCases,
     showCycles, openCycle, backToCycles,
-    createCycle, archiveCycle, submitResult,
+    createCycle, archiveCycle, deleteCycle, submitResult,
     loadCycles,
   };
 }
