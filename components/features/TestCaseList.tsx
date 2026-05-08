@@ -46,7 +46,27 @@ export function TestCaseList({ currentKey, cases, onView, onEdit, onDelete, onSh
     return () => document.removeEventListener('mousedown', handler);
   }, [openFilter]);
 
-  const [mod, feat] = currentKey.split(':');
+  const [mod, feat] = currentKey ? currentKey.split(':') : ['', ''];
+
+  // No folder selected — empty workspace
+  if (!currentKey || !mod || !feat) {
+    return (
+      <div className="flex flex-col flex-1 overflow-hidden bg-slate-50">
+        <div className="px-6 pt-4 pb-3 bg-white border-b border-slate-200">
+          <h1 className="text-xl font-bold text-slate-900">Test Cases</h1>
+          <p className="text-xs text-slate-400 mt-0.5">Select a folder from the sidebar to view test cases.</p>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400 p-6">
+          <span className="text-4xl opacity-40">📁</span>
+          <p className="text-sm font-semibold text-slate-500">No folder selected</p>
+          <p className="text-xs text-center max-w-[300px]">
+            Create your first folder using the <strong>+ New folder</strong> button in the sidebar,
+            or hover any existing folder to add a sub-folder.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const filtered = cases.filter(c => {
     if (priorityFilter.size > 0 && !priorityFilter.has(c.priority)) return false;

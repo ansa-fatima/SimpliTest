@@ -49,10 +49,10 @@ export function useStore() {
   const [state, setState] = useState<AppState>({
     page: 'login',
     data: JSON.parse(JSON.stringify(SEED_DATA)),
-    modules: JSON.parse(JSON.stringify(MODULES)),
+    modules: [],
     moduleIds: {},
     featureIds: {},
-    currentKey: 'Authentication:Password Reset',
+    currentKey: '',
     currentTC: null,
     toast: null,
     user: null,
@@ -82,7 +82,17 @@ export function useStore() {
           featureIds[`${m.name}:${f.name}`] = f.id;
         }
       }
-      setState(s => ({ ...s, modules, moduleIds, featureIds }));
+      setState(s => {
+        // Auto-pick a sensible currentKey if the existing one is empty or
+        // points to a folder that no longer exists.
+        let currentKey = s.currentKey;
+        const exists = currentKey && featureIds[currentKey];
+        if (!exists) {
+          const first = apiModules.find(m => m.features.length > 0);
+          currentKey = first ? `${first.name}:${first.features[0].name}` : '';
+        }
+        return { ...s, modules, moduleIds, featureIds, currentKey };
+      });
     } catch (e) {
       console.error('[reloadModules]', e);
     }
@@ -116,7 +126,7 @@ export function useStore() {
   }, []);
 
   const login = useCallback((user: SessionUser) => {
-    setState(s => ({ ...s, user, page: 'dashboard', currentKey: 'Authentication:Password Reset' }));
+    setState(s => ({ ...s, user, page: 'dashboard' }));
     reloadModules();
   }, [reloadModules]);
 
