@@ -1,0 +1,14 @@
+node_modules
+.next
+out
+dist
+build
+.git
+*.lock
+package-lock.json
+pnpm-lock.yaml
+public
+prisma/migrations
+prisma/*.prisma
+.env*
+tsconfig.tsbuildinfo

@@ -10,6 +10,7 @@ interface SessionUser {
   username: string;
   email: string;
   name: string;
+  role: 'SuperAdmin' | 'QAManager' | 'Tester' | 'Developer' | 'Viewer';
 }
 
 interface LoginPageProps {
@@ -19,10 +20,10 @@ interface LoginPageProps {
 type Mode = 'signin' | 'register';
 
 const ERR_MESSAGES: Record<string, string> = {
-  state_mismatch:    'Google sign-in failed: security check failed. Please try again.',
-  exchange_failed:   'Google sign-in failed: could not verify your account.',
-  missing_params:    'Google sign-in was cancelled.',
-  access_denied:     'Google sign-in was cancelled.',
+  state_mismatch: 'Google sign-in failed: security check failed. Please try again.',
+  exchange_failed: 'Google sign-in failed: could not verify your account.',
+  missing_params: 'Google sign-in was cancelled.',
+  access_denied: 'Google sign-in was cancelled.',
 };
 
 export function LoginPage({ onLogin }: LoginPageProps) {
@@ -52,17 +53,20 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
   // Fetch enabled providers (Google may or may not be configured)
   useEffect(() => {
-    api.get<{ google: boolean }>('/api/auth/config')
+    api
+      .get<{ google: boolean }>('/api/auth/config')
       .then(setProviders)
-      .catch(() => { /* fall back to email-only */ });
+      .catch(() => {
+        /* fall back to email-only */
+      });
   }, []);
 
   const isRegister = mode === 'register';
-  const canSubmit = !submitting && (
-    isRegister
+  const canSubmit =
+    !submitting &&
+    (isRegister
       ? username.trim().length >= 3 && email.trim() && password.length >= 8
-      : identifier.trim() && password
-  );
+      : identifier.trim() && password);
 
   const switchMode = (m: Mode) => {
     setMode(m);
@@ -100,8 +104,8 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   };
 
   return (
-    <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-indigo-50 via-slate-50 to-sky-50 px-4">
-      <div className="w-full max-w-[400px] bg-white rounded-2xl shadow-xl border border-slate-200 p-8 flex flex-col gap-5">
+    <div className="flex flex-1 items-center justify-center bg-gradient-to-br from-indigo-50 via-slate-50 to-sky-50 px-4">
+      <div className="flex w-full max-w-[400px] flex-col gap-5 rounded-2xl border border-slate-200 bg-white p-8 shadow-xl">
         {/* Logo */}
         <div className="flex flex-col items-center gap-2">
           <Logo size={44} />
@@ -113,7 +117,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           <h1 className="text-lg font-bold text-slate-900">
             {isRegister ? 'Create your account' : 'Welcome back'}
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="mt-0.5 text-xs text-slate-400">
             {isRegister
               ? 'Sign up to start managing your test cases'
               : 'Sign in with email or username'}
@@ -126,14 +130,14 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             <button
               onClick={handleGoogle}
               type="button"
-              className="w-full py-2.5 border border-slate-200 hover:border-slate-300 hover:bg-slate-50 rounded-lg text-sm font-semibold text-slate-700 flex items-center justify-center gap-2.5 transition-colors cursor-pointer"
+              className="flex w-full cursor-pointer items-center justify-center gap-2.5 rounded-lg border border-slate-200 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50"
             >
               <GoogleIcon />
               Continue with Google
             </button>
             <div className="flex items-center gap-2">
               <hr className="flex-1 border-slate-200" />
-              <span className="text-[11px] text-slate-400 uppercase tracking-wider">or</span>
+              <span className="text-[11px] uppercase tracking-wider text-slate-400">or</span>
               <hr className="flex-1 border-slate-200" />
             </div>
           </>
@@ -202,17 +206,15 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                 onClick={() => setShowPassword(s => !s)}
                 tabIndex={-1}
                 title={showPassword ? 'Hide password' : 'Show password'}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded cursor-pointer transition-colors"
+                className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer rounded p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
               >
-                {showPassword
-                  ? <EyeOff className="w-4 h-4" />
-                  : <Eye className="w-4 h-4" />}
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
           </Field>
 
           {error && (
-            <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
               {error}
             </div>
           )}
@@ -220,11 +222,15 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           <button
             onClick={handleSubmit}
             disabled={!canSubmit}
-            className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition-colors cursor-pointer"
+            className="w-full cursor-pointer rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             {submitting
-              ? (isRegister ? 'Creating account…' : 'Signing in…')
-              : (isRegister ? 'Create account' : 'Sign in')}
+              ? isRegister
+                ? 'Creating account…'
+                : 'Signing in…'
+              : isRegister
+                ? 'Create account'
+                : 'Sign in'}
           </button>
         </div>
 
@@ -233,14 +239,20 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           {isRegister ? (
             <>
               Already have an account?{' '}
-              <button onClick={() => switchMode('signin')} className="text-blue-600 font-semibold hover:underline">
+              <button
+                onClick={() => switchMode('signin')}
+                className="font-semibold text-blue-600 hover:underline"
+              >
                 Sign in
               </button>
             </>
           ) : (
             <>
               No account yet?{' '}
-              <button onClick={() => switchMode('register')} className="text-blue-600 font-semibold hover:underline">
+              <button
+                onClick={() => switchMode('register')}
+                className="font-semibold text-blue-600 hover:underline"
+              >
                 Register
               </button>
             </>
@@ -254,11 +266,22 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 const inputCls =
   'w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100';
 
-function Field({ label, sub, hint, children }: { label: string; sub?: string; hint?: string; children: React.ReactNode }) {
+function Field({
+  label,
+  sub,
+  hint,
+  children,
+}: {
+  label: string;
+  sub?: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-1">
       <label className="text-[11px] font-semibold text-slate-500">
-        {label}{sub && <span className="text-slate-300 font-normal"> {sub}</span>}
+        {label}
+        {sub && <span className="font-normal text-slate-300"> {sub}</span>}
       </label>
       {children}
       {hint && <p className="text-[10px] text-slate-400">{hint}</p>}
@@ -269,10 +292,22 @@ function Field({ label, sub, hint, children }: { label: string; sub?: string; hi
 function GoogleIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.95 4 4 12.95 4 24s8.95 20 20 20 20-8.95 20-20c0-1.3-.1-2.4-.4-3.5z"/>
-      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4c-7.7 0-14.4 4.4-17.7 10.7z"/>
-      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.5-4.6 2.4-7.2 2.4-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.4 39.6 16.1 44 24 44z"/>
-      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4.1 5.6l6.2 5.2c-.4.4 6.6-4.8 6.6-14.8 0-1.3-.1-2.4-.4-3.5z"/>
+      <path
+        fill="#FFC107"
+        d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.95 4 4 12.95 4 24s8.95 20 20 20 20-8.95 20-20c0-1.3-.1-2.4-.4-3.5z"
+      />
+      <path
+        fill="#FF3D00"
+        d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4c-7.7 0-14.4 4.4-17.7 10.7z"
+      />
+      <path
+        fill="#4CAF50"
+        d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.5-4.6 2.4-7.2 2.4-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.4 39.6 16.1 44 24 44z"
+      />
+      <path
+        fill="#1976D2"
+        d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4.1 5.6l6.2 5.2c-.4.4 6.6-4.8 6.6-14.8 0-1.3-.1-2.4-.4-3.5z"
+      />
     </svg>
   );
 }

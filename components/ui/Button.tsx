@@ -6,18 +6,27 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: 'sm' | 'md';
 }
 
-export function Button({ variant = 'default', size = 'md', className, children, ...props }: ButtonProps) {
+export function Button({
+  variant = 'default',
+  size = 'md',
+  className,
+  children,
+  ...props
+}: ButtonProps) {
   return (
     <button
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-lg font-medium cursor-pointer transition-all border whitespace-nowrap font-sans',
+        'inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border font-sans font-medium transition-all',
         size === 'sm' && 'px-2.5 py-1 text-xs',
         size === 'md' && 'px-3 py-1.5 text-xs',
-        variant === 'default' && 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50',
-        variant === 'primary' && 'bg-blue-600 border-blue-600 text-white hover:bg-blue-700 font-semibold',
-        variant === 'danger' && 'bg-white border-slate-200 text-red-600 hover:bg-red-50 hover:border-red-200',
-        variant === 'ghost' && 'border-transparent bg-transparent text-slate-500 hover:bg-slate-100',
-        className
+        variant === 'default' && 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
+        variant === 'primary' &&
+          'border-blue-600 bg-blue-600 font-semibold text-white hover:bg-blue-700',
+        variant === 'danger' &&
+          'border-slate-200 bg-white text-red-600 hover:border-red-200 hover:bg-red-50',
+        variant === 'ghost' &&
+          'border-transparent bg-transparent text-slate-500 hover:bg-slate-100',
+        className,
       )}
       {...props}
     >

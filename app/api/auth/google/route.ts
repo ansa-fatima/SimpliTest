@@ -1,12 +1,20 @@
 import { NextResponse } from 'next/server';
-import { buildAuthorizeUrl, generateState, isGoogleConfigured, GOOGLE_OAUTH_STATE_COOKIE } from '@/lib/google';
+import {
+  buildAuthorizeUrl,
+  generateState,
+  isGoogleConfigured,
+  GOOGLE_OAUTH_STATE_COOKIE,
+} from '@/lib/google';
 
 // GET /api/auth/google
 // Step 1: redirect the browser to Google's consent page.
 export async function GET() {
   if (!isGoogleConfigured()) {
     return NextResponse.json(
-      { error: 'Google sign-in is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI in .env.' },
+      {
+        error:
+          'Google sign-in is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI in .env.',
+      },
       { status: 503 },
     );
   }

@@ -14,7 +14,9 @@ export async function GET(req: Request) {
       orderBy: [{ moduleId: 'asc' }, { name: 'asc' }],
     });
     return ok(features);
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }
 
 // POST /api/features — create a feature inside a module

@@ -1,7 +1,9 @@
 import { prisma } from '@/lib/db';
 import { ok, notFound, serverError } from '@/lib/api';
 
-interface Ctx { params: { id: string } }
+interface Ctx {
+  params: { id: string };
+}
 
 // GET /api/cycles/:id/summary
 // { total, done, percent, counts: { NotRun, Passed, Failed, Blocked, Skipped } }
@@ -29,5 +31,7 @@ export async function GET(_req: Request, { params }: Ctx) {
     const percent = total === 0 ? 0 : Math.round((done / total) * 100);
 
     return ok({ total, done, percent, counts });
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }

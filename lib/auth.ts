@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { UserRole } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { cookies } from 'next/headers';
@@ -36,6 +37,21 @@ export interface SessionUser {
   username: string;
   email: string;
   name: string;
+  role: UserRole;
+}
+
+// Permission hierarchy (higher index = more privileged)
+const ROLE_RANK: Record<UserRole, number> = {
+  Viewer: 0,
+  Developer: 1,
+  Tester: 2,
+  QAManager: 3,
+  SuperAdmin: 4,
+};
+
+/** True if `user.role` is at least `min` in the hierarchy. */
+export function hasRole(user: SessionUser, min: UserRole): boolean {
+  return ROLE_RANK[user.role] >= ROLE_RANK[min];
 }
 
 /** Read the current user from the request cookie. Returns null if not signed in. */
@@ -60,6 +76,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
     username: session.user.username,
     email: session.user.email,
     name: session.user.name,
+    role: session.user.role,
   };
 }
 
@@ -70,6 +87,27 @@ export async function requireUser(): Promise<SessionUser | NextResponse> {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   }
   return user;
+}
+
+/**
+ * Require both auth and a minimum role. Use at the top of API routes:
+ *
+ *   const userOrRes = await requireRole('QAManager');
+ *   if (userOrRes instanceof NextResponse) return userOrRes;
+ *   const user = userOrRes;
+ *
+ * Returns the user if authorized, or a 401/403 NextResponse if not.
+ */
+export async function requireRole(minRole: UserRole): Promise<SessionUser | NextResponse> {
+  const userOrRes = await requireUser();
+  if (userOrRes instanceof NextResponse) return userOrRes;
+  if (!hasRole(userOrRes, minRole)) {
+    return NextResponse.json(
+      { error: `Insufficient permissions (requires ${minRole} or higher)` },
+      { status: 403 },
+    );
+  }
+  return userOrRes;
 }
 
 /** Set the session cookie on a NextResponse. */

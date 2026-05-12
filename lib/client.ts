@@ -7,7 +7,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
   });
   let payload: unknown;
-  try { payload = await res.json(); } catch { /* empty */ }
+  try {
+    payload = await res.json();
+  } catch {
+    /* empty */
+  }
   if (!res.ok) {
     const msg = (payload as { error?: string } | undefined)?.error || `HTTP ${res.status}`;
     throw new Error(msg);
@@ -16,8 +20,10 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  get:    <T>(url: string)            => request<T>(url),
-  post:   <T>(url: string, body?: unknown) => request<T>(url, { method: 'POST', body: JSON.stringify(body ?? {}) }),
-  patch:  <T>(url: string, body?: unknown) => request<T>(url, { method: 'PATCH', body: JSON.stringify(body ?? {}) }),
-  del:    <T>(url: string)            => request<T>(url, { method: 'DELETE' }),
+  get: <T>(url: string) => request<T>(url),
+  post: <T>(url: string, body?: unknown) =>
+    request<T>(url, { method: 'POST', body: JSON.stringify(body ?? {}) }),
+  patch: <T>(url: string, body?: unknown) =>
+    request<T>(url, { method: 'PATCH', body: JSON.stringify(body ?? {}) }),
+  del: <T>(url: string) => request<T>(url, { method: 'DELETE' }),
 };

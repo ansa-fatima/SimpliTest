@@ -11,7 +11,7 @@ interface ImportRow {
   feature?: string;
   title?: string;
   desc?: string;
-  steps?: unknown;       // string | string[]
+  steps?: unknown; // string | string[]
   expected?: string;
   priority?: string;
   severity?: string;
@@ -21,8 +21,8 @@ interface ImportRow {
 
 interface ImportBody {
   rows: ImportRow[];
-  defaultModule?: string;   // used when row.module is missing
-  defaultFeature?: string;  // used when row.feature is missing
+  defaultModule?: string; // used when row.module is missing
+  defaultFeature?: string; // used when row.feature is missing
 }
 
 // Normalize a freeform string against an allowed list (case-insensitive, returns canonical or null)
@@ -42,8 +42,16 @@ function parseSteps(steps: unknown): unknown {
   if (typeof steps === 'string') {
     const s = steps.trim();
     if (!s) return [];
-    if (s.includes('\n')) return s.split('\n').map(x => x.trim()).filter(Boolean);
-    if (s.includes(';')) return s.split(';').map(x => x.trim()).filter(Boolean);
+    if (s.includes('\n'))
+      return s
+        .split('\n')
+        .map(x => x.trim())
+        .filter(Boolean);
+    if (s.includes(';'))
+      return s
+        .split(';')
+        .map(x => x.trim())
+        .filter(Boolean);
     return [s];
   }
   return [];
@@ -62,8 +70,8 @@ export async function POST(req: Request) {
     if (body.rows.length > 5000) return bad('max 5000 rows per import');
 
     // Cache modules + features so we don't re-hit DB for every row
-    const moduleByName = new Map<string, string>();      // name → id
-    const featureByKey = new Map<string, string>();      // `${moduleId}:${featureName}` → featureId
+    const moduleByName = new Map<string, string>(); // name → id
+    const featureByKey = new Map<string, string>(); // `${moduleId}:${featureName}` → featureId
 
     const existingModules = await prisma.module.findMany({
       include: { features: true },
@@ -83,12 +91,21 @@ export async function POST(req: Request) {
       const rowNum = i + 1;
 
       const title = (r.title ?? '').trim();
-      if (!title) { skipped.push({ row: rowNum, reason: 'missing title' }); continue; }
+      if (!title) {
+        skipped.push({ row: rowNum, reason: 'missing title' });
+        continue;
+      }
 
       const moduleName = (r.module || body.defaultModule || '').trim();
       const featureName = (r.feature || body.defaultFeature || '').trim();
-      if (!moduleName) { skipped.push({ row: rowNum, reason: 'missing module' }); continue; }
-      if (!featureName) { skipped.push({ row: rowNum, reason: 'missing feature' }); continue; }
+      if (!moduleName) {
+        skipped.push({ row: rowNum, reason: 'missing module' });
+        continue;
+      }
+      if (!featureName) {
+        skipped.push({ row: rowNum, reason: 'missing feature' });
+        continue;
+      }
 
       // Resolve / auto-create module
       let moduleId = moduleByName.get(moduleName.toLowerCase());
@@ -134,5 +151,7 @@ export async function POST(req: Request) {
     }
 
     return ok({ created, skipped, total: body.rows.length });
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }

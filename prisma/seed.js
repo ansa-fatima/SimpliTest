@@ -17,7 +17,9 @@ const SEED_CASES = [
     desc: 'Verify the standard sign-in flow with valid user credentials.',
     steps: ['Open /login', 'Enter valid email', 'Enter correct password', 'Click "Sign in"'],
     expected: 'User is redirected to /dashboard within 2 seconds.',
-    priority: 'High', severity: 'Critical', type: 'Functional',
+    priority: 'High',
+    severity: 'Critical',
+    type: 'Functional',
   },
   {
     moduleName: 'Authentication',
@@ -27,7 +29,9 @@ const SEED_CASES = [
     desc: 'Login attempt with incorrect password should fail gracefully.',
     steps: ['Open /login', 'Enter valid email', 'Enter wrong password', 'Click "Sign in"'],
     expected: 'Inline error "Invalid email or password" appears under the password field.',
-    priority: 'High', severity: 'Major', type: 'Functional',
+    priority: 'High',
+    severity: 'Major',
+    type: 'Functional',
   },
   {
     moduleName: 'Authentication',
@@ -37,7 +41,9 @@ const SEED_CASES = [
     desc: 'Confirm that password reset emails are sent and arrive in inbox.',
     steps: ['Click "Forgot password?"', 'Enter registered email', 'Submit form'],
     expected: 'Reset email arrives within 30 seconds containing a single-use link.',
-    priority: 'High', severity: 'Critical', type: 'Functional',
+    priority: 'High',
+    severity: 'Critical',
+    type: 'Functional',
   },
   {
     moduleName: 'Dashboard',
@@ -47,7 +53,9 @@ const SEED_CASES = [
     desc: 'Dashboard KPI widgets must reflect underlying data accurately.',
     steps: ['Login as admin', 'Navigate to /dashboard', 'Inspect KPI widgets'],
     expected: 'All KPI values match the corresponding DB query results.',
-    priority: 'Medium', severity: 'Major', type: 'Functional',
+    priority: 'Medium',
+    severity: 'Major',
+    type: 'Functional',
   },
   {
     moduleName: 'Dashboard',
@@ -57,17 +65,21 @@ const SEED_CASES = [
     desc: 'Filtering by date range should update widget contents.',
     steps: ['Open dashboard', 'Choose "Last 7 days"', 'Wait for refresh'],
     expected: 'All widgets refresh and only show data from the last 7 days.',
-    priority: 'Medium', severity: 'Minor', type: 'UI',
+    priority: 'Medium',
+    severity: 'Minor',
+    type: 'UI',
   },
   {
     moduleName: 'User Management',
     featureName: 'Roles',
     title: 'Admin can assign role to user',
     sub: 'Role dropdown updates persisted',
-    desc: 'Admins should be able to change a user\'s role from the user list.',
+    desc: "Admins should be able to change a user's role from the user list.",
     steps: ['Login as admin', 'Open Users page', 'Pick a user', 'Change role to "Editor"', 'Save'],
     expected: 'User role updates and persists across page reload.',
-    priority: 'High', severity: 'Major', type: 'Functional',
+    priority: 'High',
+    severity: 'Major',
+    type: 'Functional',
   },
 ];
 
@@ -115,5 +127,8 @@ async function main() {
 }
 
 main()
-  .catch(e => { console.error(e); process.exit(1); })
+  .catch(e => {
+    console.error(e);
+    process.exit(1);
+  })
   .finally(() => prisma.$disconnect());

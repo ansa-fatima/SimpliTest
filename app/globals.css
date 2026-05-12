@@ -2,7 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body {
+html,
+body {
   height: 100%;
   overflow: hidden;
 }
@@ -29,8 +30,14 @@ html, body {
 
 /* Tailwind animation utilities for toast */
 @keyframes slide-in-from-bottom {
-  from { transform: translateY(16px); opacity: 0; }
-  to   { transform: translateY(0);    opacity: 1; }
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 .animate-in {
   animation-fill-mode: both;
@@ -67,6 +74,12 @@ html, body {
 .rich-editor p {
   margin: 0.15rem 0;
 }
-.rich-editor strong { font-weight: 700; }
-.rich-editor em { font-style: italic; }
-.rich-editor u { text-decoration: underline; }
+.rich-editor strong {
+  font-weight: 700;
+}
+.rich-editor em {
+  font-style: italic;
+}
+.rich-editor u {
+  text-decoration: underline;
+}

@@ -3,7 +3,7 @@ import { ok, bad, parseJson, serverError } from '@/lib/api';
 import { verifyPassword, createSession, setSessionCookie } from '@/lib/auth';
 
 interface LoginBody {
-  identifier?: string;  // email or username
+  identifier?: string; // email or username
   password?: string;
 }
 
@@ -31,7 +31,13 @@ export async function POST(req: Request) {
 
     const { token, expiresAt } = await createSession(user.id);
     const res = ok({
-      user: { id: user.id, username: user.username, email: user.email, name: user.name },
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
     });
     return setSessionCookie(res, token, expiresAt);
   } catch (e) {

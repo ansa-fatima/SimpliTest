@@ -2,7 +2,9 @@ import { prisma } from '@/lib/db';
 import { ok, notFound, serverError } from '@/lib/api';
 import { Priority, Severity, RunResult } from '@prisma/client';
 
-interface Ctx { params: { id: string } }
+interface Ctx {
+  params: { id: string };
+}
 
 const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
 const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
@@ -30,7 +32,10 @@ export async function GET(_req: Request, { params }: Ctx) {
     if (cycle.scopeType === 'All') scopeName = 'All test cases';
     else if (cycle.scopeType === 'Custom') scopeName = 'Custom selection';
     else if (cycle.scopeType === 'Module' && cycle.scopeId) {
-      const m = await prisma.module.findUnique({ where: { id: cycle.scopeId }, select: { name: true } });
+      const m = await prisma.module.findUnique({
+        where: { id: cycle.scopeId },
+        select: { name: true },
+      });
       scopeName = m?.name ?? null;
     } else if (cycle.scopeType === 'Feature' && cycle.scopeId) {
       const f = await prisma.feature.findUnique({
@@ -40,7 +45,13 @@ export async function GET(_req: Request, { params }: Ctx) {
       scopeName = f ? `${f.module.name} / ${f.name}` : null;
     }
 
-    const counts: Record<RunResult, number> = { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
+    const counts: Record<RunResult, number> = {
+      NotRun: 0,
+      Passed: 0,
+      Failed: 0,
+      Blocked: 0,
+      Skipped: 0,
+    };
     for (const r of cycle.runs) counts[r.result]++;
     const total = cycle.runs.length;
     const done = total - counts.NotRun;
@@ -52,8 +63,16 @@ export async function GET(_req: Request, { params }: Ctx) {
       const byPriority: Record<Priority, number> = { High: 0, Medium: 0, Low: 0 };
       const bySeverity: Record<Severity, number> = { Critical: 0, Major: 0, Minor: 0 };
       const cases: Array<{
-        id: string; caseNum: number; title: string; priority: Priority; severity: Severity; type: string;
-        module: string; feature: string; notes: string; executedAt: string | null;
+        id: string;
+        caseNum: number;
+        title: string;
+        priority: Priority;
+        severity: Severity;
+        type: string;
+        module: string;
+        feature: string;
+        notes: string;
+        executedAt: string | null;
       }> = [];
       for (const r of cycle.runs) {
         if (r.result !== result) continue;
@@ -96,5 +115,7 @@ export async function GET(_req: Request, { params }: Ctx) {
       blocked: breakdown('Blocked'),
       skipped: breakdown('Skipped'),
     });
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }

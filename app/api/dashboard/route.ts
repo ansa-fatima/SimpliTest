@@ -10,8 +10,10 @@ export async function GET() {
     thirtyDaysAgo.setDate(now.getDate() - 30);
     const sixtyDaysAgo = new Date(now);
     sixtyDaysAgo.setDate(now.getDate() - 60);
-    const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
-    const yesterdayStart = new Date(todayStart); yesterdayStart.setDate(todayStart.getDate() - 1);
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setDate(todayStart.getDate() - 1);
 
     const [
       totalCases,
@@ -27,7 +29,11 @@ export async function GET() {
       prisma.testCase.count(),
       prisma.testRun.findMany({
         where: { executedAt: { gte: thirtyDaysAgo }, NOT: { result: 'NotRun' } },
-        select: { result: true, executedAt: true, testCase: { select: { feature: { select: { module: { select: { name: true } } } } } } },
+        select: {
+          result: true,
+          executedAt: true,
+          testCase: { select: { feature: { select: { module: { select: { name: true } } } } } },
+        },
       }),
       prisma.testRun.findMany({
         where: { executedAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo }, NOT: { result: 'NotRun' } },
@@ -76,35 +82,57 @@ export async function GET() {
     ]);
 
     // Resolve scope names for recent cycles
-    const recentModuleIds = recentCyclesRaw.filter(c => c.scopeType === 'Module' && c.scopeId).map(c => c.scopeId!);
-    const recentFeatureIds = recentCyclesRaw.filter(c => c.scopeType === 'Feature' && c.scopeId).map(c => c.scopeId!);
+    const recentModuleIds = recentCyclesRaw
+      .filter(c => c.scopeType === 'Module' && c.scopeId)
+      .map(c => c.scopeId!);
+    const recentFeatureIds = recentCyclesRaw
+      .filter(c => c.scopeType === 'Feature' && c.scopeId)
+      .map(c => c.scopeId!);
     const [recentModules, recentFeatures] = await Promise.all([
-      recentModuleIds.length === 0 ? Promise.resolve([]) :
-        prisma.module.findMany({ where: { id: { in: recentModuleIds } }, select: { id: true, name: true } }),
-      recentFeatureIds.length === 0 ? Promise.resolve([]) :
-        prisma.feature.findMany({
-          where: { id: { in: recentFeatureIds } },
-          select: { id: true, name: true, module: { select: { name: true } } },
-        }),
+      recentModuleIds.length === 0
+        ? Promise.resolve([])
+        : prisma.module.findMany({
+            where: { id: { in: recentModuleIds } },
+            select: { id: true, name: true },
+          }),
+      recentFeatureIds.length === 0
+        ? Promise.resolve([])
+        : prisma.feature.findMany({
+            where: { id: { in: recentFeatureIds } },
+            select: { id: true, name: true, module: { select: { name: true } } },
+          }),
     ]);
     const recentModuleMap = new Map(recentModules.map(m => [m.id, m.name]));
-    const recentFeatureMap = new Map(recentFeatures.map(f => [f.id, `${f.module.name} / ${f.name}`]));
+    const recentFeatureMap = new Map(
+      recentFeatures.map(f => [f.id, `${f.module.name} / ${f.name}`]),
+    );
 
     // Pass rate for 30d window
     const passed30d = runs30d.filter(r => r.result === 'Passed').length;
     const passRate = runs30d.length === 0 ? 0 : Math.round((passed30d / runs30d.length) * 100);
 
     const passedPrev = runsPrev30d.filter(r => r.result === 'Passed').length;
-    const passRatePrev = runsPrev30d.length === 0 ? 0 : Math.round((passedPrev / runsPrev30d.length) * 100);
+    const passRatePrev =
+      runsPrev30d.length === 0 ? 0 : Math.round((passedPrev / runsPrev30d.length) * 100);
 
     // 8-week window: bucket by ISO week starting Monday
-    const weeks: { label: string; start: Date; end: Date; pass: number; fail: number; blocked: number; skipped: number }[] = [];
+    const weeks: {
+      label: string;
+      start: Date;
+      end: Date;
+      pass: number;
+      fail: number;
+      blocked: number;
+      skipped: number;
+    }[] = [];
     const monday = new Date(now);
     monday.setHours(0, 0, 0, 0);
     monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7)); // back to Monday
     for (let i = 7; i >= 0; i--) {
-      const start = new Date(monday); start.setDate(start.getDate() - i * 7);
-      const end = new Date(start); end.setDate(end.getDate() + 7);
+      const start = new Date(monday);
+      start.setDate(start.getDate() - i * 7);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 7);
       weeks.push({ label: `W${8 - i}`, start, end, pass: 0, fail: 0, blocked: 0, skipped: 0 });
     }
     for (const r of allRuns) {
@@ -116,17 +144,26 @@ export async function GET() {
       else if (r.result === 'Blocked') w.blocked++;
       else if (r.result === 'Skipped') w.skipped++;
     }
-    const weeklyRuns = weeks.map(w => ({ label: w.label, pass: w.pass, fail: w.fail, blocked: w.blocked, skipped: w.skipped }));
+    const weeklyRuns = weeks.map(w => ({
+      label: w.label,
+      pass: w.pass,
+      fail: w.fail,
+      blocked: w.blocked,
+      skipped: w.skipped,
+    }));
 
     // Cases by module (donut)
-    const casesByMod = casesByModule.map(m => ({
-      name: m.name,
-      count: m.features.reduce((sum, f) => sum + f._count.testCases, 0),
-    })).filter(m => m.count > 0);
+    const casesByMod = casesByModule
+      .map(m => ({
+        name: m.name,
+        count: m.features.reduce((sum, f) => sum + f._count.testCases, 0),
+      }))
+      .filter(m => m.count > 0);
 
     // Module stability — pass rate per module across all (non-NotRun) runs
     const moduleStability = modules.map(m => {
-      let total = 0, passed = 0;
+      let total = 0,
+        passed = 0;
       for (const f of m.features) {
         for (const tc of f.testCases) {
           for (const r of tc.runs) {
@@ -151,8 +188,10 @@ export async function GET() {
       let scopeName: string | null = null;
       if (c.scopeType === 'All') scopeName = 'All test cases';
       else if (c.scopeType === 'Custom') scopeName = 'Custom selection';
-      else if (c.scopeType === 'Module' && c.scopeId) scopeName = recentModuleMap.get(c.scopeId) ?? null;
-      else if (c.scopeType === 'Feature' && c.scopeId) scopeName = recentFeatureMap.get(c.scopeId) ?? null;
+      else if (c.scopeType === 'Module' && c.scopeId)
+        scopeName = recentModuleMap.get(c.scopeId) ?? null;
+      else if (c.scopeType === 'Feature' && c.scopeId)
+        scopeName = recentFeatureMap.get(c.scopeId) ?? null;
 
       return {
         id: c.id,
@@ -178,5 +217,7 @@ export async function GET() {
       moduleStability,
       recentCycles,
     });
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }

@@ -22,16 +22,25 @@ export async function GET(req: Request) {
     });
 
     // Resolve scope names (module / feature) in batch
-    const moduleIds = cycles.filter(c => c.scopeType === 'Module' && c.scopeId).map(c => c.scopeId!);
-    const featureIds = cycles.filter(c => c.scopeType === 'Feature' && c.scopeId).map(c => c.scopeId!);
+    const moduleIds = cycles
+      .filter(c => c.scopeType === 'Module' && c.scopeId)
+      .map(c => c.scopeId!);
+    const featureIds = cycles
+      .filter(c => c.scopeType === 'Feature' && c.scopeId)
+      .map(c => c.scopeId!);
     const [modulesById, featuresById] = await Promise.all([
-      moduleIds.length === 0 ? Promise.resolve([]) :
-        prisma.module.findMany({ where: { id: { in: moduleIds } }, select: { id: true, name: true } }),
-      featureIds.length === 0 ? Promise.resolve([]) :
-        prisma.feature.findMany({
-          where: { id: { in: featureIds } },
-          select: { id: true, name: true, module: { select: { name: true } } },
-        }),
+      moduleIds.length === 0
+        ? Promise.resolve([])
+        : prisma.module.findMany({
+            where: { id: { in: moduleIds } },
+            select: { id: true, name: true },
+          }),
+      featureIds.length === 0
+        ? Promise.resolve([])
+        : prisma.feature.findMany({
+            where: { id: { in: featureIds } },
+            select: { id: true, name: true, module: { select: { name: true } } },
+          }),
     ]);
     const moduleNameById = new Map(modulesById.map(m => [m.id, m.name]));
     const featureNameById = new Map(featuresById.map(f => [f.id, `${f.module.name} / ${f.name}`]));
@@ -47,14 +56,18 @@ export async function GET(req: Request) {
       let scopeName: string | null = null;
       if (c.scopeType === 'All') scopeName = 'All test cases';
       else if (c.scopeType === 'Custom') scopeName = 'Custom selection';
-      else if (c.scopeType === 'Module' && c.scopeId) scopeName = moduleNameById.get(c.scopeId) ?? null;
-      else if (c.scopeType === 'Feature' && c.scopeId) scopeName = featureNameById.get(c.scopeId) ?? null;
+      else if (c.scopeType === 'Module' && c.scopeId)
+        scopeName = moduleNameById.get(c.scopeId) ?? null;
+      else if (c.scopeType === 'Feature' && c.scopeId)
+        scopeName = featureNameById.get(c.scopeId) ?? null;
 
       return { ...rest, scopeName, summary: { total, done, percent, counts } };
     });
 
     return ok(enriched);
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }
 
 // POST /api/cycles

@@ -2,7 +2,9 @@ import { prisma } from '@/lib/db';
 import { CycleStatus } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
-interface Ctx { params: { id: string } }
+interface Ctx {
+  params: { id: string };
+}
 
 const STATUSES: CycleStatus[] = ['Active', 'Completed', 'Archived'];
 
@@ -15,16 +17,28 @@ export async function GET(_req: Request, { params }: Ctx) {
     });
     if (!cycle) return notFound('Cycle not found');
     return ok(cycle);
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }
 
 // PATCH /api/cycles/:id  — rename or change status
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
-    const body = await parseJson<{ name?: string; description?: string; status?: CycleStatus; targetDate?: string | null }>(req);
+    const body = await parseJson<{
+      name?: string;
+      description?: string;
+      status?: CycleStatus;
+      targetDate?: string | null;
+    }>(req);
     if (!body) return bad('invalid JSON body');
 
-    const data: { name?: string; description?: string; status?: CycleStatus; targetDate?: Date | null } = {};
+    const data: {
+      name?: string;
+      description?: string;
+      status?: CycleStatus;
+      targetDate?: Date | null;
+    } = {};
     if (typeof body.name === 'string') {
       const n = body.name.trim();
       if (!n) return bad('name cannot be empty');

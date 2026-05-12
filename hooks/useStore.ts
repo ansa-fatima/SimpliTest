@@ -2,18 +2,28 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import {
-  TestCase, Page, Module, MODULES,
-  TestCycle, ApiTestRun, CycleSummary, CycleScopeType, RunResult,
+  TestCase,
+  Page,
+  Module,
+  MODULES,
+  TestCycle,
+  ApiTestRun,
+  CycleSummary,
+  CycleScopeType,
+  RunResult,
 } from '@/types';
 import { SEED_DATA } from '@/data/testCases';
 import { nextTestCaseId, todayStr } from '@/lib/utils';
 import { api } from '@/lib/client';
+
+export type UserRole = 'SuperAdmin' | 'QAManager' | 'Tester' | 'Developer' | 'Viewer';
 
 export interface SessionUser {
   id: string;
   username: string;
   email: string;
   name: string;
+  role: UserRole;
 }
 
 interface ApiModuleData {
@@ -26,8 +36,8 @@ export interface AppState {
   page: Page;
   data: Record<string, TestCase[]>;
   modules: Module[];
-  moduleIds: Record<string, string>;          // moduleName → id
-  featureIds: Record<string, string>;         // "modName:featName" → id
+  moduleIds: Record<string, string>; // moduleName → id
+  featureIds: Record<string, string>; // "modName:featName" → id
   currentKey: string;
   currentTC: TestCase | null;
   toast: { msg: string; type?: 'success' | 'error' } | null;
@@ -125,15 +135,20 @@ export function useStore() {
     setTimeout(() => setState(s => ({ ...s, toast: null })), 2800);
   }, []);
 
-  const login = useCallback((user: SessionUser) => {
-    setState(s => ({ ...s, user, page: 'dashboard' }));
-    reloadModules();
-  }, [reloadModules]);
+  const login = useCallback(
+    (user: SessionUser) => {
+      setState(s => ({ ...s, user, page: 'dashboard' }));
+      reloadModules();
+    },
+    [reloadModules],
+  );
 
   const logout = useCallback(async () => {
     try {
       await api.post('/api/auth/logout');
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setState(s => ({ ...s, user: null, page: 'login' }));
   }, []);
 
@@ -143,9 +158,12 @@ export function useStore() {
     setState(s => ({ ...s, page: 'list' }));
   }, []);
 
-  const navFeature = useCallback((mod: string, feat: string) => {
-    update({ page: 'list', currentKey: `${mod}:${feat}` });
-  }, [update]);
+  const navFeature = useCallback(
+    (mod: string, feat: string) => {
+      update({ page: 'list', currentKey: `${mod}:${feat}` });
+    },
+    [update],
+  );
 
   const viewTC = useCallback((id: string) => {
     setState(s => {
@@ -158,126 +176,152 @@ export function useStore() {
   const showCreate = useCallback(() => update({ page: 'create' }), [update]);
   const cancelCreate = useCallback(() => update({ page: 'list' }), [update]);
 
-  const addModule = useCallback(async (name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    try {
-      await api.post('/api/modules', { name: trimmed });
-      await reloadModules();
-      showToast(`Folder "${trimmed}" added ✓`, 'success');
-    } catch (e) {
-      showToast((e as Error).message, 'error');
-    }
-  }, [reloadModules, showToast]);
-
-  const addFeature = useCallback(async (modName: string, featName: string) => {
-    const trimmed = featName.trim();
-    if (!trimmed) return;
-    setState(currentState => {
-      const moduleId = currentState.moduleIds[modName];
-      if (!moduleId) {
-        showToast(`Folder "${modName}" not found`, 'error');
-        return currentState;
+  const addModule = useCallback(
+    async (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      try {
+        await api.post('/api/modules', { name: trimmed });
+        await reloadModules();
+        showToast(`Folder "${trimmed}" added ✓`, 'success');
+      } catch (e) {
+        showToast((e as Error).message, 'error');
       }
-      // fire-and-forget; we'll reload below
-      api.post('/api/features', { name: trimmed, moduleId })
-        .then(async () => {
-          await reloadModules();
-          setState(s => ({ ...s, currentKey: `${modName}:${trimmed}`, page: 'list' }));
-          showToast(`Folder "${trimmed}" added ✓`, 'success');
-        })
-        .catch(e => showToast((e as Error).message, 'error'));
-      return currentState;
-    });
-  }, [reloadModules, showToast]);
+    },
+    [reloadModules, showToast],
+  );
 
-  const deleteModule = useCallback(async (modName: string) => {
-    setState(currentState => {
-      const id = currentState.moduleIds[modName];
-      if (!id) {
-        showToast(`Folder "${modName}" not found`, 'error');
+  const addFeature = useCallback(
+    async (modName: string, featName: string) => {
+      const trimmed = featName.trim();
+      if (!trimmed) return;
+      setState(currentState => {
+        const moduleId = currentState.moduleIds[modName];
+        if (!moduleId) {
+          showToast(`Folder "${modName}" not found`, 'error');
+          return currentState;
+        }
+        // fire-and-forget; we'll reload below
+        api
+          .post('/api/features', { name: trimmed, moduleId })
+          .then(async () => {
+            await reloadModules();
+            setState(s => ({ ...s, currentKey: `${modName}:${trimmed}`, page: 'list' }));
+            showToast(`Folder "${trimmed}" added ✓`, 'success');
+          })
+          .catch(e => showToast((e as Error).message, 'error'));
         return currentState;
-      }
-      api.del(`/api/modules/${id}`)
-        .then(async () => {
-          await reloadModules();
-          // If currentKey was under this module, fall back to first remaining
-          setState(s => {
-            const data: Record<string, TestCase[]> = {};
-            for (const k of Object.keys(s.data)) {
-              if (!k.startsWith(`${modName}:`)) data[k] = s.data[k];
-            }
-            let currentKey = s.currentKey;
-            if (currentKey.startsWith(`${modName}:`)) {
-              const first = s.modules[0];
-              currentKey = first && first.features[0] ? `${first.name}:${first.features[0]}` : '';
-            }
-            return { ...s, data, currentKey };
-          });
-          showToast(`Folder "${modName}" deleted`, 'success');
-        })
-        .catch(e => showToast((e as Error).message, 'error'));
-      return currentState;
-    });
-  }, [reloadModules, showToast]);
+      });
+    },
+    [reloadModules, showToast],
+  );
 
-  const deleteFeature = useCallback(async (modName: string, featName: string) => {
-    setState(currentState => {
-      const id = currentState.featureIds[`${modName}:${featName}`];
-      if (!id) {
-        showToast(`Folder "${featName}" not found`, 'error');
-        return currentState;
-      }
-      api.del(`/api/features/${id}`)
-        .then(async () => {
-          await reloadModules();
-          setState(s => {
-            const key = `${modName}:${featName}`;
-            const { [key]: _removed, ...data } = s.data;
-            let currentKey = s.currentKey;
-            if (currentKey === key) {
-              const mod = s.modules.find(m => m.name === modName);
-              if (mod && mod.features.length > 0) {
-                currentKey = `${modName}:${mod.features[0]}`;
-              } else {
-                const first = s.modules.find(m => m.features.length > 0);
-                currentKey = first ? `${first.name}:${first.features[0]}` : '';
+  const deleteModule = useCallback(
+    async (modName: string) => {
+      setState(currentState => {
+        const id = currentState.moduleIds[modName];
+        if (!id) {
+          showToast(`Folder "${modName}" not found`, 'error');
+          return currentState;
+        }
+        api
+          .del(`/api/modules/${id}`)
+          .then(async () => {
+            await reloadModules();
+            // If currentKey was under this module, fall back to first remaining
+            setState(s => {
+              const data: Record<string, TestCase[]> = {};
+              for (const k of Object.keys(s.data)) {
+                if (!k.startsWith(`${modName}:`)) data[k] = s.data[k];
               }
-            }
-            return { ...s, data, currentKey };
-          });
-          showToast(`Folder "${featName}" deleted`, 'success');
-        })
-        .catch(e => showToast((e as Error).message, 'error'));
-      return currentState;
-    });
-  }, [reloadModules, showToast]);
+              let currentKey = s.currentKey;
+              if (currentKey.startsWith(`${modName}:`)) {
+                const first = s.modules[0];
+                currentKey = first && first.features[0] ? `${first.name}:${first.features[0]}` : '';
+              }
+              return { ...s, data, currentKey };
+            });
+            showToast(`Folder "${modName}" deleted`, 'success');
+          })
+          .catch(e => showToast((e as Error).message, 'error'));
+        return currentState;
+      });
+    },
+    [reloadModules, showToast],
+  );
 
-  const saveEdit = useCallback((patch: Partial<TestCase>) => {
-    setState(s => {
-      if (!s.currentTC) return s;
-      const cases = [...(s.data[s.currentKey] || [])];
-      const idx = cases.findIndex(c => c.id === s.currentTC!.id);
-      if (idx < 0) return s;
-      const updated: TestCase = { ...s.currentTC, ...patch, updatedFull: 'Just now', updated: 'Just now' };
-      cases[idx] = updated;
-      return {
-        ...s,
-        data: { ...s.data, [s.currentKey]: cases },
-        currentTC: updated,
-        page: 'view',
-      };
-    });
-    showToast('Test case saved ✓', 'success');
-  }, [showToast]);
+  const deleteFeature = useCallback(
+    async (modName: string, featName: string) => {
+      setState(currentState => {
+        const id = currentState.featureIds[`${modName}:${featName}`];
+        if (!id) {
+          showToast(`Folder "${featName}" not found`, 'error');
+          return currentState;
+        }
+        api
+          .del(`/api/features/${id}`)
+          .then(async () => {
+            await reloadModules();
+            setState(s => {
+              const key = `${modName}:${featName}`;
+              const { [key]: _removed, ...data } = s.data;
+              let currentKey = s.currentKey;
+              if (currentKey === key) {
+                const mod = s.modules.find(m => m.name === modName);
+                if (mod && mod.features.length > 0) {
+                  currentKey = `${modName}:${mod.features[0]}`;
+                } else {
+                  const first = s.modules.find(m => m.features.length > 0);
+                  currentKey = first ? `${first.name}:${first.features[0]}` : '';
+                }
+              }
+              return { ...s, data, currentKey };
+            });
+            showToast(`Folder "${featName}" deleted`, 'success');
+          })
+          .catch(e => showToast((e as Error).message, 'error'));
+        return currentState;
+      });
+    },
+    [reloadModules, showToast],
+  );
 
-  const deleteTC = useCallback((id: string) => {
-    setState(s => {
-      const cases = (s.data[s.currentKey] || []).filter(c => c.id !== id);
-      return { ...s, data: { ...s.data, [s.currentKey]: cases }, page: 'list' };
-    });
-    showToast('Test case deleted');
-  }, [showToast]);
+  const saveEdit = useCallback(
+    (patch: Partial<TestCase>) => {
+      setState(s => {
+        if (!s.currentTC) return s;
+        const cases = [...(s.data[s.currentKey] || [])];
+        const idx = cases.findIndex(c => c.id === s.currentTC!.id);
+        if (idx < 0) return s;
+        const updated: TestCase = {
+          ...s.currentTC,
+          ...patch,
+          updatedFull: 'Just now',
+          updated: 'Just now',
+        };
+        cases[idx] = updated;
+        return {
+          ...s,
+          data: { ...s.data, [s.currentKey]: cases },
+          currentTC: updated,
+          page: 'view',
+        };
+      });
+      showToast('Test case saved ✓', 'success');
+    },
+    [showToast],
+  );
+
+  const deleteTC = useCallback(
+    (id: string) => {
+      setState(s => {
+        const cases = (s.data[s.currentKey] || []).filter(c => c.id !== id);
+        return { ...s, data: { ...s.data, [s.currentKey]: cases }, page: 'list' };
+      });
+      showToast('Test case deleted');
+    },
+    [showToast],
+  );
 
   const duplicateTC = useCallback(() => {
     setState(s => {
@@ -295,35 +339,42 @@ export function useStore() {
     showToast('Test case duplicated');
   }, [showToast]);
 
-  const createTC = useCallback((tc: Omit<TestCase, 'id' | 'created' | 'updatedFull' | 'updated' | 'sub' | 'author'> & { module: string }) => {
-    const key = `${tc.module}:${tc.feature}`;
-    const newCase: TestCase = {
-      id: nextTestCaseId(),
-      title: tc.title,
-      sub: tc.desc?.split('.')[0] || tc.title,
-      priority: tc.priority,
-      severity: tc.severity,
-      type: tc.type,
-      feature: tc.feature,
-      updated: 'just now',
-      desc: tc.desc,
-      steps: tc.steps,
-      expected: tc.expected,
-      created: todayStr(),
-      author: 'You',
-      updatedFull: todayStr(),
-    };
-    setState(s => {
-      const cases = [...(s.data[key] || []), newCase];
-      return {
-        ...s,
-        data: { ...s.data, [key]: cases },
-        currentKey: key,
-        page: 'list',
+  const createTC = useCallback(
+    (
+      tc: Omit<TestCase, 'id' | 'created' | 'updatedFull' | 'updated' | 'sub' | 'author'> & {
+        module: string;
+      },
+    ) => {
+      const key = `${tc.module}:${tc.feature}`;
+      const newCase: TestCase = {
+        id: nextTestCaseId(),
+        title: tc.title,
+        sub: tc.desc?.split('.')[0] || tc.title,
+        priority: tc.priority,
+        severity: tc.severity,
+        type: tc.type,
+        feature: tc.feature,
+        updated: 'just now',
+        desc: tc.desc,
+        steps: tc.steps,
+        expected: tc.expected,
+        created: todayStr(),
+        author: 'You',
+        updatedFull: todayStr(),
       };
-    });
-    showToast('Test case created ✓', 'success');
-  }, [showToast]);
+      setState(s => {
+        const cases = [...(s.data[key] || []), newCase];
+        return {
+          ...s,
+          data: { ...s.data, [key]: cases },
+          currentKey: key,
+          page: 'list',
+        };
+      });
+      showToast('Test case created ✓', 'success');
+    },
+    [showToast],
+  );
 
   // ─── Cycles ────────────────────────────────────────────────
 
@@ -343,98 +394,138 @@ export function useStore() {
     loadCycles();
   }, [loadCycles]);
 
-  const openCycle = useCallback(async (cycleId: string) => {
-    setState(s => ({
-      ...s,
-      page: 'cycle',
-      currentCycle: s.cycles.find(c => c.id === cycleId) || null,
-      runs: [],
-      summary: null,
-      runsLoading: true,
-    }));
-    try {
-      const [runs, summary, cycle] = await Promise.all([
-        api.get<ApiTestRun[]>(`/api/cycles/${cycleId}/runs`),
-        api.get<CycleSummary>(`/api/cycles/${cycleId}/summary`),
-        api.get<TestCycle>(`/api/cycles/${cycleId}`),
-      ]);
-      setState(s => ({ ...s, runs, summary, currentCycle: cycle, runsLoading: false }));
-    } catch (e) {
-      setState(s => ({ ...s, runsLoading: false }));
-      showToast(`Failed to open cycle: ${(e as Error).message}`, 'error');
-    }
-  }, [showToast]);
+  const openCycle = useCallback(
+    async (cycleId: string) => {
+      setState(s => ({
+        ...s,
+        page: 'cycle',
+        currentCycle: s.cycles.find(c => c.id === cycleId) || null,
+        runs: [],
+        summary: null,
+        runsLoading: true,
+      }));
+      try {
+        const [runs, summary, cycle] = await Promise.all([
+          api.get<ApiTestRun[]>(`/api/cycles/${cycleId}/runs`),
+          api.get<CycleSummary>(`/api/cycles/${cycleId}/summary`),
+          api.get<TestCycle>(`/api/cycles/${cycleId}`),
+        ]);
+        setState(s => ({ ...s, runs, summary, currentCycle: cycle, runsLoading: false }));
+      } catch (e) {
+        setState(s => ({ ...s, runsLoading: false }));
+        showToast(`Failed to open cycle: ${(e as Error).message}`, 'error');
+      }
+    },
+    [showToast],
+  );
 
   const backToCycles = useCallback(() => {
     setState(s => ({ ...s, page: 'cycles', currentCycle: null, runs: [], summary: null }));
   }, []);
 
-  const createCycle = useCallback(async (input: {
-    name: string; description?: string;
-    scopeType: CycleScopeType; scopeId?: string | null;
-    testCaseIds?: string[];
-    targetDate?: string | null;
-  }) => {
-    try {
-      await api.post<TestCycle>('/api/cycles', input);
-      showToast('Cycle created ✓', 'success');
-      await loadCycles();
-    } catch (e) {
-      showToast(`Failed to create cycle: ${(e as Error).message}`, 'error');
-    }
-  }, [loadCycles, showToast]);
-
-  const archiveCycle = useCallback(async (cycleId: string) => {
-    try {
-      await api.patch<TestCycle>(`/api/cycles/${cycleId}`, { status: 'Archived' });
-      showToast('Test run archived');
-      await loadCycles();
-    } catch (e) {
-      showToast(`Failed to archive: ${(e as Error).message}`, 'error');
-    }
-  }, [loadCycles, showToast]);
-
-  const deleteCycle = useCallback(async (cycleId: string) => {
-    try {
-      await api.del<{ deleted: boolean }>(`/api/cycles/${cycleId}`);
-      showToast('Test run deleted');
-      await loadCycles();
-    } catch (e) {
-      showToast(`Failed to delete: ${(e as Error).message}`, 'error');
-    }
-  }, [loadCycles, showToast]);
-
-  const submitResult = useCallback(async (runId: string, result: RunResult, notes?: string) => {
-    try {
-      const updated = await api.patch<ApiTestRun>(`/api/runs/${runId}`, { result, ...(notes !== undefined ? { notes } : {}) });
-      // Update local run + refresh summary in one go
-      setState(s => ({
-        ...s,
-        runs: s.runs.map(r => r.id === runId ? updated : r),
-      }));
-      // Refresh summary
-      if (state.currentCycle) {
-        const summary = await api.get<CycleSummary>(`/api/cycles/${state.currentCycle.id}/summary`);
-        setState(s => ({ ...s, summary }));
+  const createCycle = useCallback(
+    async (input: {
+      name: string;
+      description?: string;
+      scopeType: CycleScopeType;
+      scopeId?: string | null;
+      testCaseIds?: string[];
+      targetDate?: string | null;
+    }) => {
+      try {
+        await api.post<TestCycle>('/api/cycles', input);
+        showToast('Cycle created ✓', 'success');
+        await loadCycles();
+      } catch (e) {
+        showToast(`Failed to create cycle: ${(e as Error).message}`, 'error');
       }
-      showToast('Result saved ✓', 'success');
-    } catch (e) {
-      showToast(`Failed to save: ${(e as Error).message}`, 'error');
-    }
-  }, [showToast, state.currentCycle]);
+    },
+    [loadCycles, showToast],
+  );
+
+  const archiveCycle = useCallback(
+    async (cycleId: string) => {
+      try {
+        await api.patch<TestCycle>(`/api/cycles/${cycleId}`, { status: 'Archived' });
+        showToast('Test run archived');
+        await loadCycles();
+      } catch (e) {
+        showToast(`Failed to archive: ${(e as Error).message}`, 'error');
+      }
+    },
+    [loadCycles, showToast],
+  );
+
+  const deleteCycle = useCallback(
+    async (cycleId: string) => {
+      try {
+        await api.del<{ deleted: boolean }>(`/api/cycles/${cycleId}`);
+        showToast('Test run deleted');
+        await loadCycles();
+      } catch (e) {
+        showToast(`Failed to delete: ${(e as Error).message}`, 'error');
+      }
+    },
+    [loadCycles, showToast],
+  );
+
+  const submitResult = useCallback(
+    async (runId: string, result: RunResult, notes?: string) => {
+      try {
+        const updated = await api.patch<ApiTestRun>(`/api/runs/${runId}`, {
+          result,
+          ...(notes !== undefined ? { notes } : {}),
+        });
+        // Update local run + refresh summary in one go
+        setState(s => ({
+          ...s,
+          runs: s.runs.map(r => (r.id === runId ? updated : r)),
+        }));
+        // Refresh summary
+        if (state.currentCycle) {
+          const summary = await api.get<CycleSummary>(
+            `/api/cycles/${state.currentCycle.id}/summary`,
+          );
+          setState(s => ({ ...s, summary }));
+        }
+        showToast('Result saved ✓', 'success');
+      } catch (e) {
+        showToast(`Failed to save: ${(e as Error).message}`, 'error');
+      }
+    },
+    [showToast, state.currentCycle],
+  );
 
   const currentCases = state.data[state.currentKey] || [];
 
   return {
     state,
     currentCases,
-    login, logout, navFeature,
-    viewTC, showEdit, showCreate, cancelCreate,
-    saveEdit, deleteTC, duplicateTC, createTC,
-    addModule, addFeature, deleteModule, deleteFeature, showToast,
-    showDashboard, showTestCases,
-    showCycles, openCycle, backToCycles,
-    createCycle, archiveCycle, deleteCycle, submitResult,
+    login,
+    logout,
+    navFeature,
+    viewTC,
+    showEdit,
+    showCreate,
+    cancelCreate,
+    saveEdit,
+    deleteTC,
+    duplicateTC,
+    createTC,
+    addModule,
+    addFeature,
+    deleteModule,
+    deleteFeature,
+    showToast,
+    showDashboard,
+    showTestCases,
+    showCycles,
+    openCycle,
+    backToCycles,
+    createCycle,
+    archiveCycle,
+    deleteCycle,
+    submitResult,
     loadCycles,
   };
 }

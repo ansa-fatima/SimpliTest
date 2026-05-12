@@ -20,12 +20,20 @@ interface CyclesListProps {
 }
 
 const STATUS_BADGE: Record<CycleStatus, string> = {
-  Active:    'bg-blue-50 text-blue-700 border border-blue-200',
+  Active: 'bg-blue-50 text-blue-700 border border-blue-200',
   Completed: 'bg-green-50 text-green-700 border border-green-200',
-  Archived:  'bg-slate-100 text-slate-500 border border-slate-200',
+  Archived: 'bg-slate-100 text-slate-500 border border-slate-200',
 };
 
-export function CyclesList({ cycles, loading, modules, onOpen, onArchive, onDelete, onCreate }: CyclesListProps) {
+export function CyclesList({
+  cycles,
+  loading,
+  modules,
+  onOpen,
+  onArchive,
+  onDelete,
+  onCreate,
+}: CyclesListProps) {
   const [filter, setFilter] = useState<CycleStatus | 'All'>('All');
   const [showCreate, setShowCreate] = useState(false);
   const [reportFor, setReportFor] = useState<string | null>(null);
@@ -33,34 +41,43 @@ export function CyclesList({ cycles, loading, modules, onOpen, onArchive, onDele
   const filtered = filter === 'All' ? cycles : cycles.filter(c => c.status === filter);
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
+    <div className="flex flex-1 flex-col overflow-hidden">
       {/* Header */}
-      <div className="px-6 pt-4 pb-3 bg-white border-b border-slate-200">
-        <div className="flex items-start justify-between mb-2">
+      <div className="border-b border-slate-200 bg-white px-6 pb-3 pt-4">
+        <div className="mb-2 flex items-start justify-between">
           <div>
-            <div className="text-xs text-slate-400 mb-1">Test execution</div>
+            <div className="mb-1 text-xs text-slate-400">Test execution</div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold text-slate-900">Test Runs</h1>
-              <span className="text-xs text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-3 py-0.5">
+              <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-0.5 text-xs text-slate-500">
                 {cycles.length} run{cycles.length !== 1 ? 's' : ''}
               </span>
             </div>
           </div>
           <Button variant="primary" onClick={() => setShowCreate(true)}>
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}><path d="M8 3v10M3 8h10"/></svg>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path d="M8 3v10M3 8h10" />
+            </svg>
             New Test Run
           </Button>
         </div>
 
         {/* Status filter */}
-        <div className="flex items-center gap-1.5 mt-2">
+        <div className="mt-2 flex items-center gap-1.5">
           {(['All', 'Active', 'Completed', 'Archived'] as const).map(s => (
             <button
               key={s}
               onClick={() => setFilter(s)}
-              className={`px-3 py-1 rounded-full text-xs cursor-pointer transition-colors ${
+              className={`cursor-pointer rounded-full px-3 py-1 text-xs transition-colors ${
                 filter === s
-                  ? 'bg-blue-600 text-white font-semibold'
+                  ? 'bg-blue-600 font-semibold text-white'
                   : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
               }`}
             >
@@ -73,22 +90,29 @@ export function CyclesList({ cycles, loading, modules, onOpen, onArchive, onDele
       {/* Body */}
       <div className="flex-1 overflow-auto">
         {loading ? (
-          <div className="flex items-center justify-center py-24 text-sm text-slate-400">Loading cycles…</div>
+          <div className="flex items-center justify-center py-24 text-sm text-slate-400">
+            Loading cycles…
+          </div>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 gap-3 text-slate-400">
+          <div className="flex flex-col items-center justify-center gap-3 py-24 text-slate-400">
             <span className="text-4xl opacity-40">🧪</span>
             <p className="text-sm font-semibold text-slate-500">No test runs yet</p>
-            <p className="text-xs text-center max-w-[280px]">
+            <p className="max-w-[280px] text-center text-xs">
               Create a test run to bundle a snapshot of test cases and execute them together.
             </p>
-            <Button variant="primary" onClick={() => setShowCreate(true)}>+ New Test Run</Button>
+            <Button variant="primary" onClick={() => setShowCreate(true)}>
+              + New Test Run
+            </Button>
           </div>
         ) : (
           <table className="w-full border-collapse text-xs">
             <thead>
               <tr>
                 {['Name', 'Scope', 'Status', 'Progress', 'Created', ''].map((h, i) => (
-                  <th key={i} className="sticky top-0 z-10 bg-slate-50 px-4 py-2.5 text-left text-[11px] font-semibold text-slate-500 border-b border-slate-200 whitespace-nowrap">
+                  <th
+                    key={i}
+                    className="sticky top-0 z-10 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-left text-[11px] font-semibold text-slate-500"
+                  >
                     {h}
                   </th>
                 ))}
@@ -98,17 +122,27 @@ export function CyclesList({ cycles, loading, modules, onOpen, onArchive, onDele
               {filtered.map(c => {
                 const summary = c.summary;
                 const total = summary?.total ?? 0;
-                const counts = summary?.counts ?? { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
+                const counts = summary?.counts ?? {
+                  NotRun: 0,
+                  Passed: 0,
+                  Failed: 0,
+                  Blocked: 0,
+                  Skipped: 0,
+                };
                 const passPercent = total === 0 ? 0 : Math.round((counts.Passed / total) * 100);
                 return (
                   <tr
                     key={c.id}
                     onClick={() => onOpen(c.id)}
-                    className="border-b border-slate-100 cursor-pointer hover:bg-slate-50 transition-colors"
+                    className="cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50"
                   >
                     <td className="px-4 py-3">
                       <span className="block font-semibold text-slate-900">{c.name}</span>
-                      {c.description && <span className="block text-[11px] text-slate-400 mt-0.5">{c.description}</span>}
+                      {c.description && (
+                        <span className="mt-0.5 block text-[11px] text-slate-400">
+                          {c.description}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-slate-500">
                       <Scope cycle={c} />
@@ -116,49 +150,59 @@ export function CyclesList({ cycles, loading, modules, onOpen, onArchive, onDele
                     <td className="px-4 py-3">
                       <Badge className={STATUS_BADGE[c.status]}>{c.status}</Badge>
                     </td>
-                    <td className="px-4 py-3 min-w-[200px]">
+                    <td className="min-w-[200px] px-4 py-3">
                       <div className="flex items-center gap-2">
                         <div className="flex-1">
                           <SegmentedProgressBar counts={counts} total={total} height={6} />
                         </div>
-                        <span className="text-[11px] text-green-700 font-mono font-semibold w-[60px] text-right">
+                        <span className="w-[60px] text-right font-mono text-[11px] font-semibold text-green-700">
                           {passPercent}% pass
                         </span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-400">
                       {new Date(c.createdAt).toLocaleDateString()}
                     </td>
                     <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
                         <button
                           onClick={() => setReportFor(c.id)}
-                          className="px-2 py-0.5 border border-slate-200 rounded text-[11px] text-slate-500 bg-white hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 cursor-pointer"
+                          className="cursor-pointer rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-500 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
                           title="View summary you can copy or screenshot"
                         >
                           Summary
                         </button>
                         <button
                           onClick={() => onOpen(c.id)}
-                          className="px-2 py-0.5 border border-slate-200 rounded text-[11px] text-slate-500 bg-white hover:bg-slate-100 cursor-pointer"
+                          className="cursor-pointer rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100"
                         >
                           Open
                         </button>
                         {c.status !== 'Archived' && (
                           <button
                             onClick={() => {
-                              if (confirm(`Archive "${c.name}"? It will be hidden from the active list.`)) onArchive(c.id);
+                              if (
+                                confirm(
+                                  `Archive "${c.name}"? It will be hidden from the active list.`,
+                                )
+                              )
+                                onArchive(c.id);
                             }}
-                            className="px-2 py-0.5 border border-slate-200 rounded text-[11px] text-slate-500 bg-white hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 cursor-pointer"
+                            className="cursor-pointer rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-500 hover:border-amber-200 hover:bg-amber-50 hover:text-amber-700"
                           >
                             Archive
                           </button>
                         )}
                         <button
                           onClick={() => {
-                            if (confirm(`Permanently delete "${c.name}" and all its runs?\n\nThis cannot be undone.`)) onDelete(c.id);
+                            if (
+                              confirm(
+                                `Permanently delete "${c.name}" and all its runs?\n\nThis cannot be undone.`,
+                              )
+                            )
+                              onDelete(c.id);
                           }}
-                          className="px-2 py-0.5 border border-slate-200 rounded text-[11px] text-slate-500 bg-white hover:bg-red-50 hover:text-red-700 hover:border-red-200 cursor-pointer"
+                          className="cursor-pointer rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
                         >
                           Delete
                         </button>
@@ -176,16 +220,14 @@ export function CyclesList({ cycles, loading, modules, onOpen, onArchive, onDele
         <NewCycleModal
           modules={modules}
           onClose={() => setShowCreate(false)}
-          onSave={async input => { await onCreate(input); setShowCreate(false); }}
+          onSave={async input => {
+            await onCreate(input);
+            setShowCreate(false);
+          }}
         />
       )}
 
-      {reportFor && (
-        <CycleReportModal
-          cycleId={reportFor}
-          onClose={() => setReportFor(null)}
-        />
-      )}
+      {reportFor && <CycleReportModal cycleId={reportFor} onClose={() => setReportFor(null)} />}
     </div>
   );
 }
@@ -193,16 +235,23 @@ export function CyclesList({ cycles, loading, modules, onOpen, onArchive, onDele
 function Scope({ cycle }: { cycle: TestCycle }) {
   const label = cycle.scopeName ?? cycle.scopeType;
   const tone =
-    cycle.scopeType === 'All'    ? 'bg-slate-100 text-slate-600' :
-    cycle.scopeType === 'Module' ? 'bg-indigo-50 text-indigo-700' :
-    cycle.scopeType === 'Feature' ? 'bg-blue-50 text-blue-700' :
-                                    'bg-amber-50 text-amber-700';
+    cycle.scopeType === 'All'
+      ? 'bg-slate-100 text-slate-600'
+      : cycle.scopeType === 'Module'
+        ? 'bg-indigo-50 text-indigo-700'
+        : cycle.scopeType === 'Feature'
+          ? 'bg-blue-50 text-blue-700'
+          : 'bg-amber-50 text-amber-700';
   return (
     <div className="flex flex-col gap-0.5">
-      <span className={`inline-block w-fit text-[10px] uppercase tracking-wider font-semibold px-1.5 py-px rounded ${tone}`}>
+      <span
+        className={`inline-block w-fit rounded px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider ${tone}`}
+      >
         {cycle.scopeType}
       </span>
-      <span className="text-[11px] text-slate-700 max-w-[200px] truncate" title={label}>{label}</span>
+      <span className="max-w-[200px] truncate text-[11px] text-slate-700" title={label}>
+        {label}
+      </span>
     </div>
   );
 }

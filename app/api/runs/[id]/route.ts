@@ -2,7 +2,9 @@ import { prisma } from '@/lib/db';
 import { RunResult } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
-interface Ctx { params: { id: string } }
+interface Ctx {
+  params: { id: string };
+}
 
 const RESULTS: RunResult[] = ['NotRun', 'Passed', 'Failed', 'Blocked', 'Skipped'];
 
@@ -21,7 +23,9 @@ export async function GET(_req: Request, { params }: Ctx) {
     });
     if (!run) return notFound('Run not found');
     return ok(run);
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }
 
 // PATCH /api/runs/:id
@@ -32,7 +36,12 @@ export async function PATCH(req: Request, { params }: Ctx) {
     const body = await parseJson<{ result?: RunResult; notes?: string; executedBy?: string }>(req);
     if (!body) return bad('invalid JSON body');
 
-    const data: { result?: RunResult; notes?: string; executedBy?: string; executedAt?: Date | null } = {};
+    const data: {
+      result?: RunResult;
+      notes?: string;
+      executedBy?: string;
+      executedAt?: Date | null;
+    } = {};
 
     if (body.result !== undefined) {
       if (!RESULTS.includes(body.result)) return bad('invalid result');

@@ -6,5 +6,7 @@ export async function GET() {
   try {
     const user = await getCurrentUser();
     return ok({ user });
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }

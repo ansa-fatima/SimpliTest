@@ -2,7 +2,9 @@ import { prisma } from '@/lib/db';
 import { Prisma, RunResult } from '@prisma/client';
 import { ok, serverError } from '@/lib/api';
 
-interface Ctx { params: { id: string } }
+interface Ctx {
+  params: { id: string };
+}
 
 const RESULTS: RunResult[] = ['NotRun', 'Passed', 'Failed', 'Blocked', 'Skipped'];
 
@@ -13,7 +15,9 @@ const RESULTS: RunResult[] = ['NotRun', 'Passed', 'Failed', 'Blocked', 'Skipped'
 export async function GET(req: Request, { params }: Ctx) {
   try {
     const sp = new URL(req.url).searchParams;
-    const results = sp.getAll('result').filter((r): r is RunResult => RESULTS.includes(r as RunResult));
+    const results = sp
+      .getAll('result')
+      .filter((r): r is RunResult => RESULTS.includes(r as RunResult));
     const search = sp.get('search')?.trim();
 
     const where: Prisma.TestRunWhereInput = { cycleId: params.id };
@@ -40,5 +44,7 @@ export async function GET(req: Request, { params }: Ctx) {
     });
 
     return ok(runs);
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }

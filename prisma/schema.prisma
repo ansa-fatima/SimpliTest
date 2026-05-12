@@ -17,6 +17,14 @@ datasource db {
 // Auth — Users & Sessions
 // ────────────────────────────────────────────────────────────
 
+enum UserRole {
+  SuperAdmin
+  QAManager
+  Tester
+  Developer
+  Viewer
+}
+
 model User {
   id           String    @id @default(cuid())
   username     String    @unique
@@ -25,6 +33,8 @@ model User {
   name         String    @default("")
   avatarUrl    String?
   googleId     String?   @unique
+  microsoftId  String?   @unique
+  role         UserRole  @default(Tester)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   sessions     Session[]

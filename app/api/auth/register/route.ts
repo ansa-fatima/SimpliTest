@@ -28,10 +28,14 @@ export async function POST(req: Request) {
     if (!EMAIL_RE.test(email)) return bad('invalid email');
     if (password.length < 8) return bad('password must be at least 8 characters');
 
+    // First user to register becomes SuperAdmin so the system has at least one admin.
+    const userCount = await prisma.user.count();
+    const role = userCount === 0 ? 'SuperAdmin' : 'Tester';
+
     const passwordHash = await hashPassword(password);
     const user = await prisma.user.create({
-      data: { username, email, passwordHash, name },
-      select: { id: true, username: true, email: true, name: true },
+      data: { username, email, passwordHash, name, role },
+      select: { id: true, username: true, email: true, name: true, role: true },
     });
 
     const { token, expiresAt } = await createSession(user.id);

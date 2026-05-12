@@ -6,14 +6,14 @@ A production-grade Test Case Management System built with **Next.js 14**, **Reac
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Framework | Next.js 14 (App Router) |
-| UI Library | React 18 |
-| Language | TypeScript 5 |
-| Styling | Tailwind CSS 3 |
-| Font | DM Sans + DM Mono (Google Fonts) |
-| State | Custom `useStore` hook (useState) |
+| Layer      | Technology                        |
+| ---------- | --------------------------------- |
+| Framework  | Next.js 14 (App Router)           |
+| UI Library | React 18                          |
+| Language   | TypeScript 5                      |
+| Styling    | Tailwind CSS 3                    |
+| Font       | DM Sans + DM Mono (Google Fonts)  |
+| State      | Custom `useStore` hook (useState) |
 
 ---
 
@@ -90,7 +90,7 @@ npm run build && npm start
 
 ```typescript
 interface TestCase {
-  id: string;           // "TC-00042"
+  id: string; // "TC-00042"
   title: string;
   priority: 'High' | 'Medium' | 'Low';
   severity: 'Critical' | 'Major' | 'Minor';
@@ -102,4 +102,5 @@ interface TestCase {
 ```
 
 ## Licence
+
 MIT

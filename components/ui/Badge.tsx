@@ -7,7 +7,12 @@ interface BadgeProps {
 
 export function Badge({ children, className }: BadgeProps) {
   return (
-    <span className={cn('inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold whitespace-nowrap', className)}>
+    <span
+      className={cn(
+        'inline-flex items-center whitespace-nowrap rounded px-2 py-0.5 text-xs font-semibold',
+        className,
+      )}
+    >
       {children}
     </span>
   );

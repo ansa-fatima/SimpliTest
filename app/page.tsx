@@ -42,8 +42,21 @@ export default function Home() {
     submitResult,
   } = useStore();
 
-  const { page, currentKey, currentTC, toast, modules, user, authChecked,
-    cycles, currentCycle, runs, summary, cyclesLoading, runsLoading } = state;
+  const {
+    page,
+    currentKey,
+    currentTC,
+    toast,
+    modules,
+    user,
+    authChecked,
+    cycles,
+    currentCycle,
+    runs,
+    summary,
+    cyclesLoading,
+    runsLoading,
+  } = state;
 
   // Show a tiny loading state while we check the session on mount.
   if (!authChecked) {
@@ -76,21 +89,20 @@ export default function Home() {
       )}
 
       {/* Main content area */}
-      <main className="flex flex-col flex-1 overflow-hidden min-w-0">
-        {page === 'login' && (
-          <LoginPage onLogin={login} />
-        )}
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {page === 'login' && <LoginPage onLogin={login} />}
 
-        {page === 'dashboard' && (
-          <Dashboard onShowTestRuns={showCycles} onOpenCycle={openCycle} />
-        )}
+        {page === 'dashboard' && <Dashboard onShowTestRuns={showCycles} onOpenCycle={openCycle} />}
 
         {page === 'list' && (
           <TestCaseList
             currentKey={currentKey}
             cases={currentCases}
             onView={viewTC}
-            onEdit={id => { viewTC(id); setTimeout(showEdit, 0); }}
+            onEdit={id => {
+              viewTC(id);
+              setTimeout(showEdit, 0);
+            }}
             onDelete={id => {
               if (confirm('Delete this test case? This cannot be undone.')) {
                 deleteTC(id);

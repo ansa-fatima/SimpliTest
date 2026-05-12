@@ -13,7 +13,9 @@ export async function GET(req: Request) {
   const errorParam = url.searchParams.get('error');
 
   if (errorParam) {
-    return NextResponse.redirect(new URL(`/?auth_error=${encodeURIComponent(errorParam)}`, req.url));
+    return NextResponse.redirect(
+      new URL(`/?auth_error=${encodeURIComponent(errorParam)}`, req.url),
+    );
   }
   if (!code || !state) {
     return NextResponse.redirect(new URL('/?auth_error=missing_params', req.url));
@@ -22,7 +24,10 @@ export async function GET(req: Request) {
   // CSRF: state cookie must match the state Google echoed back
   const cookieHeader = req.headers.get('cookie') ?? '';
   const cookieMap = Object.fromEntries(
-    cookieHeader.split(';').map(c => c.trim().split('=')).filter(p => p.length === 2)
+    cookieHeader
+      .split(';')
+      .map(c => c.trim().split('='))
+      .filter(p => p.length === 2),
   );
   if (cookieMap[GOOGLE_OAUTH_STATE_COOKIE] !== state) {
     return NextResponse.redirect(new URL('/?auth_error=state_mismatch', req.url));
@@ -44,7 +49,11 @@ export async function GET(req: Request) {
   });
   if (!user) {
     // Generate a unique username from the email prefix
-    const base = email.split('@')[0].replace(/[^a-z0-9_.-]/g, '').slice(0, 24) || 'user';
+    const base =
+      email
+        .split('@')[0]
+        .replace(/[^a-z0-9_.-]/g, '')
+        .slice(0, 24) || 'user';
     let username = base;
     let suffix = 0;
     // eslint-disable-next-line no-constant-condition

@@ -3,14 +3,11 @@ import { Prisma } from '@prisma/client';
 
 export const ok = <T>(data: T, status = 200) => NextResponse.json(data, { status });
 
-export const bad = (error: string, status = 400) =>
-  NextResponse.json({ error }, { status });
+export const bad = (error: string, status = 400) => NextResponse.json({ error }, { status });
 
-export const notFound = (error = 'Not found') =>
-  NextResponse.json({ error }, { status: 404 });
+export const notFound = (error = 'Not found') => NextResponse.json({ error }, { status: 404 });
 
-export const conflict = (error: string) =>
-  NextResponse.json({ error }, { status: 409 });
+export const conflict = (error: string) => NextResponse.json({ error }, { status: 409 });
 
 export function serverError(error: unknown) {
   console.error('[api]', error);
@@ -29,5 +26,9 @@ export function prismaError(e: unknown): NextResponse | null {
 }
 
 export async function parseJson<T = unknown>(req: Request): Promise<T | null> {
-  try { return (await req.json()) as T; } catch { return null; }
+  try {
+    return (await req.json()) as T;
+  } catch {
+    return null;
+  }
 }

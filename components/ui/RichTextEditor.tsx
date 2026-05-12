@@ -28,7 +28,12 @@ const BUTTONS: ToolbarButton[] = [
   { cmd: 'removeFormat', label: 'â¨¯', title: 'Clear formatting' },
 ];
 
-export function RichTextEditor({ value, onChange, placeholder = 'Start writingâ€¦', minHeight = 180 }: RichTextEditorProps) {
+export function RichTextEditor({
+  value,
+  onChange,
+  placeholder = 'Start writingâ€¦',
+  minHeight = 180,
+}: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,16 +55,19 @@ export function RichTextEditor({ value, onChange, placeholder = 'Start writingâ€
   const isEmpty = !value || value === '<br>' || value === '<p><br></p>';
 
   return (
-    <div className="border border-slate-200 rounded-lg bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 transition-colors">
+    <div className="rounded-lg border border-slate-200 bg-white transition-colors focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
       {/* Toolbar */}
-      <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-slate-100 flex-wrap">
+      <div className="flex flex-wrap items-center gap-0.5 border-b border-slate-100 px-2 py-1.5">
         {BUTTONS.map((b, i) => (
           <button
             key={i}
             type="button"
             title={b.title}
-            onMouseDown={e => { e.preventDefault(); exec(b.cmd, b.arg); }}
-            className={`px-2 py-1 rounded text-xs text-slate-600 hover:bg-slate-100 hover:text-blue-600 cursor-pointer transition-colors min-w-[26px] ${b.className || ''}`}
+            onMouseDown={e => {
+              e.preventDefault();
+              exec(b.cmd, b.arg);
+            }}
+            className={`min-w-[26px] cursor-pointer rounded px-2 py-1 text-xs text-slate-600 transition-colors hover:bg-slate-100 hover:text-blue-600 ${b.className || ''}`}
           >
             {b.label}
           </button>
@@ -68,7 +76,7 @@ export function RichTextEditor({ value, onChange, placeholder = 'Start writingâ€
       {/* Editor */}
       <div className="relative">
         {isEmpty && (
-          <span className="absolute top-3 left-3 text-xs text-slate-400 pointer-events-none select-none">
+          <span className="pointer-events-none absolute left-3 top-3 select-none text-xs text-slate-400">
             {placeholder}
           </span>
         )}
@@ -79,7 +87,7 @@ export function RichTextEditor({ value, onChange, placeholder = 'Start writingâ€
           onInput={handleInput}
           onBlur={handleInput}
           style={{ minHeight }}
-          className="rich-editor px-3 py-2.5 text-sm text-slate-800 outline-none leading-relaxed"
+          className="rich-editor px-3 py-2.5 text-sm leading-relaxed text-slate-800 outline-none"
         />
       </div>
     </div>

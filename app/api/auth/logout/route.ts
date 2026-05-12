@@ -9,5 +9,7 @@ export async function POST() {
     if (token) await destroySession(token);
     const res = ok({ success: true });
     return clearSessionCookie(res);
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }

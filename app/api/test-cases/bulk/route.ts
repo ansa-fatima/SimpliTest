@@ -8,7 +8,11 @@ const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 
 
 type BulkBody =
   | { action: 'delete'; ids: string[] }
-  | { action: 'update'; ids: string[]; patch: Partial<Record<'priority' | 'severity' | 'type' | 'author', string>> }
+  | {
+      action: 'update';
+      ids: string[];
+      patch: Partial<Record<'priority' | 'severity' | 'type' | 'author', string>>;
+    }
   | { action: 'move'; ids: string[]; targetFeatureId: string }
   | { action: 'duplicate'; ids: string[] };
 
@@ -21,7 +25,8 @@ export async function POST(req: Request) {
   try {
     const body = await parseJson<BulkBody>(req);
     if (!body || !('action' in body)) return bad('action is required');
-    if (!Array.isArray(body.ids) || body.ids.length === 0) return bad('ids must be a non-empty array');
+    if (!Array.isArray(body.ids) || body.ids.length === 0)
+      return bad('ids must be a non-empty array');
     if (body.ids.length > 1000) return bad('max 1000 ids per request');
 
     switch (body.action) {
@@ -67,20 +72,22 @@ export async function POST(req: Request) {
         const sources = await prisma.testCase.findMany({ where: { id: { in: body.ids } } });
         if (sources.length === 0) return ok({ created: 0 });
         const created = await prisma.$transaction(
-          sources.map(s => prisma.testCase.create({
-            data: {
-              title: `${s.title} (copy)`,
-              sub: s.sub,
-              desc: s.desc,
-              steps: s.steps as Prisma.InputJsonValue,
-              expected: s.expected,
-              priority: s.priority,
-              severity: s.severity,
-              type: s.type,
-              featureId: s.featureId,
-              author: s.author,
-            },
-          })),
+          sources.map(s =>
+            prisma.testCase.create({
+              data: {
+                title: `${s.title} (copy)`,
+                sub: s.sub,
+                desc: s.desc,
+                steps: s.steps as Prisma.InputJsonValue,
+                expected: s.expected,
+                priority: s.priority,
+                severity: s.severity,
+                type: s.type,
+                featureId: s.featureId,
+                author: s.author,
+              },
+            }),
+          ),
         );
         return ok({ created: created.length });
       }

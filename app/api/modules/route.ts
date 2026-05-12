@@ -12,7 +12,9 @@ export async function GET() {
       orderBy: { name: 'asc' },
     });
     return ok(modules);
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }
 
 // POST /api/modules — create a module

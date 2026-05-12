@@ -1,5 +1,5 @@
 interface LogoProps {
-  size?: number;       // pixel dimensions (square)
+  size?: number; // pixel dimensions (square)
   className?: string;
 }
 

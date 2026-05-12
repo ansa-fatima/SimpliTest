@@ -39,5 +39,9 @@ export function nextTestCaseId(): string {
 }
 
 export function todayStr(): string {
-  return new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  return new Date().toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
 }

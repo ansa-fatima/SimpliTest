@@ -33,25 +33,35 @@ export function exportTestCases(cases: TestCase[], moduleName: string, featureNa
 
   const rows = cases.map(tc => ({
     'Case ID': tc.id,
-    'Title': tc.title,
-    'Description': tc.desc || '',
-    'Module': moduleName,
-    'Feature': tc.feature,
-    'Priority': tc.priority,
-    'Severity': tc.severity,
-    'Type': tc.type,
-    'Steps': stepsToText(tc.steps),
+    Title: tc.title,
+    Description: tc.desc || '',
+    Module: moduleName,
+    Feature: tc.feature,
+    Priority: tc.priority,
+    Severity: tc.severity,
+    Type: tc.type,
+    Steps: stepsToText(tc.steps),
     'Expected Result': tc.expected || '',
-    'Author': tc.author,
-    'Created': tc.created,
-    'Updated': tc.updatedFull,
+    Author: tc.author,
+    Created: tc.created,
+    Updated: tc.updatedFull,
   }));
 
   const ws = XLSX.utils.json_to_sheet(rows);
   ws['!cols'] = [
-    { wch: 10 }, { wch: 40 }, { wch: 40 }, { wch: 18 }, { wch: 18 },
-    { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 60 }, { wch: 40 },
-    { wch: 14 }, { wch: 14 }, { wch: 14 },
+    { wch: 10 },
+    { wch: 40 },
+    { wch: 40 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 10 },
+    { wch: 10 },
+    { wch: 12 },
+    { wch: 60 },
+    { wch: 40 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 14 },
   ];
 
   // Wrap text in Steps + Expected Result columns
@@ -85,20 +95,20 @@ export function exportCycleResults(cycle: TestCycle, runs: ApiTestRun[]) {
 
   const rows = runs.map(run => {
     const tc = run.testCase;
-    const stepsArr = Array.isArray(tc.steps) ? tc.steps as string[] : [String(tc.steps ?? '')];
+    const stepsArr = Array.isArray(tc.steps) ? (tc.steps as string[]) : [String(tc.steps ?? '')];
     return {
       'Case ID': `TC-${String(tc.caseNum).padStart(4, '0')}`,
-      'Title': tc.title,
-      'Description': tc.desc || '',
-      'Module': tc.feature?.module.name ?? '',
-      'Feature': tc.feature?.name ?? '',
-      'Priority': tc.priority,
-      'Severity': tc.severity,
-      'Type': tc.type,
-      'Steps': stepsToText(stepsArr),
+      Title: tc.title,
+      Description: tc.desc || '',
+      Module: tc.feature?.module.name ?? '',
+      Feature: tc.feature?.name ?? '',
+      Priority: tc.priority,
+      Severity: tc.severity,
+      Type: tc.type,
+      Steps: stepsToText(stepsArr),
       'Expected Result': tc.expected || '',
-      'Result': run.result === 'NotRun' ? 'Not run' : run.result,
-      'Notes': run.notes || '',
+      Result: run.result === 'NotRun' ? 'Not run' : run.result,
+      Notes: run.notes || '',
       'Executed At': run.executedAt ? new Date(run.executedAt).toLocaleString() : '',
       'Executed By': run.executedBy || '',
     };
@@ -106,9 +116,20 @@ export function exportCycleResults(cycle: TestCycle, runs: ApiTestRun[]) {
 
   const ws = XLSX.utils.json_to_sheet(rows);
   ws['!cols'] = [
-    { wch: 10 }, { wch: 40 }, { wch: 40 }, { wch: 18 }, { wch: 18 },
-    { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 60 }, { wch: 40 },
-    { wch: 10 }, { wch: 50 }, { wch: 18 }, { wch: 14 },
+    { wch: 10 },
+    { wch: 40 },
+    { wch: 40 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 10 },
+    { wch: 10 },
+    { wch: 12 },
+    { wch: 60 },
+    { wch: 40 },
+    { wch: 10 },
+    { wch: 50 },
+    { wch: 18 },
+    { wch: 14 },
   ];
 
   const wb = XLSX.utils.book_new();

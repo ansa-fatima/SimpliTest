@@ -2,7 +2,9 @@ import { prisma } from '@/lib/db';
 import { Prisma, Priority, Severity, TestType } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
-interface Ctx { params: { id: string } }
+interface Ctx {
+  params: { id: string };
+}
 
 const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
 const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
@@ -17,7 +19,9 @@ export async function GET(_req: Request, { params }: Ctx) {
     });
     if (!tc) return notFound('Test case not found');
     return ok(tc);
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }
 
 // PATCH /api/test-cases/:id — partial update

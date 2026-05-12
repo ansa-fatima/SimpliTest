@@ -1,7 +1,9 @@
 import { prisma } from '@/lib/db';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
-interface Ctx { params: { id: string } }
+interface Ctx {
+  params: { id: string };
+}
 
 // GET /api/modules/:id
 export async function GET(_req: Request, { params }: Ctx) {
@@ -12,7 +14,9 @@ export async function GET(_req: Request, { params }: Ctx) {
     });
     if (!mod) return notFound('Module not found');
     return ok(mod);
-  } catch (e) { return serverError(e); }
+  } catch (e) {
+    return serverError(e);
+  }
 }
 
 // PATCH /api/modules/:id — rename
