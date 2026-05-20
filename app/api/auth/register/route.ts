@@ -28,9 +28,10 @@ export async function POST(req: Request) {
     if (!EMAIL_RE.test(email)) return bad('invalid email');
     if (password.length < 8) return bad('password must be at least 8 characters');
 
-    // First user to register becomes SuperAdmin so the system has at least one admin.
-    const userCount = await prisma.user.count();
-    const role = userCount === 0 ? 'SuperAdmin' : 'Tester';
+    // Promote to SuperAdmin if no SuperAdmin exists yet — handy when seeding / smoke-testing
+    // leaves only Testers behind. Once at least one SuperAdmin exists, new registrants land as Tester.
+    const superAdminCount = await prisma.user.count({ where: { role: 'SuperAdmin' } });
+    const role = superAdminCount === 0 ? 'SuperAdmin' : 'Tester';
 
     const passwordHash = await hashPassword(password);
     const user = await prisma.user.create({

@@ -13,6 +13,7 @@ interface CyclesListProps {
   cycles: TestCycle[];
   loading: boolean;
   modules: Module[];
+  projectId: string | null;
   onOpen: (id: string) => void;
   onArchive: (id: string) => void;
   onDelete: (id: string) => void;
@@ -29,6 +30,7 @@ export function CyclesList({
   cycles,
   loading,
   modules,
+  projectId,
   onOpen,
   onArchive,
   onDelete,
@@ -219,6 +221,7 @@ export function CyclesList({
       {showCreate && (
         <NewCycleModal
           modules={modules}
+          projectId={projectId}
           onClose={() => setShowCreate(false)}
           onSave={async input => {
             await onCreate(input);
@@ -239,7 +242,7 @@ function Scope({ cycle }: { cycle: TestCycle }) {
       ? 'bg-slate-100 text-slate-600'
       : cycle.scopeType === 'Module'
         ? 'bg-indigo-50 text-indigo-700'
-        : cycle.scopeType === 'Feature'
+        : cycle.scopeType === 'Suite'
           ? 'bg-blue-50 text-blue-700'
           : 'bg-amber-50 text-amber-700';
   return (

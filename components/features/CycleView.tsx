@@ -1,12 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { TestCycle, ApiTestRun, CycleSummary, RunResult } from '@/types';
-import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import { priorityBadge, severityBadge, typeBadge } from '@/lib/utils';
 import { exportCycleResults } from '@/lib/export';
 import { CycleReportModal } from './CycleReportModal';
+import { avatarColour, cn, initials, priorityBadge, severityBadge, typeBadge } from '@/lib/utils';
 
 interface CycleViewProps {
   cycle: TestCycle;
@@ -15,24 +13,17 @@ interface CycleViewProps {
   loading: boolean;
   onBack: () => void;
   onSubmitResult: (runId: string, result: RunResult, notes?: string) => Promise<void>;
+  onCloseRun?: (cycleId: string) => void;
 }
 
 const RESULTS: RunResult[] = ['Passed', 'Failed', 'Blocked', 'Skipped'];
 
-const RESULT_BADGE: Record<RunResult, string> = {
-  NotRun: 'bg-slate-100 text-slate-500 border border-slate-200',
-  Passed: 'bg-green-50 text-green-700 border border-green-200',
-  Failed: 'bg-red-50 text-red-700 border border-red-200',
-  Blocked: 'bg-amber-50 text-amber-700 border border-amber-200',
-  Skipped: 'bg-slate-50 text-slate-500 border border-slate-200',
-};
-
 const RESULT_BTN: Record<RunResult, string> = {
-  NotRun: 'border-slate-200 text-slate-500 hover:bg-slate-50',
-  Passed: 'border-green-200 text-green-700 hover:bg-green-50',
-  Failed: 'border-red-200 text-red-700 hover:bg-red-50',
-  Blocked: 'border-amber-200 text-amber-700 hover:bg-amber-50',
-  Skipped: 'border-slate-200 text-slate-500 hover:bg-slate-50',
+  NotRun: 'border-border text-text-3 hover:bg-surface-2',
+  Passed: 'border-green-300 text-green-700 hover:bg-green-50',
+  Failed: 'border-red-300 text-red-700 hover:bg-red-50',
+  Blocked: 'border-amber-300 text-amber-700 hover:bg-amber-50',
+  Skipped: 'border-slate-300 text-slate-600 hover:bg-slate-50',
 };
 
 export function CycleView({
@@ -42,188 +33,598 @@ export function CycleView({
   loading,
   onBack,
   onSubmitResult,
+  onCloseRun,
 }: CycleViewProps) {
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [filter, setFilter] = useState<RunResult | 'All'>('All');
   const [showReport, setShowReport] = useState(false);
+  // Track which run row is selected (drives the right-side panel).
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
-  const filtered = filter === 'All' ? runs : runs.filter(r => r.result === filter);
+  // Default-select first failed run so the failure panel is visible on open (matches design).
+  useEffect(() => {
+    if (selectedRunId) return;
+    if (runs.length === 0) return;
+    const firstFail = runs.find(r => r.result === 'Failed');
+    setSelectedRunId(firstFail?.id ?? runs[0].id);
+  }, [runs, selectedRunId]);
+
+  const filteredRuns = useMemo(
+    () => (filter === 'All' ? runs : runs.filter(r => r.result === filter)),
+    [filter, runs],
+  );
+  const selectedRun = useMemo(
+    () => runs.find(r => r.id === selectedRunId) ?? null,
+    [runs, selectedRunId],
+  );
+
+  const total = summary?.total ?? runs.length;
+  const counts = summary?.counts ?? { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
+  const done = summary?.done ?? total - counts.NotRun;
+  const percent = summary?.percent ?? (total === 0 ? 0 : Math.round((done / total) * 100));
+
+  // Distinct executor names → avatar stack (max 3 + “+N”).
+  const executors = useMemo(() => {
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const r of runs) {
+      const name = (r.executedBy || '').trim();
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      list.push(name);
+    }
+    return list;
+  }, [runs]);
+
+  const subtitle = buildSubtitle(cycle, total);
+  const statusTone =
+    cycle.status === 'Active'
+      ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+      : cycle.status === 'Completed'
+        ? 'bg-blue-50 text-blue-700 ring-blue-200'
+        : 'bg-amber-50 text-amber-700 ring-amber-200';
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Topbar */}
-      <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-4 py-2">
-        <button
-          onClick={onBack}
-          className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-slate-500 transition-colors hover:bg-slate-100"
-        >
-          ← Back to Test Runs
-        </button>
-        <div className="flex-1 text-xs text-slate-400">
-          Test Runs / <span className="font-semibold text-slate-800">{cycle.name}</span>
+    <div className="flex flex-1 flex-col overflow-hidden bg-bg">
+      <div className="flex-1 overflow-y-auto px-8 py-6">
+        {/* Breadcrumb */}
+        <div className="mb-2 flex items-center gap-1.5 text-[12px] text-text-3">
+          <button onClick={onBack} className="hover:text-text">
+            Test runs
+          </button>
+          <span className="text-text-3">/</span>
+          <span className="font-medium text-text">{shortRunCode(cycle)}</span>
         </div>
-        <Button variant="default" onClick={() => setShowReport(true)}>
-          📋 Summary
-        </Button>
-        <Button variant="default" onClick={() => exportCycleResults(cycle, runs)}>
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={1.5}
-          >
-            <path d="M3 10v3h10v-3M8 2v8M5 7l3 3 3-3" />
-          </svg>
-          Export .xlsx
-        </Button>
-      </div>
 
-      {/* Progress widget (header bar) */}
-      <ProgressWidget summary={summary} cycle={cycle} />
-
-      {/* Result filter */}
-      <div className="flex items-center gap-1.5 border-b border-slate-200 bg-slate-50 px-6 py-2.5">
-        {(['All', 'NotRun', 'Passed', 'Failed', 'Blocked', 'Skipped'] as const).map(r => {
-          const count = r === 'All' ? runs.length : (summary?.counts[r as RunResult] ?? 0);
-          return (
-            <button
-              key={r}
-              onClick={() => setFilter(r)}
-              className={`cursor-pointer rounded-full px-3 py-1 text-xs transition-colors ${
-                filter === r
-                  ? 'bg-blue-600 font-semibold text-white'
-                  : 'border border-slate-200 bg-white text-slate-500 hover:bg-slate-100'
-              }`}
-            >
-              {r === 'NotRun' ? 'Not run' : r} <span className="opacity-70">{count}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Run list */}
-      <div className="flex-1 overflow-auto">
-        {loading ? (
-          <div className="flex items-center justify-center py-24 text-sm text-slate-400">
-            Loading runs…
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-24 text-slate-400">
-            <p className="text-sm font-semibold text-slate-500">
-              {runs.length === 0
-                ? 'No runs in this cycle'
-                : `No ${filter === 'NotRun' ? 'not run' : filter.toLowerCase()} runs`}
-            </p>
-          </div>
-        ) : (
-          <table className="w-full border-collapse text-xs">
-            <thead>
-              <tr>
-                {['', 'Case ID', 'Title', 'Priority', 'Severity', 'Test Type', 'Status'].map(
-                  (h, i) => (
-                    <th
-                      key={i}
-                      className="sticky top-0 z-10 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-[11px] font-semibold text-slate-500"
-                    >
-                      {h}
-                    </th>
-                  ),
+        {/* Header strip */}
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h1 className="m-0 text-[22px] font-semibold tracking-[-0.01em] text-text">
+                {cycle.name}
+              </h1>
+              <span
+                className={cn(
+                  'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ring-1',
+                  statusTone,
                 )}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(run => (
-                <RunRow
-                  key={run.id}
-                  run={run}
-                  expanded={expanded === run.id}
-                  onToggle={() => setExpanded(e => (e === run.id ? null : run.id))}
-                  onSubmit={(result, notes) => onSubmitResult(run.id, result, notes)}
-                />
-              ))}
-            </tbody>
-          </table>
-        )}
+              >
+                {cycle.status}
+              </span>
+            </div>
+            <p className="mt-1 text-[13px] text-text-2">{subtitle}</p>
+          </div>
+
+          <div className="flex flex-shrink-0 items-center gap-3">
+            {executors.length > 0 && (
+              <div className="flex -space-x-1.5">
+                {executors.slice(0, 3).map(name => (
+                  <span
+                    key={name}
+                    title={name}
+                    className={cn(
+                      'inline-flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-semibold ring-2 ring-surface',
+                      avatarColour(name),
+                    )}
+                  >
+                    {initials(name)}
+                  </span>
+                ))}
+                {executors.length > 3 && (
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-surface-2 text-[10px] font-semibold text-text-2 ring-2 ring-surface">
+                    +{executors.length - 3}
+                  </span>
+                )}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => exportCycleResults(cycle, runs)}
+              className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2"
+            >
+              <i className="ti ti-download text-[15px]" />
+              Export
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowReport(true)}
+              className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2"
+              title="Open the shareable summary report"
+            >
+              <i className="ti ti-clipboard-text text-[15px]" />
+              Summary
+            </button>
+            {onCloseRun && cycle.status === 'Active' && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (
+                    confirm(
+                      `Close run "${cycle.name}"? It will be marked Completed and become read-only.`,
+                    )
+                  ) {
+                    onCloseRun(cycle.id);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-[7px] text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-primary-hover"
+              >
+                <i className="ti ti-flag-check text-[15px]" />
+                Close run
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Progress widget */}
+        <div className="mb-5 rounded-lg border border-border bg-surface px-5 py-4">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[13px] font-semibold text-text">Progress</div>
+            <div className="text-[13px] text-text-2">
+              <span className="font-semibold text-text">
+                {done} of {total}
+              </span>{' '}
+              · {percent}% complete
+            </div>
+          </div>
+          <SegmentedProgressBar counts={counts} total={total} height={10} />
+          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[12px]">
+            <LegendDot
+              color="bg-emerald-500"
+              label="passed"
+              value={counts.Passed}
+              valueClass="text-emerald-700"
+            />
+            <LegendDot
+              color="bg-red-500"
+              label="failed"
+              value={counts.Failed}
+              valueClass="text-red-700"
+            />
+            <LegendDot
+              color="bg-amber-500"
+              label="blocked"
+              value={counts.Blocked}
+              valueClass="text-amber-700"
+            />
+            <LegendDot
+              color="bg-slate-400"
+              label="skipped"
+              value={counts.Skipped}
+              valueClass="text-slate-700"
+            />
+            <LegendDot
+              color="bg-slate-200"
+              label="remaining"
+              value={counts.NotRun}
+              valueClass="text-slate-500"
+            />
+          </div>
+        </div>
+
+        {/* Two-column body */}
+        <div className="flex items-start gap-5">
+          {/* LEFT — filter chips + run list */}
+          <section className="min-w-0 flex-1">
+            <div className="mb-3 flex flex-wrap items-center gap-1.5">
+              {(['All', 'NotRun', 'Passed', 'Failed', 'Blocked', 'Skipped'] as const).map(r => {
+                const c = r === 'All' ? runs.length : (counts[r as RunResult] ?? 0);
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setFilter(r)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] transition-colors',
+                      filter === r
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'border border-border bg-surface text-text-2 hover:bg-surface-2',
+                    )}
+                  >
+                    {r === 'NotRun' ? 'Not run' : r}
+                    <span
+                      className={cn(
+                        'rounded-full px-1.5 text-[10px]',
+                        filter === r ? 'bg-white/20' : 'bg-surface-2 text-text-3',
+                      )}
+                    >
+                      {c}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {loading ? (
+              <EmptyState icon="ti-loader-2" title="Loading runs…" body="" spin />
+            ) : filteredRuns.length === 0 ? (
+              <EmptyState
+                icon="ti-list-check"
+                title={runs.length === 0 ? 'No runs in this cycle' : 'No runs match this filter'}
+                body={runs.length === 0 ? 'Add test cases to the cycle scope.' : 'Try the All tab.'}
+              />
+            ) : (
+              <div className="overflow-hidden rounded-lg border border-border bg-surface">
+                <table className="w-full border-collapse text-[13px]">
+                  <thead className="bg-surface-2">
+                    <tr>
+                      <th className="w-[36px] border-b border-border px-2 py-2.5" />
+                      <th className="w-[100px] border-b border-border px-4 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.04em] text-text-3">
+                        ID
+                      </th>
+                      <th className="border-b border-border px-4 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.04em] text-text-3">
+                        Title
+                      </th>
+                      <th className="w-[180px] border-b border-border px-4 py-2.5 text-right text-[11px] font-medium uppercase tracking-[0.04em] text-text-3">
+                        Result
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRuns.map(run => {
+                      const isSel = run.id === selectedRunId;
+                      return (
+                        <tr
+                          key={run.id}
+                          onClick={() => setSelectedRunId(run.id)}
+                          className={cn(
+                            'cursor-pointer border-b border-border transition-colors last:border-b-0',
+                            isSel ? 'bg-primary-light/70' : 'hover:bg-surface-2',
+                          )}
+                        >
+                          <td className="px-2 py-3 text-center">
+                            <ResultGlyph result={run.result} />
+                          </td>
+                          <td className="px-4 py-3 font-mono text-[12px] text-text-3">
+                            TC-{String(run.testCase.caseNum).padStart(2, '0')}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="block max-w-[420px] truncate font-medium text-text">
+                              {run.testCase.title}
+                            </span>
+                            <span className="block max-w-[420px] truncate text-[11px] text-text-3">
+                              {run.testCase.feature?.module.name} · {run.testCase.feature?.name}
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right">
+                            <ResultChip run={run} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {/* RIGHT — selected-case detail panel */}
+          {selectedRun && (
+            <SelectedCasePanel
+              key={selectedRun.id}
+              run={selectedRun}
+              readOnly={cycle.status !== 'Active'}
+              onSubmitResult={onSubmitResult}
+            />
+          )}
+        </div>
       </div>
 
+      {/* Summary modal — preserved */}
       {showReport && <CycleReportModal cycleId={cycle.id} onClose={() => setShowReport(false)} />}
     </div>
   );
 }
 
-function ProgressWidget({ summary, cycle }: { summary: CycleSummary | null; cycle: TestCycle }) {
-  const total = summary?.total ?? 0;
-  const done = summary?.done ?? 0;
-  const counts = summary?.counts ?? { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
-  const passPercent = total === 0 ? 0 : Math.round((counts.Passed / total) * 100);
-  const scopeTone =
-    cycle.scopeType === 'All'
-      ? 'bg-slate-100 text-slate-600'
-      : cycle.scopeType === 'Module'
-        ? 'bg-indigo-50 text-indigo-700'
-        : cycle.scopeType === 'Feature'
-          ? 'bg-blue-50 text-blue-700'
-          : 'bg-amber-50 text-amber-700';
+// ─── Selected case right-side panel ──────────────────────────
+
+function SelectedCasePanel({
+  run,
+  readOnly,
+  onSubmitResult,
+}: {
+  run: ApiTestRun;
+  readOnly: boolean;
+  onSubmitResult: (runId: string, result: RunResult, notes?: string) => Promise<void>;
+}) {
+  const [notes, setNotes] = useState(run.notes);
+  const [saving, setSaving] = useState<RunResult | null>(null);
+  const [savedNotes, setSavedNotes] = useState(false);
+  const tc = run.testCase;
+
+  // Reset local notes when the selected run changes.
+  useEffect(() => {
+    setNotes(run.notes);
+  }, [run.id, run.notes]);
+
+  const tone =
+    run.result === 'Passed'
+      ? 'border-emerald-300 ring-emerald-100'
+      : run.result === 'Failed'
+        ? 'border-red-300 ring-red-100'
+        : run.result === 'Blocked'
+          ? 'border-amber-300 ring-amber-100'
+          : run.result === 'Skipped'
+            ? 'border-slate-300 ring-slate-100'
+            : 'border-border ring-surface-2';
+
+  const labelTone =
+    run.result === 'Passed'
+      ? 'text-emerald-700'
+      : run.result === 'Failed'
+        ? 'text-red-700'
+        : run.result === 'Blocked'
+          ? 'text-amber-700'
+          : run.result === 'Skipped'
+            ? 'text-slate-600'
+            : 'text-text-3';
+
+  const submit = async (result: RunResult) => {
+    setSaving(result);
+    try {
+      await onSubmitResult(run.id, result, notes);
+      setSavedNotes(true);
+      setTimeout(() => setSavedNotes(false), 1500);
+    } finally {
+      setSaving(null);
+    }
+  };
 
   return (
-    <div className="border-b border-slate-200 bg-white px-6 py-4">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-lg font-bold text-slate-900">{cycle.name}</h1>
-          <div className="mt-1 flex items-center gap-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-              Scope:
-            </span>
-            <span
-              className={`rounded px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider ${scopeTone}`}
-            >
-              {cycle.scopeType}
-            </span>
-            <span className="truncate text-xs text-slate-700" title={cycle.scopeName ?? undefined}>
-              {cycle.scopeName ?? '—'}
-            </span>
+    <aside
+      className={cn(
+        'sticky top-2 w-[320px] flex-shrink-0 self-start overflow-hidden rounded-lg border-2 bg-surface ring-2',
+        tone,
+      )}
+    >
+      <div className="px-4 pb-3 pt-4">
+        <div className={cn('mb-1 text-[10px] font-semibold uppercase tracking-widest', labelTone)}>
+          Selected · {run.result === 'NotRun' ? 'Not run' : run.result}
+        </div>
+        <div className="font-mono text-[11px] text-text-3">
+          TC-{String(tc.caseNum).padStart(2, '0')}
+        </div>
+        <h3 className="mt-0.5 text-[14px] font-semibold leading-snug text-text">{tc.title}</h3>
+        <p className="mt-1 text-[11px] text-text-3">
+          {tc.feature?.module.name} · {tc.feature?.name}
+        </p>
+
+        <div className="mt-2 flex flex-wrap gap-1">
+          <Pill className={priorityBadge(tc.priority)}>{tc.priority}</Pill>
+          <Pill className={severityBadge(tc.severity)}>{tc.severity}</Pill>
+          <Pill className={typeBadge(tc.type)}>{tc.type}</Pill>
+        </div>
+      </div>
+
+      {/* Comment */}
+      <div className="border-t border-border px-4 py-3">
+        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-3">
+          Comment
+        </p>
+        <textarea
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          rows={4}
+          readOnly={readOnly}
+          placeholder={
+            readOnly
+              ? 'Run is closed — comments are read-only.'
+              : 'Notes, repro steps, environment…'
+          }
+          className={cn(
+            'w-full resize-y rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light',
+            readOnly && 'bg-surface-2/40',
+          )}
+        />
+        {savedNotes && <p className="mt-1 text-[11px] text-emerald-600">Saved ✓</p>}
+      </div>
+
+      {/* Evidence (placeholder tiles — upload backend pending) */}
+      <div className="border-t border-border px-4 py-3">
+        <p className="mb-1.5 flex items-center justify-between text-[10px] font-semibold uppercase tracking-widest text-text-3">
+          Evidence
+          <span className="rounded bg-surface-2 px-1.5 py-px text-[9px] font-normal normal-case text-text-3">
+            Coming soon
+          </span>
+        </p>
+        <div className="grid grid-cols-3 gap-1.5">
+          <EvidenceTile icon="ti-photo" />
+          <EvidenceTile icon="ti-video" />
+          <EvidenceTile icon="ti-plus" dashed />
+        </div>
+      </div>
+
+      {/* Submit result */}
+      {!readOnly && (
+        <div className="border-t border-border px-4 py-3">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-text-3">
+            Submit result
+          </p>
+          <div className="grid grid-cols-2 gap-1.5">
+            {RESULTS.map(r => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => submit(r)}
+                disabled={saving !== null}
+                className={cn(
+                  'rounded-md border px-2 py-1.5 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                  RESULT_BTN[r],
+                  run.result === r && 'ring-2 ring-primary-light',
+                )}
+              >
+                {saving === r ? 'Saving…' : r}
+              </button>
+            ))}
           </div>
-          <p className="mt-1 text-xs text-slate-400">
-            {done} of {total} runs complete
-          </p>
+          {run.result !== 'NotRun' && (
+            <button
+              type="button"
+              onClick={() => submit('NotRun')}
+              disabled={saving !== null}
+              className="mt-2 w-full rounded-md border border-dashed border-border px-2 py-1 text-[11px] text-text-3 hover:bg-surface-2"
+            >
+              Reset to Not run
+            </button>
+          )}
+          {run.executedAt && (
+            <p className="mt-2 text-[10px] text-text-3">
+              Last submitted {timeAgo(run.executedAt)}
+              {run.executedBy ? ` by ${run.executedBy}` : ''}
+            </p>
+          )}
         </div>
-        <div className="ml-4 text-right">
-          <div className="text-2xl font-bold text-green-600">{passPercent}%</div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-            Pass rate
-          </p>
-        </div>
-      </div>
+      )}
+    </aside>
+  );
+}
 
-      <SegmentedProgressBar counts={counts} total={total} height={10} />
+// ─── Visual atoms ──────────────────────────────────────────
 
-      <div className="mt-3 flex items-center gap-3 text-xs">
-        <span className="flex items-center gap-1.5 text-slate-500">
-          <span className="inline-block h-2 w-2 rounded-full bg-slate-300" />
-          Not run <span className="font-semibold text-slate-700">{counts.NotRun}</span>
-        </span>
-        <span className="flex items-center gap-1.5 text-slate-500">
-          <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
-          Passed <span className="font-semibold text-green-700">{counts.Passed}</span>
-        </span>
-        <span className="flex items-center gap-1.5 text-slate-500">
-          <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
-          Failed <span className="font-semibold text-red-700">{counts.Failed}</span>
-        </span>
-        <span className="flex items-center gap-1.5 text-slate-500">
-          <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
-          Blocked <span className="font-semibold text-amber-700">{counts.Blocked}</span>
-        </span>
-        <span className="flex items-center gap-1.5 text-slate-500">
-          <span className="inline-block h-2 w-2 rounded-full bg-slate-400" />
-          Skipped <span className="font-semibold text-slate-700">{counts.Skipped}</span>
-        </span>
-      </div>
+function ResultGlyph({ result }: { result: RunResult }) {
+  if (result === 'Passed')
+    return (
+      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+        <i className="ti ti-check text-[12px]" />
+      </span>
+    );
+  if (result === 'Failed')
+    return (
+      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-700">
+        <i className="ti ti-x text-[12px]" />
+      </span>
+    );
+  if (result === 'Blocked')
+    return (
+      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+        <i className="ti ti-player-pause text-[12px]" />
+      </span>
+    );
+  if (result === 'Skipped')
+    return (
+      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-slate-600">
+        <i className="ti ti-player-skip-forward text-[12px]" />
+      </span>
+    );
+  return (
+    <span className="inline-block h-3.5 w-3.5 rounded-full border-[1.5px] border-border-strong" />
+  );
+}
+
+function ResultChip({ run }: { run: ApiTestRun }) {
+  if (run.result === 'NotRun') {
+    return <span className="text-[12px] text-text-3">—</span>;
+  }
+  const baseColor =
+    run.result === 'Passed'
+      ? 'text-emerald-700'
+      : run.result === 'Failed'
+        ? 'text-red-700'
+        : run.result === 'Blocked'
+          ? 'text-amber-700'
+          : 'text-slate-600';
+  const symbol =
+    run.result === 'Passed'
+      ? '✓'
+      : run.result === 'Failed'
+        ? '✗'
+        : run.result === 'Blocked'
+          ? '‖'
+          : '↷';
+  return (
+    <span className={cn('inline-flex items-center gap-1 text-[12.5px] font-medium', baseColor)}>
+      <span>{symbol}</span>
+      <span>{run.result}</span>
+      {run.executedAt && <span className="text-text-3">· {timeAgo(run.executedAt)}</span>}
+    </span>
+  );
+}
+
+function Pill({ children, className }: { children: React.ReactNode; className: string }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-medium leading-[1.5]',
+        className,
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function LegendDot({
+  color,
+  label,
+  value,
+  valueClass,
+}: {
+  color: string;
+  label: string;
+  value: number;
+  valueClass?: string;
+}) {
+  return (
+    <span className="flex items-center gap-1.5 text-text-2">
+      <span className={cn('inline-block h-2 w-2 rounded-full', color)} />
+      <span className={cn('font-semibold', valueClass)}>{value}</span>
+      <span>{label}</span>
+    </span>
+  );
+}
+
+function EvidenceTile({ icon, dashed }: { icon: string; dashed?: boolean }) {
+  return (
+    <div
+      className={cn(
+        'flex aspect-[4/3] items-center justify-center rounded-md text-text-3',
+        dashed ? 'border border-dashed border-border-strong hover:bg-surface-2' : 'bg-surface-2',
+      )}
+    >
+      <i className={cn('ti', icon, 'text-[20px]')} />
     </div>
   );
 }
+
+function EmptyState({
+  icon,
+  title,
+  body,
+  spin,
+}: {
+  icon: string;
+  title: string;
+  body: string;
+  spin?: boolean;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border bg-surface py-20 text-text-3">
+      <i className={cn('ti', icon, 'text-[36px] opacity-50', spin && 'animate-spin')} />
+      <p className="text-[14px] font-medium text-text-2">{title}</p>
+      {body && <p className="max-w-[260px] text-center text-[12px]">{body}</p>}
+    </div>
+  );
+}
+
+// ─── Progress bar (kept stable since other screens / report import it) ─
 
 interface SegBarProps {
   counts: { Passed: number; Failed: number; Blocked: number; Skipped: number; NotRun: number };
@@ -234,7 +635,7 @@ interface SegBarProps {
 export function SegmentedProgressBar({ counts, total, height = 6 }: SegBarProps) {
   const pct = (n: number) => (total === 0 ? 0 : (n / total) * 100);
   const segments = [
-    { color: 'bg-green-500', width: pct(counts.Passed), title: `Passed: ${counts.Passed}` },
+    { color: 'bg-emerald-500', width: pct(counts.Passed), title: `Passed: ${counts.Passed}` },
     { color: 'bg-red-500', width: pct(counts.Failed), title: `Failed: ${counts.Failed}` },
     { color: 'bg-amber-500', width: pct(counts.Blocked), title: `Blocked: ${counts.Blocked}` },
     { color: 'bg-slate-400', width: pct(counts.Skipped), title: `Skipped: ${counts.Skipped}` },
@@ -256,152 +657,44 @@ export function SegmentedProgressBar({ counts, total, height = 6 }: SegBarProps)
   );
 }
 
-interface RunRowProps {
-  run: ApiTestRun;
-  expanded: boolean;
-  onToggle: () => void;
-  onSubmit: (result: RunResult, notes?: string) => Promise<void>;
+// ─── helpers ───────────────────────────────────────────────
+
+function buildSubtitle(cycle: TestCycle, total: number): string {
+  const parts: string[] = [];
+  parts.push(`${total} case${total === 1 ? '' : 's'}`);
+  parts.push(`started ${timeAgo(cycle.createdAt)}`);
+  if (cycle.targetDate) parts.push(`due ${dueLabel(cycle.targetDate)}`);
+  if (cycle.scopeName) parts.push(cycle.scopeName);
+  return parts.join(' · ');
 }
 
-function RunRow({ run, expanded, onToggle, onSubmit }: RunRowProps) {
-  const [notes, setNotes] = useState(run.notes);
-  const [saving, setSaving] = useState<RunResult | null>(null);
-  const tc = run.testCase;
+function timeAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const d = Math.floor(hr / 24);
+  if (d < 30) return `${d}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
 
-  const handleClick = async (result: RunResult) => {
-    setSaving(result);
-    try {
-      await onSubmit(result, notes);
-    } finally {
-      setSaving(null);
-    }
-  };
+function dueLabel(iso: string): string {
+  const due = new Date(iso);
+  const now = new Date();
+  const sameDay = due.toDateString() === now.toDateString();
+  if (sameDay) return 'today';
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (due.toDateString() === tomorrow.toDateString()) return 'tomorrow';
+  return due.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
 
-  const stepsArray = Array.isArray(tc.steps) ? (tc.steps as string[]) : [String(tc.steps ?? '')];
-  const isHtml = stepsArray.length === 1 && /<\/?[a-z][\s\S]*>/i.test(stepsArray[0]);
-
-  return (
-    <>
-      {/* Main row */}
-      <tr
-        onClick={onToggle}
-        className="cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50"
-      >
-        <td className="w-6 px-3 py-2.5 text-[10px] text-slate-400">{expanded ? '▼' : '▶'}</td>
-        <td className="whitespace-nowrap px-3 py-2.5">
-          <span className="font-mono text-[11px] font-semibold text-slate-400">
-            TC-{String(tc.caseNum).padStart(4, '0')}
-          </span>
-        </td>
-        <td className="px-3 py-2.5">
-          <span className="block max-w-[320px] truncate font-semibold text-slate-900">
-            {tc.title}
-          </span>
-          <span className="block max-w-[320px] truncate text-[11px] text-slate-400">
-            {tc.feature?.module.name} · {tc.feature?.name}
-          </span>
-        </td>
-        <td className="px-3 py-2.5">
-          <Badge className={priorityBadge(tc.priority)}>{tc.priority}</Badge>
-        </td>
-        <td className="px-3 py-2.5">
-          <Badge className={severityBadge(tc.severity)}>{tc.severity}</Badge>
-        </td>
-        <td className="px-3 py-2.5">
-          <Badge className={typeBadge(tc.type)}>{tc.type}</Badge>
-        </td>
-        <td className="px-3 py-2.5">
-          <Badge className={RESULT_BADGE[run.result]}>
-            {run.result === 'NotRun' ? 'Not run' : run.result}
-          </Badge>
-        </td>
-      </tr>
-
-      {/* Expanded details row */}
-      {expanded && (
-        <tr className="border-b border-slate-100 bg-slate-50" onClick={e => e.stopPropagation()}>
-          <td colSpan={7} className="px-6 pb-5 pt-3">
-            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-              <div>
-                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  Description
-                </p>
-                <p className="text-sm leading-relaxed text-slate-700">{tc.desc || '—'}</p>
-
-                <p className="mb-1.5 mt-4 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  Steps
-                </p>
-                {isHtml ? (
-                  <div
-                    className="rich-editor text-sm leading-relaxed text-slate-700"
-                    dangerouslySetInnerHTML={{ __html: stepsArray[0] }}
-                  />
-                ) : (
-                  <ol className="list-decimal space-y-1 pl-5 text-sm leading-relaxed text-slate-700">
-                    {stepsArray.map((s, i) => (
-                      <li key={i}>{s}</li>
-                    ))}
-                  </ol>
-                )}
-
-                <p className="mb-1.5 mt-4 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  Expected result
-                </p>
-                <p className="text-sm leading-relaxed text-slate-700">{tc.expected || '—'}</p>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <div>
-                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                    Notes
-                  </p>
-                  <textarea
-                    value={notes}
-                    onChange={e => setNotes(e.target.value)}
-                    rows={4}
-                    placeholder="Add any observations, failure details, or links…"
-                    className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  />
-                </div>
-
-                <div>
-                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                    Submit result
-                  </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {RESULTS.map(r => (
-                      <button
-                        key={r}
-                        onClick={() => handleClick(r)}
-                        disabled={saving !== null}
-                        className={`cursor-pointer rounded-lg border px-3 py-2 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50 ${RESULT_BTN[r]} ${
-                          run.result === r ? 'ring-2 ring-blue-200' : ''
-                        }`}
-                      >
-                        {saving === r ? 'Saving…' : r}
-                      </button>
-                    ))}
-                  </div>
-                  {run.result !== 'NotRun' && (
-                    <button
-                      onClick={() => handleClick('NotRun')}
-                      disabled={saving !== null}
-                      className="mt-2 w-full cursor-pointer rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] text-slate-500 hover:bg-slate-100"
-                    >
-                      Reset to Not run
-                    </button>
-                  )}
-                  {run.executedAt && (
-                    <p className="mt-2 text-[10px] text-slate-400">
-                      Last submitted: {new Date(run.executedAt).toLocaleString()}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
-  );
+function shortRunCode(cycle: TestCycle): string {
+  const d = new Date(cycle.createdAt);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `R-${y}-${m}-${day}`;
 }

@@ -1,10 +1,14 @@
 import { prisma } from '@/lib/db';
 import { ok, serverError } from '@/lib/api';
 
-// GET /api/dashboard
-// Returns stats + chart data for the home dashboard.
-export async function GET() {
+// GET /api/dashboard?projectId=...
+// Returns stats + chart data for the home dashboard, optionally scoped to a project.
+export async function GET(req: Request) {
   try {
+    const projectId = new URL(req.url).searchParams.get('projectId') || undefined;
+    const wsCycle = projectId ? { projectId } : {};
+    const wsCase = projectId ? { suite: { module: { portal: { projectId } } } } : {};
+
     const now = new Date();
     const thirtyDaysAgo = new Date(now);
     thirtyDaysAgo.setDate(now.getDate() - 30);
@@ -12,8 +16,6 @@ export async function GET() {
     sixtyDaysAgo.setDate(now.getDate() - 60);
     const todayStart = new Date(now);
     todayStart.setHours(0, 0, 0, 0);
-    const yesterdayStart = new Date(todayStart);
-    yesterdayStart.setDate(todayStart.getDate() - 1);
 
     const [
       totalCases,
@@ -26,30 +28,39 @@ export async function GET() {
       allRuns,
       recentCyclesRaw,
     ] = await Promise.all([
-      prisma.testCase.count(),
+      prisma.testCase.count({ where: wsCase }),
       prisma.testRun.findMany({
-        where: { executedAt: { gte: thirtyDaysAgo }, NOT: { result: 'NotRun' } },
+        where: {
+          executedAt: { gte: thirtyDaysAgo },
+          NOT: { result: 'NotRun' },
+          testCase: wsCase,
+        },
         select: {
           result: true,
           executedAt: true,
-          testCase: { select: { feature: { select: { module: { select: { name: true } } } } } },
+          testCase: { select: { suite: { select: { module: { select: { name: true } } } } } },
         },
       }),
       prisma.testRun.findMany({
-        where: { executedAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo }, NOT: { result: 'NotRun' } },
+        where: {
+          executedAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo },
+          NOT: { result: 'NotRun' },
+          testCase: wsCase,
+        },
         select: { result: true },
       }),
       prisma.testRun.count({
-        where: { result: 'Failed', cycle: { status: 'Active' } },
+        where: { result: 'Failed', cycle: { status: 'Active', ...wsCycle } },
       }),
       prisma.testRun.count({
-        where: { result: 'Failed', executedAt: { gte: todayStart } },
+        where: { result: 'Failed', executedAt: { gte: todayStart }, cycle: wsCycle },
       }),
       prisma.module.findMany({
+        where: projectId ? { portal: { projectId } } : undefined,
         select: {
           id: true,
           name: true,
-          features: {
+          suites: {
             select: {
               testCases: {
                 select: {
@@ -62,17 +73,18 @@ export async function GET() {
         },
       }),
       prisma.module.findMany({
+        where: projectId ? { portal: { projectId } } : undefined,
         select: {
           name: true,
-          features: { select: { _count: { select: { testCases: true } } } },
+          suites: { select: { _count: { select: { testCases: true } } } },
         },
       }),
       prisma.testRun.findMany({
-        where: { executedAt: { not: null } },
+        where: { executedAt: { not: null }, cycle: wsCycle },
         select: { result: true, executedAt: true },
       }),
       prisma.testCycle.findMany({
-        where: { status: { not: 'Archived' } },
+        where: { status: { not: 'Archived' }, ...wsCycle },
         orderBy: { createdAt: 'desc' },
         take: 8,
         include: {
@@ -85,27 +97,25 @@ export async function GET() {
     const recentModuleIds = recentCyclesRaw
       .filter(c => c.scopeType === 'Module' && c.scopeId)
       .map(c => c.scopeId!);
-    const recentFeatureIds = recentCyclesRaw
-      .filter(c => c.scopeType === 'Feature' && c.scopeId)
+    const recentSuiteIds = recentCyclesRaw
+      .filter(c => c.scopeType === 'Suite' && c.scopeId)
       .map(c => c.scopeId!);
-    const [recentModules, recentFeatures] = await Promise.all([
+    const [recentModules, recentSuites] = await Promise.all([
       recentModuleIds.length === 0
         ? Promise.resolve([])
         : prisma.module.findMany({
             where: { id: { in: recentModuleIds } },
             select: { id: true, name: true },
           }),
-      recentFeatureIds.length === 0
+      recentSuiteIds.length === 0
         ? Promise.resolve([])
-        : prisma.feature.findMany({
-            where: { id: { in: recentFeatureIds } },
+        : prisma.suite.findMany({
+            where: { id: { in: recentSuiteIds } },
             select: { id: true, name: true, module: { select: { name: true } } },
           }),
     ]);
     const recentModuleMap = new Map(recentModules.map(m => [m.id, m.name]));
-    const recentFeatureMap = new Map(
-      recentFeatures.map(f => [f.id, `${f.module.name} / ${f.name}`]),
-    );
+    const recentSuiteMap = new Map(recentSuites.map(s => [s.id, `${s.module.name} / ${s.name}`]));
 
     // Pass rate for 30d window
     const passed30d = runs30d.filter(r => r.result === 'Passed').length;
@@ -127,7 +137,7 @@ export async function GET() {
     }[] = [];
     const monday = new Date(now);
     monday.setHours(0, 0, 0, 0);
-    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7)); // back to Monday
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
     for (let i = 7; i >= 0; i--) {
       const start = new Date(monday);
       start.setDate(start.getDate() - i * 7);
@@ -156,7 +166,7 @@ export async function GET() {
     const casesByMod = casesByModule
       .map(m => ({
         name: m.name,
-        count: m.features.reduce((sum, f) => sum + f._count.testCases, 0),
+        count: m.suites.reduce((sum, s) => sum + s._count.testCases, 0),
       }))
       .filter(m => m.count > 0);
 
@@ -164,8 +174,8 @@ export async function GET() {
     const moduleStability = modules.map(m => {
       let total = 0,
         passed = 0;
-      for (const f of m.features) {
-        for (const tc of f.testCases) {
+      for (const s of m.suites) {
+        for (const tc of s.testCases) {
           for (const r of tc.runs) {
             if (r.result === 'NotRun') continue;
             total++;
@@ -190,8 +200,8 @@ export async function GET() {
       else if (c.scopeType === 'Custom') scopeName = 'Custom selection';
       else if (c.scopeType === 'Module' && c.scopeId)
         scopeName = recentModuleMap.get(c.scopeId) ?? null;
-      else if (c.scopeType === 'Feature' && c.scopeId)
-        scopeName = recentFeatureMap.get(c.scopeId) ?? null;
+      else if (c.scopeType === 'Suite' && c.scopeId)
+        scopeName = recentSuiteMap.get(c.scopeId) ?? null;
 
       return {
         id: c.id,

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { Prisma, Priority, Severity, TestType } from '@prisma/client';
+import { Prisma, Priority, Severity, TestType, CaseStatus } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
 interface Ctx {
@@ -9,13 +9,27 @@ interface Ctx {
 const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
 const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
 const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
+const STATUSES: CaseStatus[] = ['Active', 'Draft', 'Archived'];
+
+const ownerSelect = {
+  id: true,
+  name: true,
+  username: true,
+  email: true,
+  avatarUrl: true,
+} as const;
+
+const caseInclude = {
+  suite: { include: { module: { select: { id: true, name: true } } } },
+  owner: { select: ownerSelect },
+} as const;
 
 // GET /api/test-cases/:id
 export async function GET(_req: Request, { params }: Ctx) {
   try {
     const tc = await prisma.testCase.findUnique({
       where: { id: params.id },
-      include: { feature: { include: { module: { select: { id: true, name: true } } } } },
+      include: caseInclude,
     });
     if (!tc) return notFound('Test case not found');
     return ok(tc);
@@ -55,8 +69,28 @@ export async function PATCH(req: Request, { params }: Ctx) {
       if (!TYPES.includes(body.type as TestType)) return bad('invalid type');
       data.type = body.type as TestType;
     }
-    if (typeof body.featureId === 'string') {
-      data.feature = { connect: { id: body.featureId } };
+    if (body.status !== undefined) {
+      if (!STATUSES.includes(body.status as CaseStatus)) return bad('invalid status');
+      data.status = body.status as CaseStatus;
+    }
+    if (body.ownerId !== undefined) {
+      const oid = body.ownerId;
+      if (oid === null || oid === '') {
+        data.owner = { disconnect: true };
+      } else if (typeof oid === 'string') {
+        data.owner = { connect: { id: oid } };
+      } else {
+        return bad('ownerId must be a string or null');
+      }
+    }
+    const newSuiteId =
+      typeof body.suiteId === 'string'
+        ? body.suiteId
+        : typeof body.featureId === 'string'
+          ? body.featureId
+          : undefined;
+    if (newSuiteId) {
+      data.suite = { connect: { id: newSuiteId } };
     }
 
     if (Object.keys(data).length === 0) return bad('nothing to update');
@@ -64,7 +98,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
     const tc = await prisma.testCase.update({
       where: { id: params.id },
       data,
-      include: { feature: { include: { module: { select: { id: true, name: true } } } } },
+      include: caseInclude,
     });
     return ok(tc);
   } catch (e) {

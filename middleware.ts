@@ -17,7 +17,11 @@ const PUBLIC_API_PATHS = [
   '/api/auth/me',
   '/api/auth/google',
   '/api/auth/google/callback',
+  '/api/auth/microsoft',
+  '/api/auth/microsoft/callback',
   '/api/auth/config',
+  // Invite token endpoints must be reachable before sign-in (peek + register-with-invite).
+  '/api/invites',
 ];
 
 export function middleware(req: NextRequest) {

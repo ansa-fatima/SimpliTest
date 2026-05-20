@@ -8,15 +8,15 @@ interface Ctx {
 // GET /api/features/:id
 export async function GET(_req: Request, { params }: Ctx) {
   try {
-    const feat = await prisma.feature.findUnique({
+    const suite = await prisma.suite.findUnique({
       where: { id: params.id },
       include: {
         module: { select: { id: true, name: true } },
         _count: { select: { testCases: true } },
       },
     });
-    if (!feat) return notFound('Feature not found');
-    return ok(feat);
+    if (!suite) return notFound('Suite not found');
+    return ok(suite);
   } catch (e) {
     return serverError(e);
   }
@@ -35,8 +35,8 @@ export async function PATCH(req: Request, { params }: Ctx) {
     if (body?.moduleId !== undefined) data.moduleId = body.moduleId;
     if (Object.keys(data).length === 0) return bad('nothing to update');
 
-    const feat = await prisma.feature.update({ where: { id: params.id }, data });
-    return ok(feat);
+    const suite = await prisma.suite.update({ where: { id: params.id }, data });
+    return ok(suite);
   } catch (e) {
     return prismaError(e) ?? serverError(e);
   }
@@ -45,7 +45,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
 // DELETE /api/features/:id — cascades to test cases
 export async function DELETE(_req: Request, { params }: Ctx) {
   try {
-    await prisma.feature.delete({ where: { id: params.id } });
+    await prisma.suite.delete({ where: { id: params.id } });
     return ok({ deleted: true });
   } catch (e) {
     return prismaError(e) ?? serverError(e);

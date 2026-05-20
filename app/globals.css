@@ -8,24 +8,38 @@ body {
   overflow: hidden;
 }
 
+body {
+  background: #fafaf9;
+  color: #1c1917;
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
 * {
   box-sizing: border-box;
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #e2e8f0;
-  border-radius: 4px;
+  background: #d6d3d1;
+  border-radius: 5px;
+  border: 2px solid #fafaf9;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #cbd5e1;
+  background: #a8a29e;
 }
 
 /* Tailwind animation utilities for toast */

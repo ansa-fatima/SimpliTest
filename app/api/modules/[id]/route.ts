@@ -10,7 +10,7 @@ export async function GET(_req: Request, { params }: Ctx) {
   try {
     const mod = await prisma.module.findUnique({
       where: { id: params.id },
-      include: { features: { orderBy: { name: 'asc' } } },
+      include: { suites: { orderBy: { name: 'asc' } } },
     });
     if (!mod) return notFound('Module not found');
     return ok(mod);

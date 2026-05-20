@@ -16,7 +16,7 @@ export async function GET(_req: Request, { params }: Ctx) {
       include: {
         testCase: {
           include: {
-            feature: { include: { module: { select: { id: true, name: true } } } },
+            suite: { include: { module: { select: { id: true, name: true } } } },
           },
         },
       },
@@ -59,7 +59,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
       include: {
         testCase: {
           include: {
-            feature: { include: { module: { select: { id: true, name: true } } } },
+            suite: { include: { module: { select: { id: true, name: true } } } },
           },
         },
       },

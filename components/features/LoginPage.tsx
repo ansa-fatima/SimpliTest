@@ -1,17 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, ArrowRight, Sparkles } from 'lucide-react';
 import { Logo } from '@/components/ui/Logo';
 import { api } from '@/lib/client';
-
-interface SessionUser {
-  id: string;
-  username: string;
-  email: string;
-  name: string;
-  role: 'SuperAdmin' | 'QAManager' | 'Tester' | 'Developer' | 'Viewer';
-}
+import type { SessionUser } from '@/hooks/useStore';
 
 interface LoginPageProps {
   onLogin: (user: SessionUser) => void;
@@ -20,10 +13,10 @@ interface LoginPageProps {
 type Mode = 'signin' | 'register';
 
 const ERR_MESSAGES: Record<string, string> = {
-  state_mismatch: 'Google sign-in failed: security check failed. Please try again.',
-  exchange_failed: 'Google sign-in failed: could not verify your account.',
-  missing_params: 'Google sign-in was cancelled.',
-  access_denied: 'Google sign-in was cancelled.',
+  state_mismatch: 'Sign-in failed: security check failed. Please try again.',
+  exchange_failed: 'Sign-in failed: could not verify your account.',
+  missing_params: 'Sign-in was cancelled.',
+  access_denied: 'Sign-in was cancelled.',
 };
 
 export function LoginPage({ onLogin }: LoginPageProps) {
@@ -34,31 +27,19 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [keepSignedIn, setKeepSignedIn] = useState(true);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [providers, setProviders] = useState<{ google: boolean }>({ google: false });
 
-  // Pick up auth_error from URL (set by Google callback on failures)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const e = params.get('auth_error');
     if (e) {
       setError(ERR_MESSAGES[e] ?? `Sign-in failed: ${e}`);
-      // clean the URL so a refresh doesn't show the error again
       const clean = window.location.pathname + window.location.hash;
       window.history.replaceState({}, '', clean);
     }
-  }, []);
-
-  // Fetch enabled providers (Google may or may not be configured)
-  useEffect(() => {
-    api
-      .get<{ google: boolean }>('/api/auth/config')
-      .then(setProviders)
-      .catch(() => {
-        /* fall back to email-only */
-      });
   }, []);
 
   const isRegister = mode === 'register';
@@ -98,216 +79,250 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     }
   };
 
-  const handleGoogle = () => {
-    // Full-page redirect; Google brings the user back via /api/auth/google/callback
-    window.location.href = '/api/auth/google';
-  };
-
   return (
-    <div className="flex flex-1 items-center justify-center bg-gradient-to-br from-indigo-50 via-slate-50 to-sky-50 px-4">
-      <div className="flex w-full max-w-[400px] flex-col gap-5 rounded-2xl border border-slate-200 bg-white p-8 shadow-xl">
-        {/* Logo */}
-        <div className="flex flex-col items-center gap-2">
-          <Logo size={44} />
-          <span className="text-base font-bold text-slate-900">SimpliTest</span>
-        </div>
+    <div className="grid h-screen w-full grid-cols-1 overflow-hidden bg-bg lg:grid-cols-[1fr_440px]">
+      {/* LEFT — form panel */}
+      <div className="flex items-center justify-center overflow-y-auto p-6 sm:p-10">
+        <div className="w-full max-w-[400px] animate-[fadeUp_0.45s_ease-out]">
+          {/* Logo */}
+          <div className="mb-8 flex items-center gap-2.5">
+            <Logo size={32} />
+            <span className="text-[18px] font-semibold tracking-tight text-text">Simplitest</span>
+          </div>
 
-        {/* Heading */}
-        <div className="text-center">
-          <h1 className="text-lg font-bold text-slate-900">
-            {isRegister ? 'Create your account' : 'Welcome back'}
+          <h1 className="mb-2 text-[26px] font-semibold leading-tight tracking-[-0.02em] text-text">
+            {isRegister ? 'Create your workspace' : 'Sign in to your workspace'}
           </h1>
-          <p className="mt-0.5 text-xs text-slate-400">
+          <p className="mb-7 text-[14px] text-text-2">
             {isRegister
-              ? 'Sign up to start managing your test cases'
-              : 'Sign in with email or username'}
+              ? 'Set up your QA workspace in seconds.'
+              : 'Welcome back. Enter your details to continue.'}
           </p>
-        </div>
 
-        {/* Google button */}
-        {providers.google && (
-          <>
-            <button
-              onClick={handleGoogle}
-              type="button"
-              className="flex w-full cursor-pointer items-center justify-center gap-2.5 rounded-lg border border-slate-200 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50"
-            >
-              <GoogleIcon />
-              Continue with Google
-            </button>
-            <div className="flex items-center gap-2">
-              <hr className="flex-1 border-slate-200" />
-              <span className="text-[11px] uppercase tracking-wider text-slate-400">or</span>
-              <hr className="flex-1 border-slate-200" />
-            </div>
-          </>
-        )}
-
-        {/* Form */}
-        <div className="flex flex-col gap-3">
-          {isRegister ? (
-            <>
-              <Field label="Display name" sub="(optional)">
-                <input
-                  type="text"
+          {/* Form */}
+          <div className="flex flex-col">
+            {isRegister && (
+              <>
+                <FieldLabel>Display name</FieldLabel>
+                <Input
                   value={name}
-                  onChange={e => setName(e.target.value)}
+                  onChange={setName}
                   placeholder="Your full name"
-                  className={inputCls}
+                  autoComplete="name"
                 />
-              </Field>
-              <Field label="Username" hint="3–32 chars · letters, digits, _ . -">
-                <input
-                  type="text"
+                <FieldLabel>Username</FieldLabel>
+                <Input
                   value={username}
-                  onChange={e => setUsername(e.target.value)}
+                  onChange={setUsername}
                   placeholder="yourname"
                   autoComplete="username"
-                  className={inputCls}
                 />
-              </Field>
-              <Field label="Email">
-                <input
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  placeholder="you@company.com"
-                  autoComplete="email"
-                  className={inputCls}
-                />
-              </Field>
-            </>
-          ) : (
-            <Field label="Email or username">
-              <input
-                type="text"
-                value={identifier}
-                onChange={e => setIdentifier(e.target.value)}
-                placeholder="you@company.com or yourname"
-                autoComplete="username"
-                className={inputCls}
-              />
-            </Field>
-          )}
+              </>
+            )}
 
-          <Field label="Password" hint={isRegister ? 'Minimum 8 characters' : undefined}>
-            <div className="relative">
+            <FieldLabel>{isRegister ? 'Email' : 'Work email or username'}</FieldLabel>
+            <Input
+              value={isRegister ? email : identifier}
+              onChange={isRegister ? setEmail : setIdentifier}
+              placeholder={isRegister ? 'you@company.com' : 'aisha@school.edu'}
+              type={isRegister ? 'email' : 'text'}
+              autoComplete={isRegister ? 'email' : 'username'}
+            />
+
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className="text-[13px] font-medium text-text">Password</label>
+              {!isRegister && (
+                <button
+                  type="button"
+                  className="text-[13px] font-medium text-primary transition-colors hover:text-primary-hover"
+                  disabled
+                >
+                  Forgot?
+                </button>
+              )}
+            </div>
+            <div className="relative mb-4">
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••"
+                placeholder="••••••••••"
                 autoComplete={isRegister ? 'new-password' : 'current-password'}
                 onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-                className={`${inputCls} pr-10`}
+                className="w-full rounded-lg border border-border bg-surface px-3.5 py-2.5 pr-10 text-sm text-text outline-none transition-all placeholder:text-text-3 focus:border-primary focus:ring-[3px] focus:ring-primary-light"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(s => !s)}
                 tabIndex={-1}
                 title={showPassword ? 'Hide password' : 'Show password'}
-                className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer rounded p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text"
               >
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
-          </Field>
 
-          {error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              {error}
+            {!isRegister && (
+              <label className="mb-5 flex cursor-pointer items-center gap-2 text-[13px] text-text-2">
+                <CheckBox checked={keepSignedIn} onChange={setKeepSignedIn} />
+                Keep me signed in for 30 days
+              </label>
+            )}
+
+            {error && (
+              <div className="mb-3 rounded-lg border border-danger/30 bg-danger-bg px-3 py-2 text-xs text-danger-text">
+                {error}
+              </div>
+            )}
+
+            <button
+              onClick={handleSubmit}
+              disabled={!canSubmit}
+              className="group relative inline-flex w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-br from-[#6366F1] via-[#6D5BEA] to-[#7C3AED] px-4 py-3 text-[14px] font-semibold text-white shadow-[0_4px_14px_-2px_rgba(99,102,241,0.45)] ring-1 ring-white/15 transition-all hover:shadow-[0_8px_22px_-3px_rgba(99,102,241,0.55)] hover:brightness-[1.05] active:translate-y-px active:brightness-95 disabled:cursor-not-allowed disabled:from-text-3 disabled:via-text-3 disabled:to-text-3 disabled:shadow-none disabled:ring-0"
+            >
+              {/* Subtle moving shine on hover */}
+              <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/25 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
+              <span className="relative">
+                {submitting
+                  ? isRegister
+                    ? 'Creating workspace…'
+                    : 'Signing in…'
+                  : isRegister
+                    ? 'Create workspace'
+                    : 'Sign in'}
+              </span>
+              <ArrowRight className="relative h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            </button>
+
+            <div className="mt-7 text-center text-[13px] text-text-3">
+              {isRegister ? (
+                <>
+                  Already have an account?{' '}
+                  <button
+                    onClick={() => switchMode('signin')}
+                    className="font-medium text-primary transition-colors hover:text-primary-hover hover:underline"
+                  >
+                    Sign in
+                  </button>
+                </>
+              ) : (
+                <>
+                  New workspace?{' '}
+                  <button
+                    onClick={() => switchMode('register')}
+                    className="font-medium text-primary transition-colors hover:text-primary-hover hover:underline"
+                  >
+                    Create one
+                  </button>
+                </>
+              )}
             </div>
-          )}
-
-          <button
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-            className="w-full cursor-pointer rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-          >
-            {submitting
-              ? isRegister
-                ? 'Creating account…'
-                : 'Signing in…'
-              : isRegister
-                ? 'Create account'
-                : 'Sign in'}
-          </button>
-        </div>
-
-        {/* Toggle */}
-        <div className="text-center text-xs text-slate-500">
-          {isRegister ? (
-            <>
-              Already have an account?{' '}
-              <button
-                onClick={() => switchMode('signin')}
-                className="font-semibold text-blue-600 hover:underline"
-              >
-                Sign in
-              </button>
-            </>
-          ) : (
-            <>
-              No account yet?{' '}
-              <button
-                onClick={() => switchMode('register')}
-                className="font-semibold text-blue-600 hover:underline"
-              >
-                Register
-              </button>
-            </>
-          )}
+          </div>
         </div>
       </div>
+
+      {/* RIGHT — brand panel */}
+      <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#4F46E5] via-[#6D5BEA] to-[#7C3AED] p-10 text-white lg:flex">
+        {/* Decorative blobs */}
+        <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-32 -left-16 h-80 w-80 rounded-full bg-fuchsia-400/20 blur-3xl" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_30%_120%,rgba(255,255,255,0.15),transparent_50%)]" />
+
+        <div className="relative flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] opacity-90">
+          <Sparkles className="h-3.5 w-3.5" />
+          Simplitest · v1.0
+        </div>
+
+        <div className="relative animate-[fadeUp_0.6s_0.1s_both]">
+          <div className="mb-7 flex flex-col gap-3">
+            <Stat value="1,284 cases" label="across 8 products" />
+            <Stat value="87% pass rate" label="last 7 days" offset />
+            <Stat value="4 portals" label="Admin · Teacher · Parent · Student" />
+          </div>
+          <div className="text-[20px] font-semibold leading-snug tracking-[-0.01em]">
+            The QA workspace your team will actually enjoy using.
+          </div>
+        </div>
+
+        <div className="relative text-[12px] opacity-70">
+          © {new Date().getFullYear()} Simplitest
+        </div>
+      </div>
+
+      {/* Local keyframes — Tailwind utilities reference them */}
+      <style jsx>{`
+        @keyframes fadeUp {
+          from {
+            opacity: 0;
+            transform: translateY(12px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      `}</style>
     </div>
   );
 }
 
-const inputCls =
-  'w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100';
+// ─── Components ──────────────────────────────────────────────
 
-function Field({
-  label,
-  sub,
-  hint,
-  children,
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return <label className="mb-1.5 text-[13px] font-medium text-text">{children}</label>;
+}
+
+function Input({
+  value,
+  onChange,
+  placeholder,
+  type = 'text',
+  autoComplete,
 }: {
-  label: string;
-  sub?: string;
-  hint?: string;
-  children: React.ReactNode;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  type?: string;
+  autoComplete?: string;
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[11px] font-semibold text-slate-500">
-        {label}
-        {sub && <span className="font-normal text-slate-300"> {sub}</span>}
-      </label>
-      {children}
-      {hint && <p className="text-[10px] text-slate-400">{hint}</p>}
+    <input
+      type={type}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      autoComplete={autoComplete}
+      className="mb-4 w-full rounded-lg border border-border bg-surface px-3.5 py-2.5 text-sm text-text outline-none transition-all placeholder:text-text-3 focus:border-primary focus:ring-[3px] focus:ring-primary-light"
+    />
+  );
+}
+
+function Stat({ value, label, offset }: { value: string; label: string; offset?: boolean }) {
+  return (
+    <div
+      className={`rounded-[10px] border border-white/10 bg-white/[0.13] p-4 backdrop-blur-md transition-all hover:-translate-y-0.5 hover:bg-white/[0.18] ${offset ? 'ml-7' : ''}`}
+    >
+      <div className="text-[20px] font-semibold leading-tight">{value}</div>
+      <div className="mt-1 text-[12px] opacity-85">{label}</div>
     </div>
   );
 }
 
-function GoogleIcon() {
+function CheckBox({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <svg width="16" height="16" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-      <path
-        fill="#FFC107"
-        d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.95 4 4 12.95 4 24s8.95 20 20 20 20-8.95 20-20c0-1.3-.1-2.4-.4-3.5z"
-      />
-      <path
-        fill="#FF3D00"
-        d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4c-7.7 0-14.4 4.4-17.7 10.7z"
-      />
-      <path
-        fill="#4CAF50"
-        d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.5-4.6 2.4-7.2 2.4-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.4 39.6 16.1 44 24 44z"
-      />
-      <path
-        fill="#1976D2"
-        d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4.1 5.6l6.2 5.2c-.4.4 6.6-4.8 6.6-14.8 0-1.3-.1-2.4-.4-3.5z"
-      />
-    </svg>
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className={`relative inline-block h-3.5 w-3.5 flex-shrink-0 rounded-[4px] border-[1.5px] transition-all ${
+        checked ? 'border-primary bg-primary' : 'border-border-strong bg-surface'
+      }`}
+    >
+      {checked && (
+        <span
+          className="absolute left-[3px] top-[0.5px] h-2 w-1 rotate-45 border-solid border-white"
+          style={{ borderWidth: '0 2px 2px 0' }}
+        />
+      )}
+    </button>
   );
 }

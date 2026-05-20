@@ -34,10 +34,13 @@ model User {
   avatarUrl    String?
   googleId     String?   @unique
   microsoftId  String?   @unique
-  role         UserRole  @default(Tester)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  role         UserRole   @default(Tester)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
   sessions     Session[]
+  ownedCases   TestCase[]   @relation("OwnedTestCases")
+  memberships  Membership[]
+  sentInvites  Invite[]     @relation("SentInvites")
 
   @@map("users")
 }
@@ -55,20 +58,106 @@ model Session {
 }
 
 // ────────────────────────────────────────────────────────────
-// 1.2  Modules & Features
+// Hierarchy:  Project > Portal > Module > Suite > TestCase
+//   Project  ≈ Platform (Web / Mobile / Desktop)
+//   Portal   ≈ Product   (Admin / Teacher / Student / Parent app, etc.)
 // ────────────────────────────────────────────────────────────
 
-model Module {
-  id        String    @id @default(cuid())
-  name      String    @unique
-  features  Feature[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+// Top-level grouping — also doubles as the "workspace / team" the user signs into.
+// Members are users with a Membership row; invites are pending email-based joins.
+model Project {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  slug        String       @unique
+  portals     Portal[]
+  cycles      TestCycle[]
+  memberships Membership[]
+  invites     Invite[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
+  @@map("projects")
+}
+
+// User ↔ workspace link. `role` is the user's effective role inside this workspace.
+model Membership {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  role      UserRole @default(Tester)
+  joinedAt  DateTime @default(now())
+
+  @@unique([userId, projectId])
+  @@index([projectId])
+  @@map("memberships")
+}
+
+enum InviteStatus {
+  Pending
+  Accepted
+  Revoked
+  Expired
+}
+
+// Pending invitation. Token is the shareable acceptance URL fragment.
+model Invite {
+  id          String       @id @default(cuid())
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  email       String
+  role        UserRole     @default(Tester)
+  token       String       @unique
+  status      InviteStatus @default(Pending)
+  invitedById String
+  invitedBy   User         @relation("SentInvites", fields: [invitedById], references: [id])
+  acceptedAt  DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime     @default(now())
+
+  @@index([projectId])
+  @@index([email])
+  @@index([status])
+  @@map("invites")
+}
+
+// A portal or app inside a platform.
+// e.g. "Admin Portal" / "Teacher Web" / "Parent Mobile" / "Attendance Desktop".
+model Portal {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String?
+  icon      String?  // Tabler icon name, e.g. "ti-presentation"
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  modules   Module[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, name])
+  @@index([projectId])
+  @@map("portals")
+}
+
+model Module {
+  id        String   @id @default(cuid())
+  name      String
+  portalId  String
+  portal    Portal   @relation(fields: [portalId], references: [id], onDelete: Cascade)
+  suites    Suite[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([portalId, name])
+  @@index([portalId])
   @@map("modules")
 }
 
-model Feature {
+// Was "Feature" — renamed to "Suite" for PRD alignment.
+// DB table is still named `features` (kept via @@map) so no data migration is
+// required for the rename itself.
+model Suite {
   id        String     @id @default(cuid())
   name      String
   module    Module     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
@@ -107,28 +196,41 @@ enum TestType {
   API
 }
 
+enum CaseStatus {
+  Active
+  Draft
+  Archived
+}
+
 model TestCase {
-  id        String    @id @default(cuid())
-  caseNum   Int       @unique @default(autoincrement())
+  id        String     @id @default(cuid())
+  caseNum   Int        @unique @default(autoincrement())
   title     String
-  sub       String    @default("")
-  desc      String    @default("")
+  sub       String     @default("")
+  desc      String     @default("")
   steps     Json
-  expected  String    @default("")
+  expected  String     @default("")
   priority  Priority
   severity  Severity
   type      TestType
-  feature   Feature   @relation(fields: [featureId], references: [id], onDelete: Cascade)
-  featureId String
-  author    String    @default("")
+  status    CaseStatus @default(Active)
+  // DB column is still named "featureId" (mapped) — Prisma model uses suiteId.
+  suite     Suite      @relation(fields: [suiteId], references: [id], onDelete: Cascade)
+  suiteId   String     @map("featureId")
+  author    String     @default("")
+  // Optional assigned owner (a user) — shown as avatar in the OWNER column.
+  owner     User?      @relation("OwnedTestCases", fields: [ownerId], references: [id], onDelete: SetNull)
+  ownerId   String?
   runs      TestRun[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
-  @@index([featureId])
+  @@index([suiteId])
   @@index([priority])
   @@index([severity])
   @@index([type])
+  @@index([status])
+  @@index([ownerId])
   @@map("test_cases")
 }
 
@@ -153,7 +255,7 @@ enum CycleStatus {
 enum CycleScopeType {
   All
   Module
-  Feature
+  Suite
   Custom
 }
 
@@ -163,13 +265,16 @@ model TestCycle {
   description String         @default("")
   status      CycleStatus    @default(Active)
   scopeType   CycleScopeType @default(All)
-  scopeId     String?        // moduleId or featureId; null for All / Custom
+  scopeId     String?        // moduleId or suiteId; null for All / Custom
   targetDate  DateTime?
+  projectId   String
+  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   runs        TestRun[]
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
   @@index([status])
+  @@index([projectId])
   @@map("test_cycles")
 }
 

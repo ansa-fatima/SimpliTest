@@ -36,7 +36,7 @@ export async function GET(req: Request, { params }: Ctx) {
       include: {
         testCase: {
           include: {
-            feature: { include: { module: { select: { id: true, name: true } } } },
+            suite: { include: { module: { select: { id: true, name: true } } } },
           },
         },
       },

@@ -8,11 +8,12 @@ import { api } from '@/lib/client';
 interface ApiModule {
   id: string;
   name: string;
-  features: { id: string; name: string }[];
+  suites: { id: string; name: string }[];
 }
 
 interface NewCycleModalProps {
   modules: Module[]; // unused — we fetch fresh from API
+  projectId: string | null;
   onClose: () => void;
   onSave: (input: {
     name: string;
@@ -23,7 +24,7 @@ interface NewCycleModalProps {
   }) => Promise<void>;
 }
 
-export function NewCycleModal({ onClose, onSave }: NewCycleModalProps) {
+export function NewCycleModal({ projectId, onClose, onSave }: NewCycleModalProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [scopeType, setScopeType] = useState<CycleScopeType>('All');
@@ -38,7 +39,8 @@ export function NewCycleModal({ onClose, onSave }: NewCycleModalProps) {
   useEffect(() => {
     (async () => {
       try {
-        const list = await api.get<ApiModule[]>('/api/modules');
+        const url = projectId ? `/api/modules?projectId=${projectId}` : '/api/modules';
+        const list = await api.get<ApiModule[]>(url);
         setModules(list);
         if (list.length > 0) setScopeId(list[0].id);
       } catch (e) {
@@ -47,11 +49,11 @@ export function NewCycleModal({ onClose, onSave }: NewCycleModalProps) {
         setLoadingModules(false);
       }
     })();
-  }, []);
+  }, [projectId]);
 
-  const features =
-    scopeType === 'Feature'
-      ? modules.flatMap(m => m.features.map(f => ({ ...f, moduleName: m.name })))
+  const suites =
+    scopeType === 'Suite'
+      ? modules.flatMap(m => m.suites.map(s => ({ ...s, moduleName: m.name })))
       : [];
 
   const handleSubmit = async () => {
@@ -59,7 +61,7 @@ export function NewCycleModal({ onClose, onSave }: NewCycleModalProps) {
       setError('Name is required');
       return;
     }
-    if ((scopeType === 'Module' || scopeType === 'Feature') && !scopeId) {
+    if ((scopeType === 'Module' || scopeType === 'Suite') && !scopeId) {
       setError(`Pick a ${scopeType.toLowerCase()}`);
       return;
     }
@@ -70,7 +72,7 @@ export function NewCycleModal({ onClose, onSave }: NewCycleModalProps) {
         name: name.trim(),
         description: description.trim() || undefined,
         scopeType,
-        scopeId: scopeType === 'Module' || scopeType === 'Feature' ? scopeId : null,
+        scopeId: scopeType === 'Module' || scopeType === 'Suite' ? scopeId : null,
         targetDate: targetDate || null,
       });
     } catch (e) {
@@ -128,7 +130,7 @@ export function NewCycleModal({ onClose, onSave }: NewCycleModalProps) {
               Scope <span className="text-red-500">*</span>
             </label>
             <div className="flex flex-wrap gap-1.5">
-              {(['All', 'Module', 'Feature'] as CycleScopeType[]).map(t => (
+              {(['All', 'Module', 'Suite'] as CycleScopeType[]).map(t => (
                 <button
                   key={t}
                   type="button"
@@ -166,7 +168,7 @@ export function NewCycleModal({ onClose, onSave }: NewCycleModalProps) {
             </div>
           )}
 
-          {scopeType === 'Feature' && (
+          {scopeType === 'Suite' && (
             <div className="flex flex-col gap-1">
               <label className="text-[11px] font-semibold text-slate-500">Pick feature</label>
               {loadingModules ? (
@@ -177,9 +179,9 @@ export function NewCycleModal({ onClose, onSave }: NewCycleModalProps) {
                   onChange={e => setScopeId(e.target.value)}
                   className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500"
                 >
-                  {features.map(f => (
-                    <option key={f.id} value={f.id}>
-                      {f.moduleName} — {f.name}
+                  {suites.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.moduleName} — {s.name}
                     </option>
                   ))}
                 </select>

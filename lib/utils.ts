@@ -1,6 +1,6 @@
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Priority, Severity, TestType } from '@/types';
+import { CaseStatus, Priority, Severity, TestType } from '@/types';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -31,6 +31,39 @@ export function typeBadge(type: TestType): string {
     UI: 'bg-purple-100 text-purple-800',
     API: 'bg-sky-100 text-sky-800',
   }[type];
+}
+
+export function statusBadge(status: CaseStatus): string {
+  return {
+    Active: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+    Draft: 'bg-slate-100 text-slate-600 ring-slate-200',
+    Archived: 'bg-amber-50 text-amber-700 ring-amber-200',
+  }[status];
+}
+
+// Deterministic pastel avatar colour for users without an uploaded picture.
+const AVATAR_COLOURS = [
+  'bg-rose-100 text-rose-700',
+  'bg-amber-100 text-amber-700',
+  'bg-emerald-100 text-emerald-700',
+  'bg-sky-100 text-sky-700',
+  'bg-indigo-100 text-indigo-700',
+  'bg-violet-100 text-violet-700',
+  'bg-fuchsia-100 text-fuchsia-700',
+  'bg-teal-100 text-teal-700',
+];
+
+export function avatarColour(seed: string): string {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  return AVATAR_COLOURS[Math.abs(hash) % AVATAR_COLOURS.length];
+}
+
+export function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 let _nextId = 70;

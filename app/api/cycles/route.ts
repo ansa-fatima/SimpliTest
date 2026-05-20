@@ -2,16 +2,20 @@ import { prisma } from '@/lib/db';
 import { Prisma, CycleScopeType, CycleStatus } from '@prisma/client';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 
-const SCOPE_TYPES: CycleScopeType[] = ['All', 'Module', 'Feature', 'Custom'];
+const SCOPE_TYPES: CycleScopeType[] = ['All', 'Module', 'Suite', 'Custom'];
 
 // GET /api/cycles
-//   ?status=Active|Completed|Archived  filter
+//   ?status=Active|Completed|Archived
+//   ?projectId=...   scope to a project
 // Returns each cycle with embedded summary { total, ...counts }
 export async function GET(req: Request) {
   try {
-    const status = new URL(req.url).searchParams.get('status') as CycleStatus | null;
+    const sp = new URL(req.url).searchParams;
+    const status = sp.get('status') as CycleStatus | null;
+    const projectId = sp.get('projectId') || undefined;
     const where: Prisma.TestCycleWhereInput = {};
     if (status && ['Active', 'Completed', 'Archived'].includes(status)) where.status = status;
+    if (projectId) where.projectId = projectId;
 
     const cycles = await prisma.testCycle.findMany({
       where,
@@ -21,29 +25,27 @@ export async function GET(req: Request) {
       },
     });
 
-    // Resolve scope names (module / feature) in batch
+    // Resolve scope names (module / suite) in batch
     const moduleIds = cycles
       .filter(c => c.scopeType === 'Module' && c.scopeId)
       .map(c => c.scopeId!);
-    const featureIds = cycles
-      .filter(c => c.scopeType === 'Feature' && c.scopeId)
-      .map(c => c.scopeId!);
-    const [modulesById, featuresById] = await Promise.all([
+    const suiteIds = cycles.filter(c => c.scopeType === 'Suite' && c.scopeId).map(c => c.scopeId!);
+    const [modulesById, suitesById] = await Promise.all([
       moduleIds.length === 0
         ? Promise.resolve([])
         : prisma.module.findMany({
             where: { id: { in: moduleIds } },
             select: { id: true, name: true },
           }),
-      featureIds.length === 0
+      suiteIds.length === 0
         ? Promise.resolve([])
-        : prisma.feature.findMany({
-            where: { id: { in: featureIds } },
+        : prisma.suite.findMany({
+            where: { id: { in: suiteIds } },
             select: { id: true, name: true, module: { select: { name: true } } },
           }),
     ]);
     const moduleNameById = new Map(modulesById.map(m => [m.id, m.name]));
-    const featureNameById = new Map(featuresById.map(f => [f.id, `${f.module.name} / ${f.name}`]));
+    const suiteNameById = new Map(suitesById.map(s => [s.id, `${s.module.name} / ${s.name}`]));
 
     const enriched = cycles.map(c => {
       const counts = { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
@@ -58,8 +60,8 @@ export async function GET(req: Request) {
       else if (c.scopeType === 'Custom') scopeName = 'Custom selection';
       else if (c.scopeType === 'Module' && c.scopeId)
         scopeName = moduleNameById.get(c.scopeId) ?? null;
-      else if (c.scopeType === 'Feature' && c.scopeId)
-        scopeName = featureNameById.get(c.scopeId) ?? null;
+      else if (c.scopeType === 'Suite' && c.scopeId)
+        scopeName = suiteNameById.get(c.scopeId) ?? null;
 
       return { ...rest, scopeName, summary: { total, done, percent, counts } };
     });
@@ -72,7 +74,8 @@ export async function GET(req: Request) {
 
 // POST /api/cycles
 // Body:
-//   { name, description?, scopeType: 'All'|'Module'|'Feature'|'Custom',
+//   { name, description?, projectId,
+//     scopeType: 'All'|'Module'|'Suite'|'Custom',
 //     scopeId?, testCaseIds?: string[] (only for Custom), targetDate? }
 // Auto-populates one TestRun per matched test case.
 export async function POST(req: Request) {
@@ -80,6 +83,7 @@ export async function POST(req: Request) {
     const body = await parseJson<{
       name?: string;
       description?: string;
+      projectId?: string;
       scopeType?: CycleScopeType;
       scopeId?: string | null;
       testCaseIds?: string[];
@@ -88,26 +92,30 @@ export async function POST(req: Request) {
 
     const name = body?.name?.trim();
     if (!name) return bad('name is required');
+    if (!body?.projectId) return bad('projectId is required');
     if (!body?.scopeType || !SCOPE_TYPES.includes(body.scopeType)) {
       return bad(`scopeType must be one of ${SCOPE_TYPES.join('|')}`);
     }
 
-    // Resolve which test cases this cycle covers
+    // Resolve which test cases this cycle covers (always scoped to the project)
     let caseIds: string[] = [];
     if (body.scopeType === 'All') {
-      const cases = await prisma.testCase.findMany({ select: { id: true } });
+      const cases = await prisma.testCase.findMany({
+        where: { suite: { module: { portal: { projectId: body.projectId } } } },
+        select: { id: true },
+      });
       caseIds = cases.map(c => c.id);
     } else if (body.scopeType === 'Module') {
       if (!body.scopeId) return bad('scopeId (moduleId) is required for Module scope');
       const cases = await prisma.testCase.findMany({
-        where: { feature: { moduleId: body.scopeId } },
+        where: { suite: { moduleId: body.scopeId } },
         select: { id: true },
       });
       caseIds = cases.map(c => c.id);
-    } else if (body.scopeType === 'Feature') {
-      if (!body.scopeId) return bad('scopeId (featureId) is required for Feature scope');
+    } else if (body.scopeType === 'Suite') {
+      if (!body.scopeId) return bad('scopeId (suiteId) is required for Suite scope');
       const cases = await prisma.testCase.findMany({
-        where: { featureId: body.scopeId },
+        where: { suiteId: body.scopeId },
         select: { id: true },
       });
       caseIds = cases.map(c => c.id);
@@ -122,6 +130,7 @@ export async function POST(req: Request) {
       data: {
         name,
         description: body.description ?? '',
+        projectId: body.projectId,
         scopeType: body.scopeType,
         scopeId: body.scopeId ?? null,
         targetDate: body.targetDate ? new Date(body.targetDate) : null,

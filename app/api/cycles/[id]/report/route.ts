@@ -19,7 +19,7 @@ export async function GET(_req: Request, { params }: Ctx) {
         runs: {
           include: {
             testCase: {
-              include: { feature: { include: { module: { select: { id: true, name: true } } } } },
+              include: { suite: { include: { module: { select: { id: true, name: true } } } } },
             },
           },
         },
@@ -37,12 +37,12 @@ export async function GET(_req: Request, { params }: Ctx) {
         select: { name: true },
       });
       scopeName = m?.name ?? null;
-    } else if (cycle.scopeType === 'Feature' && cycle.scopeId) {
-      const f = await prisma.feature.findUnique({
+    } else if (cycle.scopeType === 'Suite' && cycle.scopeId) {
+      const s = await prisma.suite.findUnique({
         where: { id: cycle.scopeId },
         select: { name: true, module: { select: { name: true } } },
       });
-      scopeName = f ? `${f.module.name} / ${f.name}` : null;
+      scopeName = s ? `${s.module.name} / ${s.name}` : null;
     }
 
     const counts: Record<RunResult, number> = {
@@ -70,7 +70,7 @@ export async function GET(_req: Request, { params }: Ctx) {
         severity: Severity;
         type: string;
         module: string;
-        feature: string;
+        suite: string;
         notes: string;
         executedAt: string | null;
       }> = [];
@@ -86,8 +86,8 @@ export async function GET(_req: Request, { params }: Ctx) {
           priority: tc.priority,
           severity: tc.severity,
           type: tc.type,
-          module: tc.feature.module.name,
-          feature: tc.feature.name,
+          module: tc.suite.module.name,
+          suite: tc.suite.name,
           notes: r.notes,
           executedAt: r.executedAt ? r.executedAt.toISOString() : null,
         });

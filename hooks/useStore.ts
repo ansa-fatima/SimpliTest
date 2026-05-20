@@ -5,12 +5,13 @@ import {
   TestCase,
   Page,
   Module,
-  MODULES,
   TestCycle,
   ApiTestRun,
   CycleSummary,
   CycleScopeType,
   RunResult,
+  Project,
+  Portal,
 } from '@/types';
 import { SEED_DATA } from '@/data/testCases';
 import { nextTestCaseId, todayStr } from '@/lib/utils';
@@ -29,7 +30,18 @@ export interface SessionUser {
 interface ApiModuleData {
   id: string;
   name: string;
-  features: { id: string; name: string }[];
+  suites: { id: string; name: string }[];
+}
+
+interface ApiPortalData {
+  id: string;
+  name: string;
+  slug: string | null;
+  icon: string | null;
+  projectId: string;
+  createdAt: string;
+  updatedAt: string;
+  modules: ApiModuleData[];
 }
 
 export interface AppState {
@@ -37,7 +49,7 @@ export interface AppState {
   data: Record<string, TestCase[]>;
   modules: Module[];
   moduleIds: Record<string, string>; // moduleName → id
-  featureIds: Record<string, string>; // "modName:featName" → id
+  featureIds: Record<string, string>; // "modName:featName" → suiteId (key kept for UI compat)
   currentKey: string;
   currentTC: TestCase | null;
   toast: { msg: string; type?: 'success' | 'error' } | null;
@@ -45,6 +57,14 @@ export interface AppState {
   // ─── Auth ────────────────────────────────────────────────────
   user: SessionUser | null;
   authChecked: boolean;
+
+  // ─── Projects ───────────────────────────────────────────────
+  projects: Project[];
+  currentProjectId: string | null;
+
+  // ─── Portals (per-project app/product layer) ────────────────
+  portals: Portal[];
+  currentPortalId: string | null;
 
   // ─── Cycles (API-backed) ────────────────────────────────────
   cycles: TestCycle[];
@@ -67,6 +87,12 @@ export function useStore() {
     toast: null,
     user: null,
     authChecked: false,
+    projects: [],
+    currentProjectId:
+      typeof window !== 'undefined' ? localStorage.getItem('simplitest_project') : null,
+    portals: [],
+    currentPortalId:
+      typeof window !== 'undefined' ? localStorage.getItem('simplitest_portal') : null,
     cycles: [],
     currentCycle: null,
     runs: [],
@@ -75,36 +101,124 @@ export function useStore() {
     runsLoading: false,
   });
 
-  // Fetch the live folder tree from the DB.
-  const reloadModules = useCallback(async () => {
-    try {
-      const apiModules = await api.get<ApiModuleData[]>('/api/modules');
-      const modules: Module[] = apiModules.map(m => ({
-        name: m.name,
-        features: m.features.map(f => f.name),
-      }));
-      const moduleIds: Record<string, string> = Object.fromEntries(
-        apiModules.map(m => [m.name, m.id]),
-      );
-      const featureIds: Record<string, string> = {};
-      for (const m of apiModules) {
-        for (const f of m.features) {
-          featureIds[`${m.name}:${f.name}`] = f.id;
-        }
+  // Recompute modules / moduleIds / featureIds for a given portal's data.
+  const applyPortalModules = useCallback((apiModules: ApiModuleData[], preserveKey?: string) => {
+    const modules: Module[] = apiModules.map(m => ({
+      name: m.name,
+      features: m.suites.map(s => s.name),
+    }));
+    const moduleIds: Record<string, string> = Object.fromEntries(
+      apiModules.map(m => [m.name, m.id]),
+    );
+    const featureIds: Record<string, string> = {};
+    for (const m of apiModules) {
+      for (const s of m.suites) {
+        featureIds[`${m.name}:${s.name}`] = s.id;
       }
-      setState(s => {
-        // Auto-pick a sensible currentKey if the existing one is empty or
-        // points to a folder that no longer exists.
-        let currentKey = s.currentKey;
-        const exists = currentKey && featureIds[currentKey];
-        if (!exists) {
-          const first = apiModules.find(m => m.features.length > 0);
-          currentKey = first ? `${first.name}:${first.features[0].name}` : '';
+    }
+    setState(s => {
+      let currentKey = preserveKey !== undefined ? preserveKey : s.currentKey;
+      const exists = currentKey && featureIds[currentKey];
+      if (!exists) {
+        const first = apiModules.find(m => m.suites.length > 0);
+        currentKey = first ? `${first.name}:${first.suites[0].name}` : '';
+      }
+      return { ...s, modules, moduleIds, featureIds, currentKey };
+    });
+  }, []);
+
+  // Fetch the portals (with nested modules + suites) for a project.
+  // Picks a sensible default portal and applies its folder tree to the sidebar.
+  const reloadPortals = useCallback(
+    async (projectId?: string | null): Promise<ApiPortalData[]> => {
+      try {
+        if (!projectId) {
+          setState(s => ({
+            ...s,
+            portals: [],
+            currentPortalId: null,
+            modules: [],
+            moduleIds: {},
+            featureIds: {},
+            currentKey: '',
+          }));
+          return [];
         }
-        return { ...s, modules, moduleIds, featureIds, currentKey };
+        const apiPortals = await api.get<ApiPortalData[]>(`/api/portals?projectId=${projectId}`);
+        const portals: Portal[] = apiPortals.map(p => ({
+          id: p.id,
+          name: p.name,
+          slug: p.slug,
+          icon: p.icon,
+          projectId: p.projectId,
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
+          _count: { modules: p.modules.length },
+        }));
+
+        const stored =
+          typeof window !== 'undefined' ? localStorage.getItem('simplitest_portal') : null;
+        let activePortalId =
+          (stored && apiPortals.some(p => p.id === stored) ? stored : apiPortals[0]?.id) ?? null;
+        if (activePortalId && typeof window !== 'undefined') {
+          localStorage.setItem('simplitest_portal', activePortalId);
+        }
+        const active = apiPortals.find(p => p.id === activePortalId);
+
+        setState(s => ({
+          ...s,
+          portals,
+          currentPortalId: activePortalId,
+        }));
+        applyPortalModules(active?.modules ?? []);
+        return apiPortals;
+      } catch (e) {
+        console.error('[reloadPortals]', e);
+        return [];
+      }
+    },
+    [applyPortalModules],
+  );
+
+  // Reload only the current portal's module tree (e.g. after adding/deleting a module/suite).
+  const reloadModules = useCallback(
+    async (portalIdOverride?: string | null) => {
+      try {
+        let portalId = portalIdOverride;
+        if (portalId === undefined) {
+          portalId = state.currentPortalId;
+        }
+        if (!portalId) {
+          setState(s => ({ ...s, modules: [], moduleIds: {}, featureIds: {} }));
+          return;
+        }
+        const apiModules = await api.get<ApiModuleData[]>(`/api/modules?portalId=${portalId}`);
+        applyPortalModules(apiModules);
+      } catch (e) {
+        console.error('[reloadModules]', e);
+      }
+    },
+    [applyPortalModules, state.currentPortalId],
+  );
+
+  // Fetch the list of projects + pick a sensible default
+  const reloadProjects = useCallback(async (): Promise<Project[]> => {
+    try {
+      const list = await api.get<Project[]>('/api/projects');
+      setState(s => {
+        let currentProjectId = s.currentProjectId;
+        if (!currentProjectId || !list.some(p => p.id === currentProjectId)) {
+          currentProjectId = list[0]?.id ?? null;
+          if (typeof window !== 'undefined' && currentProjectId) {
+            localStorage.setItem('simplitest_project', currentProjectId);
+          }
+        }
+        return { ...s, projects: list, currentProjectId };
       });
+      return list;
     } catch (e) {
-      console.error('[reloadModules]', e);
+      console.error('[reloadProjects]', e);
+      return [];
     }
   }, []);
 
@@ -119,12 +233,19 @@ export function useStore() {
           authChecked: true,
           page: user ? 'dashboard' : 'login',
         }));
-        if (user) await reloadModules();
+        if (user) {
+          const projects = await reloadProjects();
+          const stored =
+            typeof window !== 'undefined' ? localStorage.getItem('simplitest_project') : null;
+          const activeId =
+            (stored && projects.some(p => p.id === stored) ? stored : projects[0]?.id) ?? null;
+          if (activeId) await reloadPortals(activeId);
+        }
       } catch {
         setState(s => ({ ...s, authChecked: true, page: 'login' }));
       }
     })();
-  }, [reloadModules]);
+  }, [reloadPortals]);
 
   const update = useCallback((patch: Partial<AppState>) => {
     setState(s => ({ ...s, ...patch }));
@@ -135,12 +256,174 @@ export function useStore() {
     setTimeout(() => setState(s => ({ ...s, toast: null })), 2800);
   }, []);
 
-  const login = useCallback(
-    (user: SessionUser) => {
-      setState(s => ({ ...s, user, page: 'dashboard' }));
-      reloadModules();
+  // ─── Portal actions ────────────────────────────────────────
+  const switchPortal = useCallback(
+    async (portalId: string) => {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('simplitest_portal', portalId);
+      }
+      setState(s => ({
+        ...s,
+        currentPortalId: portalId,
+        modules: [],
+        moduleIds: {},
+        featureIds: {},
+        currentKey: '',
+      }));
+      try {
+        const apiModules = await api.get<ApiModuleData[]>(`/api/modules?portalId=${portalId}`);
+        applyPortalModules(apiModules);
+      } catch (e) {
+        console.error('[switchPortal]', e);
+      }
     },
-    [reloadModules],
+    [applyPortalModules],
+  );
+
+  const addPortal = useCallback(
+    async (name: string, icon?: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return null;
+      const projectId = state.currentProjectId;
+      if (!projectId) {
+        showToast('No project selected', 'error');
+        return null;
+      }
+      try {
+        const portal = await api.post<Portal>('/api/portals', {
+          name: trimmed,
+          projectId,
+          icon: icon || undefined,
+        });
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('simplitest_portal', portal.id);
+        }
+        await reloadPortals(projectId);
+        // reloadPortals will pick its own active portal from localStorage, which we just set
+        showToast(`Portal "${trimmed}" added ✓`, 'success');
+        return portal;
+      } catch (e) {
+        showToast((e as Error).message, 'error');
+        return null;
+      }
+    },
+    [reloadPortals, showToast, state.currentProjectId],
+  );
+
+  const deletePortal = useCallback(
+    async (portalId: string) => {
+      const projectId = state.currentProjectId;
+      try {
+        await api.del(`/api/portals/${portalId}`);
+        if (typeof window !== 'undefined') {
+          if (localStorage.getItem('simplitest_portal') === portalId) {
+            localStorage.removeItem('simplitest_portal');
+          }
+        }
+        await reloadPortals(projectId);
+        showToast('Portal deleted', 'success');
+      } catch (e) {
+        showToast((e as Error).message, 'error');
+      }
+    },
+    [reloadPortals, showToast, state.currentProjectId],
+  );
+
+  const renamePortal = useCallback(
+    async (portalId: string, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const projectId = state.currentProjectId;
+      try {
+        await api.patch(`/api/portals/${portalId}`, { name: trimmed });
+        await reloadPortals(projectId);
+        showToast('Portal renamed ✓', 'success');
+      } catch (e) {
+        showToast((e as Error).message, 'error');
+      }
+    },
+    [reloadPortals, showToast, state.currentProjectId],
+  );
+
+  // ─── Project actions ───────────────────────────────────────
+  const switchProject = useCallback(
+    async (projectId: string) => {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('simplitest_project', projectId);
+        // Drop the per-project portal selection so each project picks its own default.
+        localStorage.removeItem('simplitest_portal');
+      }
+      setState(s => ({
+        ...s,
+        currentProjectId: projectId,
+        portals: [],
+        currentPortalId: null,
+        modules: [],
+        moduleIds: {},
+        featureIds: {},
+        cycles: [],
+        currentKey: '',
+      }));
+      await reloadPortals(projectId);
+    },
+    [reloadPortals],
+  );
+
+  const createProject = useCallback(
+    async (name: string) => {
+      try {
+        const project = await api.post<Project>('/api/projects', { name });
+        await reloadProjects();
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('simplitest_project', project.id);
+          localStorage.removeItem('simplitest_portal');
+        }
+        // Auto-create a Main portal so the project starts usable.
+        try {
+          await api.post('/api/portals', { name: 'Main', projectId: project.id });
+        } catch {
+          /* tolerate races */
+        }
+        setState(s => ({ ...s, currentProjectId: project.id }));
+        await reloadPortals(project.id);
+        showToast(`Project "${name}" created ✓`, 'success');
+        return project;
+      } catch (e) {
+        showToast((e as Error).message, 'error');
+        return null;
+      }
+    },
+    [reloadProjects, reloadPortals, showToast],
+  );
+
+  const deleteProject = useCallback(
+    async (projectId: string) => {
+      try {
+        await api.del(`/api/projects/${projectId}`);
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('simplitest_project');
+          localStorage.removeItem('simplitest_portal');
+        }
+        const list = await reloadProjects();
+        const next = list[0]?.id ?? null;
+        setState(s => ({ ...s, currentProjectId: next }));
+        await reloadPortals(next);
+        showToast('Project deleted', 'success');
+      } catch (e) {
+        showToast((e as Error).message, 'error');
+      }
+    },
+    [reloadProjects, reloadPortals, showToast],
+  );
+
+  const login = useCallback(
+    async (user: SessionUser) => {
+      setState(s => ({ ...s, user, page: 'dashboard' }));
+      const projects = await reloadProjects();
+      const activeId = projects[0]?.id ?? null;
+      if (activeId) await reloadPortals(activeId);
+    },
+    [reloadProjects, reloadPortals],
   );
 
   const logout = useCallback(async () => {
@@ -153,6 +436,11 @@ export function useStore() {
   }, []);
 
   const showDashboard = useCallback(() => update({ page: 'dashboard' }), [update]);
+  const showReports = useCallback(() => update({ page: 'reports' }), [update]);
+  const showMembers = useCallback(() => update({ page: 'members' }), [update]);
+  const showPlans = useCallback(() => update({ page: 'plans' }), [update]);
+  const showPlatforms = useCallback(() => update({ page: 'platforms' }), [update]);
+  const showSettings = useCallback(() => update({ page: 'settings' }), [update]);
 
   const showTestCases = useCallback(() => {
     setState(s => ({ ...s, page: 'list' }));
@@ -180,15 +468,20 @@ export function useStore() {
     async (name: string) => {
       const trimmed = name.trim();
       if (!trimmed) return;
+      const portalId = state.currentPortalId;
+      if (!portalId) {
+        showToast('No portal selected — create one first', 'error');
+        return;
+      }
       try {
-        await api.post('/api/modules', { name: trimmed });
-        await reloadModules();
+        await api.post('/api/modules', { name: trimmed, portalId });
+        await reloadModules(portalId);
         showToast(`Folder "${trimmed}" added ✓`, 'success');
       } catch (e) {
         showToast((e as Error).message, 'error');
       }
     },
-    [reloadModules, showToast],
+    [reloadModules, showToast, state.currentPortalId],
   );
 
   const addFeature = useCallback(
@@ -205,7 +498,7 @@ export function useStore() {
         api
           .post('/api/features', { name: trimmed, moduleId })
           .then(async () => {
-            await reloadModules();
+            await reloadModules(state.currentPortalId);
             setState(s => ({ ...s, currentKey: `${modName}:${trimmed}`, page: 'list' }));
             showToast(`Folder "${trimmed}" added ✓`, 'success');
           })
@@ -213,7 +506,7 @@ export function useStore() {
         return currentState;
       });
     },
-    [reloadModules, showToast],
+    [reloadModules, showToast, state.currentPortalId],
   );
 
   const deleteModule = useCallback(
@@ -227,7 +520,7 @@ export function useStore() {
         api
           .del(`/api/modules/${id}`)
           .then(async () => {
-            await reloadModules();
+            await reloadModules(state.currentPortalId);
             // If currentKey was under this module, fall back to first remaining
             setState(s => {
               const data: Record<string, TestCase[]> = {};
@@ -247,7 +540,7 @@ export function useStore() {
         return currentState;
       });
     },
-    [reloadModules, showToast],
+    [reloadModules, showToast, state.currentPortalId],
   );
 
   const deleteFeature = useCallback(
@@ -261,7 +554,7 @@ export function useStore() {
         api
           .del(`/api/features/${id}`)
           .then(async () => {
-            await reloadModules();
+            await reloadModules(state.currentPortalId);
             setState(s => {
               const key = `${modName}:${featName}`;
               const { [key]: _removed, ...data } = s.data;
@@ -283,7 +576,7 @@ export function useStore() {
         return currentState;
       });
     },
-    [reloadModules, showToast],
+    [reloadModules, showToast, state.currentProjectId],
   );
 
   const saveEdit = useCallback(
@@ -381,13 +674,15 @@ export function useStore() {
   const loadCycles = useCallback(async () => {
     setState(s => ({ ...s, cyclesLoading: true }));
     try {
-      const cycles = await api.get<TestCycle[]>('/api/cycles');
+      const projectId = state.currentProjectId;
+      const url = projectId ? `/api/cycles?projectId=${projectId}` : '/api/cycles';
+      const cycles = await api.get<TestCycle[]>(url);
       setState(s => ({ ...s, cycles, cyclesLoading: false }));
     } catch (e) {
       setState(s => ({ ...s, cyclesLoading: false }));
       showToast(`Failed to load cycles: ${(e as Error).message}`, 'error');
     }
-  }, [showToast]);
+  }, [showToast, state.currentProjectId]);
 
   const showCycles = useCallback(() => {
     setState(s => ({ ...s, page: 'cycles' }));
@@ -432,15 +727,20 @@ export function useStore() {
       testCaseIds?: string[];
       targetDate?: string | null;
     }) => {
+      const projectId = state.currentProjectId;
+      if (!projectId) {
+        showToast('No project selected', 'error');
+        return;
+      }
       try {
-        await api.post<TestCycle>('/api/cycles', input);
+        await api.post<TestCycle>('/api/cycles', { ...input, projectId });
         showToast('Cycle created ✓', 'success');
         await loadCycles();
       } catch (e) {
         showToast(`Failed to create cycle: ${(e as Error).message}`, 'error');
       }
     },
-    [loadCycles, showToast],
+    [loadCycles, showToast, state.currentProjectId],
   );
 
   const archiveCycle = useCallback(
@@ -451,6 +751,28 @@ export function useStore() {
         await loadCycles();
       } catch (e) {
         showToast(`Failed to archive: ${(e as Error).message}`, 'error');
+      }
+    },
+    [loadCycles, showToast],
+  );
+
+  // Mark a run as Completed — keeps it visible but read-only for the team.
+  const closeCycle = useCallback(
+    async (cycleId: string) => {
+      try {
+        const updated = await api.patch<TestCycle>(`/api/cycles/${cycleId}`, {
+          status: 'Completed',
+        });
+        showToast('Test run closed ✓', 'success');
+        await loadCycles();
+        // If user is on this cycle's detail screen, refresh local copy so the badge/buttons update.
+        setState(s =>
+          s.currentCycle?.id === cycleId
+            ? { ...s, currentCycle: { ...s.currentCycle, ...updated } }
+            : s,
+        );
+      } catch (e) {
+        showToast(`Failed to close: ${(e as Error).message}`, 'error');
       }
     },
     [loadCycles, showToast],
@@ -527,5 +849,20 @@ export function useStore() {
     deleteCycle,
     submitResult,
     loadCycles,
+    switchProject,
+    createProject,
+    deleteProject,
+    switchPortal,
+    addPortal,
+    deletePortal,
+    renamePortal,
+    closeCycle,
+    showReports,
+    showMembers,
+    showPlans,
+    showPlatforms,
+    showSettings,
+    reloadProjects,
+    reloadPortals,
   };
 }

@@ -13,13 +13,13 @@ type BulkBody =
       ids: string[];
       patch: Partial<Record<'priority' | 'severity' | 'type' | 'author', string>>;
     }
-  | { action: 'move'; ids: string[]; targetFeatureId: string }
+  | { action: 'move'; ids: string[]; targetSuiteId?: string; targetFeatureId?: string }
   | { action: 'duplicate'; ids: string[] };
 
 // POST /api/test-cases/bulk
 //   { action:'delete',    ids:[...] }
 //   { action:'update',    ids:[...], patch:{ priority?, severity?, type?, author? } }
-//   { action:'move',      ids:[...], targetFeatureId:'...' }
+//   { action:'move',      ids:[...], targetSuiteId:'...' (or legacy targetFeatureId) }
 //   { action:'duplicate', ids:[...] }
 export async function POST(req: Request) {
   try {
@@ -58,12 +58,13 @@ export async function POST(req: Request) {
       }
 
       case 'move': {
-        if (!body.targetFeatureId) return bad('targetFeatureId is required');
-        const target = await prisma.feature.findUnique({ where: { id: body.targetFeatureId } });
-        if (!target) return bad('targetFeatureId not found', 404);
+        const suiteId = body.targetSuiteId ?? body.targetFeatureId;
+        if (!suiteId) return bad('targetSuiteId is required');
+        const target = await prisma.suite.findUnique({ where: { id: suiteId } });
+        if (!target) return bad('targetSuiteId not found', 404);
         const r = await prisma.testCase.updateMany({
           where: { id: { in: body.ids } },
-          data: { featureId: body.targetFeatureId },
+          data: { suiteId },
         });
         return ok({ moved: r.count });
       }
@@ -83,7 +84,7 @@ export async function POST(req: Request) {
                 priority: s.priority,
                 severity: s.severity,
                 type: s.type,
-                featureId: s.featureId,
+                suiteId: s.suiteId,
                 author: s.author,
               },
             }),
