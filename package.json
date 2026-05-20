@@ -13,6 +13,7 @@
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
     "db:seed": "prisma db seed",
+    "db:reset": "node prisma/reset.js && prisma migrate deploy && prisma db seed",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",

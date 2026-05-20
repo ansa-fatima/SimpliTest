@@ -28,11 +28,20 @@ COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 3000
 
-# Bring the DB schema up to date on startup:
-#   1) Prefer `prisma migrate deploy` (runs migration files in order, including backfills).
-#   2) If that fails (e.g. prod DB has no _prisma_migrations history or is on a different
-#      instance than the one dev applied migrations against), fall back to `prisma db push`
-#      which brute-force syncs columns/tables without touching migration history.
-#   3) Either way, exec npm start so the container is always reachable (no 502).
-#      The App Logs will show which path was taken.
-CMD ["sh", "-c", "echo '— Schema sync —'; (npx prisma migrate deploy 2>&1 && echo 'migrate deploy OK') || (echo '!! migrate deploy failed, falling back to db push'; npx prisma db push --skip-generate 2>&1 && echo 'db push OK' || echo '!! db push failed too — starting app anyway, check DATABASE_URL'); echo '— Starting Next.js on PORT='$PORT' —'; exec npm start"]
+# Bring the DB schema up to date on startup. Two paths:
+#
+# A) SEED_DATA=true (DESTRUCTIVE — opt-in only):
+#      Drops the public schema, re-applies all migrations, re-seeds.
+#      Use this to recover from a corrupted DB (e.g. missing enum types) or to
+#      reset to a known-good demo state. REMEMBER to flip the env back to
+#      false after the next deploy, or every deploy will wipe the database.
+#
+# B) Default (SEED_DATA=false or unset):
+#      1) Prefer `prisma migrate deploy` (applies migration files in order).
+#      2) If that fails (prod DB has no _prisma_migrations history or was
+#         applied against a different instance), fall back to `prisma db push`
+#         which syncs columns/tables without touching migration history.
+#      3) Either way, exec npm start so the container is always reachable.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+CMD ["/usr/local/bin/docker-entrypoint.sh"]
