@@ -28,4 +28,7 @@ COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "npx prisma migrate deploy && npm start"]
+# Run pending migrations on startup. If they fail (DB asleep, transient error),
+# we still start the app so the container is reachable and the App Logs show the error.
+# The unhealthy state is preferable to a perpetual NGINX 502.
+CMD ["sh", "-c", "echo '— Running prisma migrate deploy —'; npx prisma migrate deploy || echo '!! migrate deploy failed — starting app anyway, fix migrations and redeploy'; echo '— Starting Next.js on PORT='$PORT' —'; exec npm start"]
