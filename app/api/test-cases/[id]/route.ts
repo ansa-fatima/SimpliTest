@@ -53,6 +53,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
     }
     if (typeof body.sub === 'string') data.sub = body.sub;
     if (typeof body.desc === 'string') data.desc = body.desc;
+    if (typeof body.preconditions === 'string') data.preconditions = body.preconditions;
     if (typeof body.expected === 'string') data.expected = body.expected;
     if (body.steps !== undefined) data.steps = body.steps as Prisma.InputJsonValue;
     if (typeof body.author === 'string') data.author = body.author;

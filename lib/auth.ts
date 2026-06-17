@@ -38,6 +38,7 @@ export interface SessionUser {
   email: string;
   name: string;
   role: UserRole;
+  avatarUrl: string | null;
 }
 
 // Permission hierarchy (higher index = more privileged)
@@ -77,6 +78,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
     email: session.user.email,
     name: session.user.name,
     role: session.user.role,
+    avatarUrl: session.user.avatarUrl ?? null,
   };
 }
 

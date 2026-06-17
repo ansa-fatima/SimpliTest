@@ -14,6 +14,7 @@ import { Reports } from '@/components/features/Reports';
 import { Members } from '@/components/features/Members';
 import { ComingSoon } from '@/components/features/ComingSoon';
 import { WorkspaceOnboarding } from '@/components/features/WorkspaceOnboarding';
+import { Profile } from '@/components/features/Profile';
 import { Toast } from '@/components/ui/Toast';
 
 export default function Home() {
@@ -56,8 +57,13 @@ export default function Home() {
     showPlans,
     showPlatforms,
     showSettings,
+    showProfile,
+    refreshSessionUser,
     reloadProjects,
     reloadPortals,
+    viewApiCase,
+    regenerateCycle,
+    updateCycle,
   } = useStore();
 
   const {
@@ -78,6 +84,7 @@ export default function Home() {
     summary,
     cyclesLoading,
     runsLoading,
+    dataVersion,
   } = state;
 
   // Show a tiny loading state while we check the session on mount.
@@ -123,6 +130,7 @@ export default function Home() {
           onShowPlatforms={showPlatforms}
           onShowMembers={showMembers}
           onShowSettings={showSettings}
+          onShowProfile={showProfile}
           onLogout={logout}
         />
       )}
@@ -217,6 +225,8 @@ export default function Home() {
           />
         )}
 
+        {page === 'profile' && <Profile currentUser={user} onUpdated={refreshSessionUser} />}
+
         {page === 'settings' && (
           <ComingSoon
             title="Settings"
@@ -249,16 +259,8 @@ export default function Home() {
             currentKey={currentKey}
             onNavigate={navFeature}
             onShowCreate={showCreate}
-            onView={viewTC}
-            onEdit={id => {
-              viewTC(id);
-              setTimeout(showEdit, 0);
-            }}
-            onDelete={id => {
-              if (confirm('Delete this test case? This cannot be undone.')) {
-                deleteTC(id);
-              }
-            }}
+            onOpenCase={viewApiCase}
+            dataVersion={dataVersion}
           />
         )}
 
@@ -309,6 +311,7 @@ export default function Home() {
             onArchive={archiveCycle}
             onDelete={deleteCycle}
             onCreate={createCycle}
+            onUpdate={updateCycle}
           />
         )}
 
@@ -321,6 +324,7 @@ export default function Home() {
             onBack={backToCycles}
             onSubmitResult={submitResult}
             onCloseRun={closeCycle}
+            onRegenerate={regenerateCycle}
           />
         )}
       </main>

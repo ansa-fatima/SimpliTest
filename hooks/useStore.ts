@@ -6,6 +6,7 @@ import {
   Page,
   Module,
   TestCycle,
+  ApiTestCase,
   ApiTestRun,
   CycleSummary,
   CycleScopeType,
@@ -14,10 +15,59 @@ import {
   Portal,
 } from '@/types';
 import { SEED_DATA } from '@/data/testCases';
-import { nextTestCaseId, todayStr } from '@/lib/utils';
+import { formatCaseId, nextTestCaseId, todayStr } from '@/lib/utils';
 import { api } from '@/lib/client';
 
 export type UserRole = 'SuperAdmin' | 'QAManager' | 'Tester' | 'Developer' | 'Viewer';
+
+// Adapt the API shape to the in-memory shape used by the legacy View/Edit screens.
+// Display id is always the formatted "TC-NN" — apiId carries the DB cuid for mutations.
+function toLocalTestCase(c: ApiTestCase): TestCase {
+  const steps = Array.isArray(c.steps)
+    ? (c.steps as unknown[]).map(s => String(s))
+    : c.steps
+      ? [String(c.steps)]
+      : [];
+  return {
+    id: formatCaseId(c.caseNum),
+    apiId: c.id,
+    caseNum: c.caseNum,
+    title: c.title,
+    sub: c.sub ?? '',
+    priority: c.priority,
+    severity: c.severity,
+    type: c.type,
+    feature: c.suite?.name ?? c.feature?.name ?? '',
+    updated: relativeTime(c.updatedAt),
+    desc: c.desc ?? '',
+    preconditions: c.preconditions ?? '',
+    steps,
+    expected: c.expected ?? '',
+    created: formatDate(c.createdAt),
+    author: c.author ?? '',
+    updatedFull: formatDate(c.updatedAt),
+  };
+}
+
+function relativeTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const d = Math.floor(hr / 24);
+  if (d < 30) return `${d}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
 
 export interface SessionUser {
   id: string;
@@ -25,6 +75,7 @@ export interface SessionUser {
   email: string;
   name: string;
   role: UserRole;
+  avatarUrl: string | null;
 }
 
 interface ApiModuleData {
@@ -73,6 +124,10 @@ export interface AppState {
   summary: CycleSummary | null;
   cyclesLoading: boolean;
   runsLoading: boolean;
+
+  // Monotonic counter — bumped on test-case create/edit/delete so any subscribed
+  // list (e.g. TestCaseList) refetches from the API.
+  dataVersion: number;
 }
 
 export function useStore() {
@@ -99,6 +154,7 @@ export function useStore() {
     summary: null,
     cyclesLoading: false,
     runsLoading: false,
+    dataVersion: 0,
   });
 
   // Recompute modules / moduleIds / featureIds for a given portal's data.
@@ -441,6 +497,17 @@ export function useStore() {
   const showPlans = useCallback(() => update({ page: 'plans' }), [update]);
   const showPlatforms = useCallback(() => update({ page: 'platforms' }), [update]);
   const showSettings = useCallback(() => update({ page: 'settings' }), [update]);
+  const showProfile = useCallback(() => update({ page: 'profile' }), [update]);
+
+  // Refresh the in-memory `user` after a profile edit so sidebar / avatar update immediately.
+  const refreshSessionUser = useCallback(async () => {
+    try {
+      const { user: fresh } = await api.get<{ user: SessionUser | null }>('/api/auth/me');
+      setState(s => ({ ...s, user: fresh }));
+    } catch {
+      /* silent */
+    }
+  }, []);
 
   const showTestCases = useCallback(() => {
     setState(s => ({ ...s, page: 'list' }));
@@ -458,6 +525,22 @@ export function useStore() {
       const tc = (s.data[s.currentKey] || []).find(c => c.id === id) || null;
       return { ...s, currentTC: tc, page: 'view' };
     });
+  }, []);
+
+  // Open a row clicked from the API-driven Test Cases table. Maps the ApiTestCase shape
+  // into the legacy local TestCase shape the View/Edit screens were built against,
+  // populates state.data[currentKey] so prev/next nav still works, and switches to the view page.
+  const viewApiCase = useCallback((apiCase: ApiTestCase, apiList: ApiTestCase[]) => {
+    const localCases: TestCase[] = apiList.map(toLocalTestCase);
+    // Match by apiId (cuid) — local ids are the formatted TC-NN which may collide if multiple
+    // pages of cases share caseNums, but cuids are unique.
+    const current = localCases.find(c => c.apiId === apiCase.id) ?? toLocalTestCase(apiCase);
+    setState(s => ({
+      ...s,
+      data: { ...s.data, [s.currentKey]: localCases },
+      currentTC: current,
+      page: 'view',
+    }));
   }, []);
 
   const showEdit = useCallback(() => update({ page: 'edit' }), [update]);
@@ -579,41 +662,88 @@ export function useStore() {
     [reloadModules, showToast, state.currentProjectId],
   );
 
+  // Persisted edit — PATCHes /api/test-cases/:apiId, then updates the in-memory copy.
+  // Falls back to a local-only edit if the case has no apiId (legacy seed data).
   const saveEdit = useCallback(
-    (patch: Partial<TestCase>) => {
+    async (patch: Partial<TestCase>) => {
+      // Snapshot the current case + apiId before async work.
+      const current = state.currentTC;
+      if (!current) return;
+
+      const persisted = current.apiId
+        ? await (async () => {
+            try {
+              const updated = await api.patch<ApiTestCase>(`/api/test-cases/${current.apiId}`, {
+                title: patch.title,
+                desc: patch.desc,
+                preconditions: patch.preconditions,
+                expected: patch.expected,
+                steps: patch.steps,
+                priority: patch.priority,
+                severity: patch.severity,
+                type: patch.type,
+              });
+              return toLocalTestCase(updated);
+            } catch (e) {
+              showToast(`Save failed: ${(e as Error).message}`, 'error');
+              return null;
+            }
+          })()
+        : null;
+
       setState(s => {
         if (!s.currentTC) return s;
         const cases = [...(s.data[s.currentKey] || [])];
         const idx = cases.findIndex(c => c.id === s.currentTC!.id);
         if (idx < 0) return s;
-        const updated: TestCase = {
+        const merged: TestCase = persisted ?? {
           ...s.currentTC,
           ...patch,
           updatedFull: 'Just now',
           updated: 'Just now',
         };
-        cases[idx] = updated;
+        cases[idx] = merged;
         return {
           ...s,
           data: { ...s.data, [s.currentKey]: cases },
-          currentTC: updated,
+          currentTC: merged,
           page: 'view',
+          dataVersion: s.dataVersion + 1,
         };
       });
       showToast('Test case saved ✓', 'success');
     },
-    [showToast],
+    [showToast, state.currentTC],
   );
 
+  // Persisted delete — DELETEs /api/test-cases/:apiId. Local removal happens regardless
+  // so the UI is responsive; failures show a toast and a list reload will recover.
   const deleteTC = useCallback(
-    (id: string) => {
+    async (id: string) => {
+      const target = (state.data[state.currentKey] || []).find(c => c.id === id);
+      const apiId = target?.apiId;
       setState(s => {
         const cases = (s.data[s.currentKey] || []).filter(c => c.id !== id);
-        return { ...s, data: { ...s.data, [s.currentKey]: cases }, page: 'list' };
+        return {
+          ...s,
+          data: { ...s.data, [s.currentKey]: cases },
+          page: 'list',
+          dataVersion: s.dataVersion + 1,
+        };
       });
+      if (apiId) {
+        try {
+          await api.del(`/api/test-cases/${apiId}`);
+        } catch (e) {
+          showToast(`Delete failed: ${(e as Error).message}`, 'error');
+          // Bump dataVersion again so the list re-fetches and the case re-appears.
+          setState(s => ({ ...s, dataVersion: s.dataVersion + 1 }));
+          return;
+        }
+      }
       showToast('Test case deleted');
     },
-    [showToast],
+    [showToast, state.data, state.currentKey],
   );
 
   const duplicateTC = useCallback(() => {
@@ -632,41 +762,56 @@ export function useStore() {
     showToast('Test case duplicated');
   }, [showToast]);
 
+  // Persisted create — POSTs to /api/test-cases. The new case picks up a real auto-incrementing
+  // caseNum from the DB and the list refetches via the dataVersion bump.
   const createTC = useCallback(
-    (
+    async (
       tc: Omit<TestCase, 'id' | 'created' | 'updatedFull' | 'updated' | 'sub' | 'author'> & {
         module: string;
       },
     ) => {
       const key = `${tc.module}:${tc.feature}`;
-      const newCase: TestCase = {
-        id: nextTestCaseId(),
-        title: tc.title,
-        sub: tc.desc?.split('.')[0] || tc.title,
-        priority: tc.priority,
-        severity: tc.severity,
-        type: tc.type,
-        feature: tc.feature,
-        updated: 'just now',
-        desc: tc.desc,
-        steps: tc.steps,
-        expected: tc.expected,
-        created: todayStr(),
-        author: 'You',
-        updatedFull: todayStr(),
-      };
-      setState(s => {
-        const cases = [...(s.data[key] || []), newCase];
-        return {
-          ...s,
-          data: { ...s.data, [key]: cases },
-          currentKey: key,
-          page: 'list',
-        };
-      });
-      showToast('Test case created ✓', 'success');
+      // Resolve suiteId from useStore's featureIds map populated by reloadModules.
+      const suiteId = state.featureIds[key];
+      if (!suiteId) {
+        showToast(
+          `Couldn't find suite "${tc.feature}" under module "${tc.module}". Pick a suite first.`,
+          'error',
+        );
+        return;
+      }
+      const userName = state.user?.name || state.user?.username || 'You';
+      try {
+        const created = await api.post<ApiTestCase>('/api/test-cases', {
+          title: tc.title,
+          sub: tc.desc?.split('.')[0] || tc.title,
+          desc: tc.desc,
+          preconditions: (tc as { preconditions?: string }).preconditions ?? '',
+          steps: tc.steps,
+          expected: tc.expected,
+          priority: tc.priority,
+          severity: tc.severity,
+          type: tc.type,
+          suiteId,
+          author: userName,
+        });
+        const local = toLocalTestCase(created);
+        setState(s => {
+          const cases = [...(s.data[key] || []), local];
+          return {
+            ...s,
+            data: { ...s.data, [key]: cases },
+            currentKey: key,
+            page: 'list',
+            dataVersion: s.dataVersion + 1,
+          };
+        });
+        showToast(`Test case ${local.id} created ✓`, 'success');
+      } catch (e) {
+        showToast(`Create failed: ${(e as Error).message}`, 'error');
+      }
     },
-    [showToast],
+    [showToast, state.featureIds, state.user],
   );
 
   // ─── Cycles ────────────────────────────────────────────────
@@ -722,10 +867,28 @@ export function useStore() {
     async (input: {
       name: string;
       description?: string;
-      scopeType: CycleScopeType;
+      mode?: 'CaseBased' | 'Manual';
+      scopeType?: CycleScopeType;
       scopeId?: string | null;
       testCaseIds?: string[];
       targetDate?: string | null;
+      // Manual-mode fields (all optional, ignored for CaseBased)
+      moduleName?: string;
+      featureName?: string;
+      environment?: string;
+      platform?: string;
+      version?: string;
+      cycleCategory?: string;
+      ticketLink?: string;
+      issueCount?: number;
+      criticalCount?: number;
+      majorCount?: number;
+      minorCount?: number;
+      doneCount?: number;
+      remainingCount?: number;
+      passedCount?: number;
+      failedCount?: number;
+      blockedCount?: number;
     }) => {
       const projectId = state.currentProjectId;
       if (!projectId) {
@@ -734,13 +897,30 @@ export function useStore() {
       }
       try {
         await api.post<TestCycle>('/api/cycles', { ...input, projectId });
-        showToast('Cycle created ✓', 'success');
+        showToast(
+          input.mode === 'Manual' ? 'Quick-log cycle saved ✓' : 'Cycle created ✓',
+          'success',
+        );
         await loadCycles();
       } catch (e) {
         showToast(`Failed to create cycle: ${(e as Error).message}`, 'error');
       }
     },
     [loadCycles, showToast, state.currentProjectId],
+  );
+
+  // Patch any subset of fields on a cycle — used by the manual edit modal.
+  const updateCycle = useCallback(
+    async (cycleId: string, patch: Record<string, unknown>) => {
+      try {
+        await api.patch<TestCycle>(`/api/cycles/${cycleId}`, patch);
+        showToast('Cycle updated ✓', 'success');
+        await loadCycles();
+      } catch (e) {
+        showToast(`Update failed: ${(e as Error).message}`, 'error');
+      }
+    },
+    [loadCycles, showToast],
   );
 
   const archiveCycle = useCallback(
@@ -754,6 +934,36 @@ export function useStore() {
       }
     },
     [loadCycles, showToast],
+  );
+
+  // Repopulate a cycle's runs by re-evaluating its scope. Useful when a cycle was
+  // created against a scope that had zero matching cases (so runs.length === 0).
+  const regenerateCycle = useCallback(
+    async (cycleId: string) => {
+      try {
+        const res = await api.post<{ added: number; matched: number; message: string }>(
+          `/api/cycles/${cycleId}/regenerate`,
+        );
+        if (res.added === 0) {
+          showToast(res.message, res.matched === 0 ? 'error' : 'success');
+        } else {
+          showToast(`Added ${res.added} test case run(s) ✓`, 'success');
+        }
+        // Re-open the cycle so runs reload from the server.
+        if (state.currentCycle?.id === cycleId) {
+          const [runs, summary, cycle] = await Promise.all([
+            api.get<ApiTestRun[]>(`/api/cycles/${cycleId}/runs`),
+            api.get<CycleSummary>(`/api/cycles/${cycleId}/summary`),
+            api.get<TestCycle>(`/api/cycles/${cycleId}`),
+          ]);
+          setState(s => ({ ...s, runs, summary, currentCycle: cycle }));
+        }
+        await loadCycles();
+      } catch (e) {
+        showToast(`Regenerate failed: ${(e as Error).message}`, 'error');
+      }
+    },
+    [showToast, loadCycles, state.currentCycle],
   );
 
   // Mark a run as Completed — keeps it visible but read-only for the team.
@@ -862,7 +1072,12 @@ export function useStore() {
     showPlans,
     showPlatforms,
     showSettings,
+    showProfile,
+    refreshSessionUser,
     reloadProjects,
     reloadPortals,
+    viewApiCase,
+    regenerateCycle,
+    updateCycle,
   };
 }

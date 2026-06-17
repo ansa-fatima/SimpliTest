@@ -71,6 +71,12 @@ export function nextTestCaseId(): string {
   return `TC-00${String(_nextId++).padStart(3, '0')}`;
 }
 
+// Canonical display ID for test cases — always derived from the DB's auto-incrementing caseNum.
+export function formatCaseId(caseNum: number | null | undefined): string {
+  if (!caseNum && caseNum !== 0) return '';
+  return `TC-${String(caseNum).padStart(2, '0')}`;
+}
+
 export function todayStr(): string {
   return new Date().toLocaleDateString('en-GB', {
     day: 'numeric',

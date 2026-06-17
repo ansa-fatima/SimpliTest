@@ -1,8 +1,9 @@
 import { prisma } from '@/lib/db';
-import { Prisma, CycleScopeType, CycleStatus } from '@prisma/client';
+import { Prisma, CycleScopeType, CycleStatus, CycleMode } from '@prisma/client';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 
 const SCOPE_TYPES: CycleScopeType[] = ['All', 'Module', 'Suite', 'Custom'];
+const MODES: CycleMode[] = ['CaseBased', 'Manual'];
 
 // GET /api/cycles
 //   ?status=Active|Completed|Archived
@@ -84,20 +85,75 @@ export async function POST(req: Request) {
       name?: string;
       description?: string;
       projectId?: string;
+      mode?: CycleMode;
       scopeType?: CycleScopeType;
       scopeId?: string | null;
       testCaseIds?: string[];
       targetDate?: string | null;
+
+      // Manual-mode fields
+      moduleName?: string;
+      featureName?: string;
+      environment?: string;
+      platform?: string;
+      version?: string;
+      cycleCategory?: string;
+      ticketLink?: string;
+      issueCount?: number;
+      criticalCount?: number;
+      majorCount?: number;
+      minorCount?: number;
+      doneCount?: number;
+      remainingCount?: number;
+      passedCount?: number;
+      failedCount?: number;
+      blockedCount?: number;
     }>(req);
 
     const name = body?.name?.trim();
     if (!name) return bad('name is required');
     if (!body?.projectId) return bad('projectId is required');
+
+    const mode: CycleMode = body?.mode && MODES.includes(body.mode) ? body.mode : 'CaseBased';
+
+    // ── Manual mode: just create the cycle row with counts. No TestRuns. ──
+    if (mode === 'Manual') {
+      const cycle = await prisma.testCycle.create({
+        data: {
+          name,
+          description: body.description ?? '',
+          projectId: body.projectId,
+          mode: 'Manual',
+          // For Manual, scope is irrelevant — default to 'All' (no scopeId required).
+          scopeType: 'All',
+          scopeId: null,
+          targetDate: body.targetDate ? new Date(body.targetDate) : null,
+          moduleName: body.moduleName?.trim() || null,
+          featureName: body.featureName?.trim() || null,
+          environment: body.environment?.trim() || null,
+          platform: body.platform?.trim() || null,
+          version: body.version?.trim() || null,
+          cycleCategory: body.cycleCategory?.trim() || null,
+          ticketLink: body.ticketLink?.trim() || null,
+          issueCount: nz(body.issueCount),
+          criticalCount: nz(body.criticalCount),
+          majorCount: nz(body.majorCount),
+          minorCount: nz(body.minorCount),
+          doneCount: nz(body.doneCount),
+          remainingCount: nz(body.remainingCount),
+          passedCount: nz(body.passedCount),
+          failedCount: nz(body.failedCount),
+          blockedCount: nz(body.blockedCount),
+        },
+      });
+      return ok(cycle, 201);
+    }
+
+    // ── CaseBased mode: keep the existing behaviour ──────────────────────
     if (!body?.scopeType || !SCOPE_TYPES.includes(body.scopeType)) {
       return bad(`scopeType must be one of ${SCOPE_TYPES.join('|')}`);
     }
 
-    // Resolve which test cases this cycle covers (always scoped to the project)
     let caseIds: string[] = [];
     if (body.scopeType === 'All') {
       const cases = await prisma.testCase.findMany({
@@ -131,9 +187,15 @@ export async function POST(req: Request) {
         name,
         description: body.description ?? '',
         projectId: body.projectId,
+        mode: 'CaseBased',
         scopeType: body.scopeType,
         scopeId: body.scopeId ?? null,
         targetDate: body.targetDate ? new Date(body.targetDate) : null,
+        // Optional run-context fields — useful even with case-by-case execution.
+        environment: body.environment?.trim() || null,
+        platform: body.platform?.trim() || null,
+        version: body.version?.trim() || null,
+        ticketLink: body.ticketLink?.trim() || null,
         runs: {
           create: caseIds.map(testCaseId => ({ testCaseId })),
         },
@@ -145,4 +207,10 @@ export async function POST(req: Request) {
   } catch (e) {
     return prismaError(e) ?? serverError(e);
   }
+}
+
+// Non-negative integer or 0
+function nz(v: number | undefined | null): number {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return 0;
+  return Math.floor(v);
 }

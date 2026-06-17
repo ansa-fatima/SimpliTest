@@ -33,6 +33,14 @@ interface CycleReport {
     scopeName: string | null;
     createdAt: string;
     targetDate: string | null;
+    // Run-context fields — populated by both Detailed and Quick-log forms.
+    environment?: string | null;
+    platform?: string | null;
+    version?: string | null;
+    cycleCategory?: string | null;
+    ticketLink?: string | null;
+    moduleName?: string | null;
+    featureName?: string | null;
   };
   total: number;
   done: number;
@@ -124,8 +132,37 @@ export function CycleReportModal({ cycleId, onClose }: CycleReportModalProps) {
                   <strong className="text-slate-700">Scope:</strong> {report.cycle.scopeType}
                   {report.cycle.scopeName ? ` — ${report.cycle.scopeName}` : ''}
                 </span>
+                {report.cycle.environment && (
+                  <>
+                    <span>·</span>
+                    <span>
+                      <strong className="text-slate-700">Env:</strong>{' '}
+                      {report.cycle.environment.toUpperCase()}
+                    </span>
+                  </>
+                )}
+                {report.cycle.platform && (
+                  <>
+                    <span>·</span>
+                    <span>
+                      <strong className="text-slate-700">Platform:</strong> {report.cycle.platform}
+                    </span>
+                  </>
+                )}
+                {report.cycle.version && (
+                  <>
+                    <span>·</span>
+                    <span className="font-mono">v{report.cycle.version.replace(/^v\s*/i, '')}</span>
+                  </>
+                )}
                 <span>·</span>
                 <span>{new Date(report.cycle.createdAt).toLocaleDateString()}</span>
+                {report.cycle.ticketLink && (
+                  <>
+                    <span>·</span>
+                    <span className="font-mono">{report.cycle.ticketLink}</span>
+                  </>
+                )}
               </div>
             </div>
 
@@ -356,7 +393,31 @@ function formatPlainText(r: CycleReport): string {
   const { slack, label } = statusFor(r);
   const sev = combineSeverity(r);
   const pri = combinePriority(r);
+
+  // Compact headline matching the manual-cycle summary format:
+  //   {Module}/{Feature} - {Platform} - {Category} V {Version} ({status})
+  const c = r.cycle;
+  const modFeat =
+    c.moduleName && c.featureName
+      ? `${c.moduleName}/${c.featureName}`
+      : c.moduleName || c.featureName || c.scopeName || c.name;
+  const versionClean = (c.version ?? '').replace(/^[vV]\s*/, '').trim();
+  const categoryAndVersion = [c.cycleCategory ?? '', versionClean ? `V ${versionClean}` : '']
+    .map(s => s.trim())
+    .filter(Boolean)
+    .join(' ');
+  const headlineParts = [modFeat, c.platform ?? '', categoryAndVersion]
+    .map(s => s.trim())
+    .filter(Boolean);
+  const statusSuffix = (c.status ?? 'Active').toLowerCase();
+  const headline = `${headlineParts.join(' - ')} (${statusSuffix})`;
+
+  const env = (c.environment ?? '').trim().toUpperCase() || '-';
+
   return [
+    headline,
+    ``,
+    `Environment: ${env}`,
     `Status: ${slack} ${label}`,
     `Total Test Cases: ${pad(r.total)}`,
     `Failed: ${pad(r.counts.Failed)}`,

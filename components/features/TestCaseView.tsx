@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { TestCase } from '@/types';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { RichText } from '@/components/ui/RichText';
 import { priorityBadge, severityBadge, typeBadge } from '@/lib/utils';
 
 interface TestCaseViewProps {
@@ -201,14 +202,27 @@ export function TestCaseView({
         </div>
         <hr className="border-slate-100" />
 
-        {/* Description */}
+        {/* Description (formatted — bullets, numbered lists, sub-headings, paragraph breaks) */}
         <div>
           <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
             Description
           </p>
-          <p className="text-sm leading-relaxed text-slate-700">{tc.desc || '—'}</p>
+          <RichText text={tc.desc} />
         </div>
         <hr className="border-slate-100" />
+
+        {/* Preconditions — only rendered when set (kept hidden for cases that don't need any). */}
+        {tc.preconditions && tc.preconditions.trim() && (
+          <>
+            <div>
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                Preconditions
+              </p>
+              <RichText text={tc.preconditions} />
+            </div>
+            <hr className="border-slate-100" />
+          </>
+        )}
 
         {/* Steps */}
         <div>
@@ -235,12 +249,12 @@ export function TestCaseView({
         </div>
         <hr className="border-slate-100" />
 
-        {/* Expected result */}
+        {/* Expected result — same formatter so bullet lists render properly */}
         <div>
           <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
             Expected result
           </p>
-          <p className="text-sm leading-relaxed text-slate-700">{tc.expected || '—'}</p>
+          <RichText text={tc.expected} />
         </div>
         <hr className="border-slate-100" />
 

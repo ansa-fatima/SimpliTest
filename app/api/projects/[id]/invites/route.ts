@@ -127,7 +127,12 @@ async function assertWorkspaceManager(userId: string, projectId: string) {
   if (!m) {
     return NextResponse.json({ error: 'Not a member of this workspace' }, { status: 403 });
   }
-  if (!hasRole({ id: userId, username: '', email: '', name: '', role: m.role }, 'QAManager')) {
+  if (
+    !hasRole(
+      { id: userId, username: '', email: '', name: '', role: m.role, avatarUrl: null },
+      'QAManager',
+    )
+  ) {
     return NextResponse.json(
       { error: 'Requires QAManager or higher in this workspace' },
       { status: 403 },

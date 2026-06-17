@@ -15,7 +15,8 @@ export type Page =
   | 'members'
   | 'plans'
   | 'platforms'
-  | 'settings';
+  | 'settings'
+  | 'profile';
 
 export interface UserSummary {
   id: string;
@@ -30,6 +31,7 @@ export interface UserSummary {
 export type RunResult = 'NotRun' | 'Passed' | 'Failed' | 'Blocked' | 'Skipped';
 export type CycleStatus = 'Active' | 'Completed' | 'Archived';
 export type CycleScopeType = 'All' | 'Module' | 'Suite' | 'Custom';
+export type CycleMode = 'CaseBased' | 'Manual';
 
 export interface Project {
   id: string;
@@ -63,6 +65,7 @@ export interface TestCycle {
   name: string;
   description: string;
   status: CycleStatus;
+  mode?: CycleMode;
   scopeType: CycleScopeType;
   scopeId: string | null;
   scopeName?: string | null;
@@ -70,6 +73,24 @@ export interface TestCycle {
   createdAt: string;
   updatedAt: string;
   summary?: CycleSummary;
+
+  // Manual-mode bookkeeping (free text; present for all cycles but only meaningful when mode === 'Manual')
+  moduleName?: string | null;
+  featureName?: string | null;
+  environment?: string | null;
+  platform?: string | null;
+  version?: string | null;
+  cycleCategory?: string | null;
+  ticketLink?: string | null;
+  issueCount?: number;
+  criticalCount?: number;
+  majorCount?: number;
+  minorCount?: number;
+  doneCount?: number;
+  remainingCount?: number;
+  passedCount?: number;
+  failedCount?: number;
+  blockedCount?: number;
 }
 
 export interface ApiTestCase {
@@ -78,6 +99,7 @@ export interface ApiTestCase {
   title: string;
   sub: string;
   desc: string;
+  preconditions: string;
   steps: unknown;
   expected: string;
   priority: Priority;
@@ -109,7 +131,12 @@ export interface ApiTestRun {
 }
 
 export interface TestCase {
+  /** Display ID — formatted as "TC-NN" using the DB's auto-incrementing caseNum. */
   id: string;
+  /** DB primary key (cuid) — used for PATCH/DELETE against /api/test-cases/:apiId. Optional for legacy local-only cases. */
+  apiId?: string;
+  /** Auto-incrementing case number from the DB (renders as TC-{padded}). Optional for legacy local-only cases. */
+  caseNum?: number;
   title: string;
   sub: string;
   priority: Priority;
@@ -118,6 +145,8 @@ export interface TestCase {
   feature: string;
   updated: string;
   desc: string;
+  /** Setup steps the tester must complete before running this case. */
+  preconditions: string;
   steps: string[];
   expected: string;
   created: string;

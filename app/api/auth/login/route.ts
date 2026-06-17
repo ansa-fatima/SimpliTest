@@ -37,6 +37,7 @@ export async function POST(req: Request) {
         email: user.email,
         name: user.name,
         role: user.role,
+        avatarUrl: user.avatarUrl,
       },
     });
     return setSessionCookie(res, token, expiresAt);

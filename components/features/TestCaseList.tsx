@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiTestCase, CaseStatus, Priority, TestType, UserSummary } from '@/types';
 import { api } from '@/lib/client';
+import { ImportCsvModal } from '@/components/features/ImportCsvModal';
 import { TruncatedText } from '@/components/ui/TruncatedText';
 import { avatarColour, cn, initials, priorityBadge, statusBadge, typeBadge } from '@/lib/utils';
 
@@ -33,10 +34,10 @@ interface TestCaseListProps {
   /** Existing useStore action — called when a suite is picked in the in-page tree. */
   onNavigate: (modName: string, featName: string) => void;
   onShowCreate: () => void;
-  /** Reserved for future row click — not wired in this pass. */
-  onView?: (id: string) => void;
-  onEdit?: (id: string) => void;
-  onDelete?: (id: string) => void;
+  /** Row click — opens the detail screen. Receives the clicked case and the current page list. */
+  onOpenCase: (apiCase: ApiTestCase, list: ApiTestCase[]) => void;
+  /** Bumped by useStore on create/edit/delete — triggers list re-fetch. */
+  dataVersion?: number;
 }
 
 const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
@@ -53,6 +54,8 @@ export function TestCaseList({
   currentKey,
   onNavigate,
   onShowCreate,
+  onOpenCase,
+  dataVersion = 0,
 }: TestCaseListProps) {
   // ─── Tree (in-page hierarchy) ──────────────────────────────
   const [tree, setTree] = useState<ApiPortal[]>([]);
@@ -181,7 +184,7 @@ export function TestCaseList({
     } finally {
       setCasesLoading(false);
     }
-  }, [activeNode, page, priorityF, statusF, typeF, ownerF, search]);
+  }, [activeNode, page, priorityF, statusF, typeF, ownerF, search, dataVersion]);
 
   useEffect(() => {
     fetchCases();
@@ -221,6 +224,7 @@ export function TestCaseList({
     | { kind: 'module'; id: string; name: string; sourcePortalId: string }
     | { kind: 'suite'; id: string; name: string; sourceModuleId: string; sourcePortalId: string };
   const [copyTarget, setCopyTarget] = useState<CopyTarget | null>(null);
+  const [showImport, setShowImport] = useState(false);
 
   // ─── Actions ───────────────────────────────────────────────
   const togglePortal = (id: string) =>
@@ -443,6 +447,16 @@ export function TestCaseList({
             </p>
           </div>
           <div className="flex flex-shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => setShowImport(true)}
+              disabled={!projectId}
+              className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Import test cases from a CSV file"
+            >
+              <i className="ti ti-file-upload text-[16px]" />
+              Import CSV
+            </button>
             <button
               type="button"
               onClick={addSuiteUnderActive}
@@ -847,7 +861,7 @@ export function TestCaseList({
             ) : (
               <>
                 <div className="overflow-hidden rounded-lg border border-border bg-surface">
-                  <table className="w-full border-collapse text-[13px]">
+                  <table className="w-full table-fixed border-collapse text-[13px]">
                     <thead className="bg-surface-2">
                       <tr>
                         <th className="w-[36px] border-b border-border px-4 py-2.5 text-left">
@@ -856,26 +870,22 @@ export function TestCaseList({
                             onChange={toggleSelectAll}
                           />
                         </th>
-                        <Th>ID</Th>
+                        <Th width="90px">ID</Th>
                         <Th>Title</Th>
-                        <Th width="100px">Priority</Th>
-                        <Th width="120px">Type</Th>
-                        <Th width="100px">Status</Th>
-                        <Th width="80px">Owner</Th>
-                        <th className="w-[60px] border-b border-border px-2 py-2.5" />
+                        <Th width="110px">Priority</Th>
+                        <Th width="130px">Type</Th>
+                        <th className="w-[56px] border-b border-border px-2 py-2.5" />
                       </tr>
                     </thead>
                     <tbody>
                       {cases.map(tc => {
                         const isSel = selected.has(tc.id);
-                        const owner = tc.ownerId
-                          ? (userById.get(tc.ownerId) ?? tc.owner ?? null)
-                          : null;
                         return (
                           <tr
                             key={tc.id}
+                            onClick={() => onOpenCase(tc, cases)}
                             className={cn(
-                              'group border-b border-border transition-colors last:border-b-0',
+                              'group cursor-pointer border-b border-border transition-colors last:border-b-0',
                               isSel ? 'bg-primary-light/60' : 'hover:bg-surface-2',
                             )}
                           >
@@ -887,26 +897,12 @@ export function TestCaseList({
                             </td>
                             <td className="px-4 py-3">
                               <TruncatedText text={tc.title} className="text-text" />
-                              {tc.sub && (
-                                <TruncatedText
-                                  text={tc.sub}
-                                  className="mt-0.5 text-[12px] text-text-3"
-                                />
-                              )}
                             </td>
                             <td className="px-4 py-3">
                               <Pill className={priorityBadge(tc.priority)}>{tc.priority}</Pill>
                             </td>
                             <td className="px-4 py-3">
                               <Pill className={typeBadge(tc.type)}>{tc.type}</Pill>
-                            </td>
-                            <td className="px-4 py-3">
-                              <Pill className={cn(statusBadge(tc.status), 'ring-1')}>
-                                {tc.status}
-                              </Pill>
-                            </td>
-                            <td className="px-4 py-3">
-                              <OwnerAvatar user={owner} />
                             </td>
                             <td className="px-2 py-3 text-right">
                               <button
@@ -971,6 +967,25 @@ export function TestCaseList({
           onClose={() => setCopyTarget(null)}
           onCopied={async () => {
             setCopyTarget(null);
+            await reloadTree();
+          }}
+        />
+      )}
+
+      {/* CSV import dialog */}
+      {showImport && projectId && (
+        <ImportCsvModal
+          projectId={projectId}
+          projectName={projectName || ''}
+          portalSuggestions={tree.map(p => ({
+            name: p.name,
+            modules: p.modules.map(m => ({
+              name: m.name,
+              suites: m.suites.map(s => ({ name: s.name })),
+            })),
+          }))}
+          onClose={() => setShowImport(false)}
+          onImported={async () => {
             await reloadTree();
           }}
         />

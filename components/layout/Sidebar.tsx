@@ -29,6 +29,8 @@ interface SidebarProps {
   onShowPlatforms: () => void;
   onShowMembers: () => void;
   onShowSettings: () => void;
+  /** Opens the per-user profile page (avatar / name / password). */
+  onShowProfile: () => void;
 
   onLogout: () => void;
 }
@@ -53,6 +55,7 @@ export function Sidebar({
   onShowPlatforms,
   onShowMembers,
   onShowSettings,
+  onShowProfile,
   onLogout,
 }: SidebarProps) {
   const onDashboard = page === 'dashboard';
@@ -153,7 +156,7 @@ export function Sidebar({
       <div className="flex-1" />
 
       {/* Account block */}
-      {user && <AccountBlock user={user} onLogout={onLogout} />}
+      {user && <AccountBlock user={user} onLogout={onLogout} onShowProfile={onShowProfile} />}
 
       {/* Light mode toggle (visual stub — dark mode not implemented yet) */}
       <div className="px-3 pb-3 pt-1">
@@ -224,7 +227,15 @@ function NavItem({
 
 // ─── Account block with overflow menu ────────────────────────
 
-function AccountBlock({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
+function AccountBlock({
+  user,
+  onLogout,
+  onShowProfile,
+}: {
+  user: SessionUser;
+  onLogout: () => void;
+  onShowProfile: () => void;
+}) {
   const [menuOpen, setMenuOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -240,15 +251,31 @@ function AccountBlock({ user, onLogout }: { user: SessionUser; onLogout: () => v
   return (
     <div ref={ref} className="relative mt-2 border-t border-slate-200 px-3 pt-3">
       <div className="flex items-center gap-2">
-        <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-rose-100 text-[11px] font-semibold text-rose-700">
-          {initials(user.name || user.username)}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[12.5px] font-semibold text-slate-900">
-            {user.name || user.username}
-          </p>
-          <p className="truncate text-[11px] text-slate-500">{roleLabel(user.role)}</p>
-        </div>
+        <button
+          type="button"
+          onClick={onShowProfile}
+          title="Open your profile"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md p-0.5 text-left transition-colors hover:bg-slate-50"
+        >
+          {user.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={user.avatarUrl}
+              alt={user.name || user.username}
+              className="h-8 w-8 flex-shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-rose-100 text-[11px] font-semibold text-rose-700">
+              {initials(user.name || user.username)}
+            </span>
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12.5px] font-semibold text-slate-900">
+              {user.name || user.username}
+            </p>
+            <p className="truncate text-[11px] text-slate-500">{roleLabel(user.role)}</p>
+          </div>
+        </button>
         <button
           type="button"
           onClick={() => setMenuOpen(o => !o)}
@@ -291,15 +318,15 @@ function AccountBlock({ user, onLogout }: { user: SessionUser; onLogout: () => v
                 stroke="currentColor"
                 strokeWidth={1.5}
               >
-                <circle cx="8" cy="8" r="2.5" />
-                <path
-                  d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M3 13l1-1M12 4l1-1"
-                  strokeLinecap="round"
-                />
+                <circle cx="8" cy="5.5" r="2.5" />
+                <path d="M3 13c0-2.5 2.5-4.5 5-4.5s5 2 5 4.5" />
               </svg>
             }
-            label="Account settings"
-            comingSoon
+            label="Your profile"
+            onClick={() => {
+              setMenuOpen(false);
+              onShowProfile();
+            }}
           />
           <MenuRow
             icon={

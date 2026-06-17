@@ -25,6 +25,7 @@ export function TestCaseEdit({ tc, modules, currentKey, onBack, onSave }: TestCa
 
   const [title, setTitle] = useState(tc.title);
   const [desc, setDesc] = useState(tc.desc);
+  const [preconditions, setPreconditions] = useState(tc.preconditions ?? '');
   const [expected, setExpected] = useState(tc.expected);
   const [steps, setSteps] = useState<string[]>(tc.steps);
   const [priority, setPriority] = useState<Priority>(tc.priority);
@@ -39,6 +40,7 @@ export function TestCaseEdit({ tc, modules, currentKey, onBack, onSave }: TestCa
       title: title.trim(),
       sub: desc.split('.')[0] || title.trim(),
       desc,
+      preconditions,
       expected,
       steps: steps.filter(Boolean),
       priority,
@@ -240,6 +242,24 @@ export function TestCaseEdit({ tc, modules, currentKey, onBack, onSave }: TestCa
             rows={2}
             className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-sans text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
           />
+        </div>
+
+        {/* Preconditions — what must already be true before running this case. */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-slate-600">
+            Preconditions <span className="font-normal text-slate-400">(optional)</span>
+          </label>
+          <textarea
+            value={preconditions}
+            onChange={e => setPreconditions(e.target.value)}
+            rows={3}
+            placeholder={'- User is signed in\n- Test data is loaded\n- Feature flag X is enabled'}
+            className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-sans text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+          />
+          <p className="text-[10.5px] text-slate-400">
+            Lines starting with <code className="rounded bg-slate-100 px-1">- </code> or{' '}
+            <code className="rounded bg-slate-100 px-1">* </code> render as bullets in the view.
+          </p>
         </div>
 
         {/* Steps */}

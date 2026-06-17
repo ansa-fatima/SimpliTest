@@ -14,6 +14,7 @@ interface CycleViewProps {
   onBack: () => void;
   onSubmitResult: (runId: string, result: RunResult, notes?: string) => Promise<void>;
   onCloseRun?: (cycleId: string) => void;
+  onRegenerate?: (cycleId: string) => void;
 }
 
 const RESULTS: RunResult[] = ['Passed', 'Failed', 'Blocked', 'Skipped'];
@@ -34,6 +35,7 @@ export function CycleView({
   onBack,
   onSubmitResult,
   onCloseRun,
+  onRegenerate,
 }: CycleViewProps) {
   const [filter, setFilter] = useState<RunResult | 'All'>('All');
   const [showReport, setShowReport] = useState(false);
@@ -256,11 +258,22 @@ export function CycleView({
             {loading ? (
               <EmptyState icon="ti-loader-2" title="Loading runs…" body="" spin />
             ) : filteredRuns.length === 0 ? (
-              <EmptyState
-                icon="ti-list-check"
-                title={runs.length === 0 ? 'No runs in this cycle' : 'No runs match this filter'}
-                body={runs.length === 0 ? 'Add test cases to the cycle scope.' : 'Try the All tab.'}
-              />
+              runs.length === 0 ? (
+                <EmptyRunsRecovery
+                  scopeType={cycle.scopeType}
+                  onRegenerate={
+                    onRegenerate && cycle.scopeType !== 'Custom'
+                      ? () => onRegenerate(cycle.id)
+                      : undefined
+                  }
+                />
+              ) : (
+                <EmptyState
+                  icon="ti-list-check"
+                  title="No runs match this filter"
+                  body="Try the All tab."
+                />
+              )
             ) : (
               <div className="overflow-hidden rounded-lg border border-border bg-surface">
                 <table className="w-full border-collapse text-[13px]">
@@ -624,6 +637,41 @@ function EmptyState({
   );
 }
 
+// Recovery panel shown when a cycle ended up with zero runs.
+// Most common cause: the scope was wrong at creation (e.g. a module id submitted as a
+// suiteId). Repopulate re-evaluates the scope and fills in the missing runs.
+function EmptyRunsRecovery({
+  scopeType,
+  onRegenerate,
+}: {
+  scopeType: string;
+  onRegenerate?: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-amber-300 bg-amber-50/40 px-6 py-16 text-center">
+      <i className="ti ti-mood-empty text-[36px] text-amber-500" />
+      <div>
+        <p className="text-[14px] font-medium text-text">No test cases in this run</p>
+        <p className="mt-1 max-w-[420px] text-[12px] text-text-2">
+          {scopeType === 'Custom'
+            ? 'This run was created with a custom case selection that ended up empty. Create a new run and pick test cases explicitly.'
+            : 'The scope didn’t match any cases when this run was created (or new cases have been added since). Repopulate to fill in the matching cases now.'}
+        </p>
+      </div>
+      {onRegenerate && (
+        <button
+          type="button"
+          onClick={onRegenerate}
+          className="mt-1 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-primary-hover"
+        >
+          <i className="ti ti-refresh text-[14px]" />
+          Repopulate test cases
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── Progress bar (kept stable since other screens / report import it) ─
 
 interface SegBarProps {
@@ -665,6 +713,10 @@ function buildSubtitle(cycle: TestCycle, total: number): string {
   parts.push(`started ${timeAgo(cycle.createdAt)}`);
   if (cycle.targetDate) parts.push(`due ${dueLabel(cycle.targetDate)}`);
   if (cycle.scopeName) parts.push(cycle.scopeName);
+  // Run context (only added if set)
+  if (cycle.environment) parts.push(cycle.environment.toUpperCase());
+  if (cycle.platform) parts.push(cycle.platform);
+  if (cycle.version) parts.push(`v${cycle.version.replace(/^v\s*/i, '')}`);
   return parts.join(' · ');
 }
 

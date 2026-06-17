@@ -113,6 +113,7 @@ export async function POST(req: Request) {
       author?: string;
       status?: CaseStatus;
       ownerId?: string | null;
+      preconditions?: string;
     }>(req);
 
     const title = body?.title?.trim();
@@ -134,6 +135,7 @@ export async function POST(req: Request) {
         title,
         sub: body.sub ?? body.desc?.split('.')[0] ?? title,
         desc: body.desc ?? '',
+        preconditions: body.preconditions ?? '',
         steps: (body.steps ?? []) as Prisma.InputJsonValue,
         expected: body.expected ?? '',
         priority: body.priority,

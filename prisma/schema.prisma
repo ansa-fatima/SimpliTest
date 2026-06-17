@@ -203,17 +203,18 @@ enum CaseStatus {
 }
 
 model TestCase {
-  id        String     @id @default(cuid())
-  caseNum   Int        @unique @default(autoincrement())
-  title     String
-  sub       String     @default("")
-  desc      String     @default("")
-  steps     Json
-  expected  String     @default("")
-  priority  Priority
-  severity  Severity
-  type      TestType
-  status    CaseStatus @default(Active)
+  id            String     @id @default(cuid())
+  caseNum       Int        @unique @default(autoincrement())
+  title         String
+  sub           String     @default("")
+  desc          String     @default("")
+  preconditions String     @default("")
+  steps         Json
+  expected      String     @default("")
+  priority      Priority
+  severity      Severity
+  type          TestType
+  status        CaseStatus @default(Active)
   // DB column is still named "featureId" (mapped) — Prisma model uses suiteId.
   suite     Suite      @relation(fields: [suiteId], references: [id], onDelete: Cascade)
   suiteId   String     @map("featureId")
@@ -259,11 +260,20 @@ enum CycleScopeType {
   Custom
 }
 
+// CaseBased = the existing per-test-case execution flow (creates a TestRun per case).
+// Manual    = a quick-log entry — track aggregate pass/fail/severity counts against
+//             a free-text Module + Feature, no TestRun rows required.
+enum CycleMode {
+  CaseBased
+  Manual
+}
+
 model TestCycle {
   id          String         @id @default(cuid())
   name        String
   description String         @default("")
   status      CycleStatus    @default(Active)
+  mode        CycleMode      @default(CaseBased)
   scopeType   CycleScopeType @default(All)
   scopeId     String?        // moduleId or suiteId; null for All / Custom
   targetDate  DateTime?
@@ -273,8 +283,30 @@ model TestCycle {
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
+  // Manual-mode bookkeeping — free-text so users can record cycles before
+  // defining the workspace's module/feature structure. Ignored for CaseBased cycles.
+  moduleName     String?
+  featureName    String?
+  environment    String? // Production / QA / Staging / Dev
+  platform       String? // Android / iPhone / Web / All / Desktop
+  version        String? // app version under test
+  cycleCategory  String? // Stability / Regression / Functional / UI / Performance
+  ticketLink     String?
+
+  // Aggregate counts for Manual cycles. CaseBased cycles derive these from runs[].
+  issueCount     Int @default(0) // total defects found
+  criticalCount  Int @default(0)
+  majorCount     Int @default(0)
+  minorCount     Int @default(0)
+  doneCount      Int @default(0) // defects resolved
+  remainingCount Int @default(0) // defects still open
+  passedCount    Int @default(0) // test cases passed
+  failedCount    Int @default(0) // test cases failed
+  blockedCount   Int @default(0) // test cases blocked
+
   @@index([status])
   @@index([projectId])
+  @@index([mode])
   @@map("test_cycles")
 }
 

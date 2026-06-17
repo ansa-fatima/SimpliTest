@@ -19,6 +19,7 @@ interface TestCaseCreateProps {
     type: TestType;
     title: string;
     desc: string;
+    preconditions: string;
     steps: string[];
     expected: string;
   }) => void;
@@ -49,6 +50,7 @@ export function TestCaseCreate({
   const [type, setType] = useState<TestType>('Functional');
   const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
+  const [preconditions, setPreconditions] = useState('');
   const [stepsHtml, setStepsHtml] = useState('');
   const [expected, setExpected] = useState('');
   const [error, setError] = useState('');
@@ -77,6 +79,7 @@ export function TestCaseCreate({
       type,
       title: title.trim(),
       desc,
+      preconditions,
       steps: [stepsHtml],
       expected,
     });
@@ -240,6 +243,26 @@ export function TestCaseCreate({
               placeholder="Optional background context…"
               className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
+          </div>
+
+          {/* Preconditions — what must be true before running this case. */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-600">
+              Preconditions <span className="font-normal text-slate-400">(optional)</span>
+            </label>
+            <textarea
+              value={preconditions}
+              onChange={e => setPreconditions(e.target.value)}
+              rows={3}
+              placeholder={
+                '- User is signed in\n- Test data is loaded\n- Feature flag X is enabled'
+              }
+              className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            />
+            <p className="text-[10.5px] text-slate-400">
+              Lines starting with <code className="rounded bg-slate-100 px-1">- </code> or{' '}
+              <code className="rounded bg-slate-100 px-1">* </code> render as bullets.
+            </p>
           </div>
 
           {/* Steps — rich text */}
