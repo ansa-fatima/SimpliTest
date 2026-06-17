@@ -16,13 +16,23 @@ function slugify(name: string): string {
 export async function GET(req: Request) {
   try {
     const projectId = new URL(req.url).searchParams.get('projectId') || undefined;
+    // Pull suites flat (with parentId + testCase count) per module, then nest them
+    // in JS so the response carries the full recursive tree. Prisma can't recurse
+    // arbitrarily, so building it in JS is the cleanest path.
     const portals = await prisma.portal.findMany({
       where: projectId ? { projectId } : undefined,
       include: {
         modules: {
           orderBy: { name: 'asc' },
           include: {
-            suites: { orderBy: { name: 'asc' } },
+            suites: {
+              select: {
+                id: true,
+                name: true,
+                parentId: true,
+                _count: { select: { testCases: true } },
+              },
+            },
             _count: { select: { suites: true } },
           },
         },
@@ -30,7 +40,44 @@ export async function GET(req: Request) {
       },
       orderBy: { createdAt: 'asc' },
     });
-    return ok(portals);
+
+    // Recursive nesting helper — turns a flat suite list into a tree by parentId.
+    type FlatSuite = {
+      id: string;
+      name: string;
+      parentId: string | null;
+      _count: { testCases: number };
+    };
+    type NestedSuite = FlatSuite & { children: NestedSuite[] };
+    const nestSuites = (flat: FlatSuite[]): NestedSuite[] => {
+      const byId = new Map<string, NestedSuite>();
+      flat.forEach(s => byId.set(s.id, { ...s, children: [] }));
+      const roots: NestedSuite[] = [];
+      byId.forEach(node => {
+        if (node.parentId && byId.has(node.parentId)) {
+          byId.get(node.parentId)!.children.push(node);
+        } else {
+          roots.push(node);
+        }
+      });
+      // Sort each level alphabetically.
+      const sortTree = (nodes: NestedSuite[]) => {
+        nodes.sort((a, b) => a.name.localeCompare(b.name));
+        nodes.forEach(n => sortTree(n.children));
+      };
+      sortTree(roots);
+      return roots;
+    };
+
+    const shaped = portals.map(p => ({
+      ...p,
+      modules: p.modules.map(m => ({
+        ...m,
+        suites: nestSuites(m.suites as FlatSuite[]),
+      })),
+    }));
+
+    return ok(shaped);
   } catch (e) {
     return serverError(e);
   }

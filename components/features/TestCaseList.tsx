@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiTestCase, CaseStatus, Priority, TestType, UserSummary } from '@/types';
 import { api } from '@/lib/client';
+import { exportApiTestCases } from '@/lib/export';
 import { ImportCsvModal } from '@/components/features/ImportCsvModal';
 import { TruncatedText } from '@/components/ui/TruncatedText';
 import { avatarColour, cn, initials, priorityBadge, statusBadge, typeBadge } from '@/lib/utils';
@@ -11,12 +12,15 @@ import { avatarColour, cn, initials, priorityBadge, statusBadge, typeBadge } fro
 interface ApiSuite {
   id: string;
   name: string;
+  parentId: string | null;
+  // Recursive — populated by the API after flat-to-tree nesting.
+  children: ApiSuite[];
   _count?: { testCases: number };
 }
 interface ApiModule {
   id: string;
   name: string;
-  suites: ApiSuite[];
+  suites: ApiSuite[]; // top-level suites under this module (each may have children)
 }
 interface ApiPortal {
   id: string;
@@ -62,6 +66,8 @@ export function TestCaseList({
   const [treeLoading, setTreeLoading] = useState(false);
   const [expandedPortals, setExpandedPortals] = useState<Set<string>>(new Set());
   const [expandedModules, setExpandedModules] = useState<Set<string>>(new Set());
+  // For arbitrarily-deep nested suites — each toggle stores the suite id.
+  const [expandedSuites, setExpandedSuites] = useState<Set<string>>(new Set());
 
   // Fetch tree whenever the project changes.
   const reloadTree = useCallback(async () => {
@@ -88,17 +94,28 @@ export function TestCaseList({
   const [curMod, curSuite] = currentKey ? currentKey.split(':') : ['', ''];
   const activeNode = useMemo(() => {
     if (!curMod || !curSuite) return null;
+    // Walk recursively into nested suites — currentKey carries the LEAF suite
+    // name, so we descend depth-first looking for a name match within the module.
+    const findInSuites = (suites: ApiSuite[]): ApiSuite | null => {
+      for (const s of suites) {
+        if (s.name === curSuite) return s;
+        const inChild = findInSuites(s.children);
+        if (inChild) return inChild;
+      }
+      return null;
+    };
     for (const p of tree) {
       for (const m of p.modules) {
         if (m.name !== curMod) continue;
-        const s = m.suites.find(x => x.name === curSuite);
+        const s = findInSuites(m.suites);
         if (s) return { portal: p, module: m, suite: s };
       }
     }
     return null;
   }, [tree, curMod, curSuite]);
 
-  // Auto-expand path to the active suite on every tree refresh / selection change.
+  // Auto-expand the entire path to the active suite — portal, module, AND every ancestor
+  // suite in the parentId chain — so nested selections are visible after reload.
   useEffect(() => {
     if (!activeNode) return;
     setExpandedPortals(s => {
@@ -113,6 +130,29 @@ export function TestCaseList({
       n.add(activeNode.module.id);
       return n;
     });
+    // Walk every ancestor suite via parentId and add them to expandedSuites.
+    const ancestorIds: string[] = [];
+    let cursor: ApiSuite | null = activeNode.suite;
+    while (cursor?.parentId) {
+      ancestorIds.push(cursor.parentId);
+      // Locate the parent in the module's tree (depth-first).
+      const find = (suites: ApiSuite[], id: string): ApiSuite | null => {
+        for (const s of suites) {
+          if (s.id === id) return s;
+          const found = find(s.children, id);
+          if (found) return found;
+        }
+        return null;
+      };
+      cursor = find(activeNode.module.suites, cursor.parentId);
+    }
+    if (ancestorIds.length > 0) {
+      setExpandedSuites(s => {
+        const n = new Set(s);
+        ancestorIds.forEach(id => n.add(id));
+        return n;
+      });
+    }
   }, [activeNode]);
 
   // ─── Filters + paging ──────────────────────────────────────
@@ -210,6 +250,8 @@ export function TestCaseList({
     | 'add-portal'
     | 'add-module'
     | 'add-suite'
+    /** Nested: add a child suite under an existing suite. targetId = parent suite id. */
+    | 'add-subsuite'
     | 'rename-portal'
     | 'rename-module'
     | 'rename-suite';
@@ -225,6 +267,7 @@ export function TestCaseList({
     | { kind: 'suite'; id: string; name: string; sourceModuleId: string; sourcePortalId: string };
   const [copyTarget, setCopyTarget] = useState<CopyTarget | null>(null);
   const [showImport, setShowImport] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // ─── Actions ───────────────────────────────────────────────
   const togglePortal = (id: string) =>
@@ -245,7 +288,10 @@ export function TestCaseList({
   };
 
   // Start an add/rename — auto-expands parents so the inline input is visible.
-  const startAdd = (kind: 'add-portal' | 'add-module' | 'add-suite', targetId: string | null) => {
+  const startAdd = (
+    kind: 'add-portal' | 'add-module' | 'add-suite' | 'add-subsuite',
+    targetId: string | null,
+  ) => {
     if (kind === 'add-module' && targetId) {
       setExpandedPortals(s => {
         const n = new Set(s);
@@ -255,6 +301,14 @@ export function TestCaseList({
     }
     if (kind === 'add-suite' && targetId) {
       setExpandedModules(s => {
+        const n = new Set(s);
+        n.add(targetId);
+        return n;
+      });
+    }
+    if (kind === 'add-subsuite' && targetId) {
+      // Make sure the parent suite is open so the inline-input slot appears underneath it.
+      setExpandedSuites(s => {
         const n = new Set(s);
         n.add(targetId);
         return n;
@@ -292,6 +346,38 @@ export function TestCaseList({
           // Navigate to the newly-created suite so the user lands on it immediately.
           const mod = tree.flatMap(p => p.modules).find(m => m.id === edit.targetId);
           if (mod) onNavigate(mod.name, name);
+          break;
+        }
+        case 'add-subsuite': {
+          if (!edit.targetId) return;
+          // edit.targetId is the parent suite — the API inherits moduleId from the parent.
+          await api.post('/api/features', { name, parentSuiteId: edit.targetId });
+          // Find the module that contains the parent suite, so we can navigate
+          // into the new sub-suite once the tree refetches.
+          let modName: string | null = null;
+          const findInSuites = (suites: ApiSuite[], targetId: string): boolean => {
+            for (const s of suites) {
+              if (s.id === targetId) return true;
+              if (findInSuites(s.children, targetId)) return true;
+            }
+            return false;
+          };
+          for (const p of tree) {
+            for (const m of p.modules) {
+              if (findInSuites(m.suites, edit.targetId!)) {
+                modName = m.name;
+                break;
+              }
+            }
+            if (modName) break;
+          }
+          if (modName) onNavigate(modName, name);
+          // Auto-expand the new sub-suite's parent so the user can see it.
+          setExpandedSuites(s => {
+            const n = new Set(s);
+            n.add(edit.targetId!);
+            return n;
+          });
           break;
         }
         case 'rename-portal':
@@ -375,6 +461,46 @@ export function TestCaseList({
     startAdd('add-suite', activeNode.module.id);
   };
 
+  // Export all cases in the active suite (not just the current page) to an .xlsx.
+  // Honours the active filter chips so users can export e.g. "only failed" if they want —
+  // matches what they see on screen.
+  const handleExport = async () => {
+    if (!activeNode || exporting) return;
+    try {
+      setExporting(true);
+      const params = new URLSearchParams({
+        suiteId: activeNode.suite.id,
+        page: '1',
+        pageSize: '1000',
+        sort: 'caseNum',
+        order: 'asc',
+      });
+      priorityF.forEach(p => params.append('priority', p));
+      statusF.forEach(s => params.append('status', s));
+      typeF.forEach(t => params.append('type', t));
+      ownerF.forEach(o => params.append('ownerId', o));
+      if (search.trim()) params.set('search', search.trim());
+
+      const data = await api.get<{ items: ApiTestCase[]; total: number }>(
+        `/api/test-cases?${params.toString()}`,
+      );
+      if (data.items.length === 0) {
+        alert('No test cases to export with the current filters.');
+        return;
+      }
+      exportApiTestCases(data.items, {
+        workspace: projectName,
+        portal: activeNode.portal.name,
+        module: activeNode.module.name,
+        suite: activeNode.suite.name,
+      });
+    } catch (e) {
+      alert(`Export failed: ${(e as Error).message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const clearAll = () => {
     setPriorityF(new Set());
     setStatusF(new Set());
@@ -399,6 +525,135 @@ export function TestCaseList({
 
   // Sibling suites count for the header subtitle (e.g. "3 suites" under the same module).
   const siblingSuiteCount = activeNode?.module.suites.length ?? 0;
+
+  const toggleSuiteExpand = (id: string) =>
+    setExpandedSuites(s => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+
+  // Recursive renderer for a single suite + its nested children.
+  // depth controls the visual indentation; modName + portalId thread through to
+  // the action callbacks. Each level supports add-subsuite / rename / delete /
+  // copy, and clicking the label navigates to that suite.
+  const renderSuiteNode = (
+    suite: ApiSuite,
+    depth: number,
+    modName: string,
+    moduleId: string,
+    portalId: string,
+  ): React.ReactNode => {
+    const active = activeNode?.suite.id === suite.id;
+    const isRenamingSuite = edit?.kind === 'rename-suite' && edit.targetId === suite.id;
+    const hasChildren = suite.children.length > 0;
+    const isOpen = expandedSuites.has(suite.id);
+    const isAddingChildHere = edit?.kind === 'add-subsuite' && edit.targetId === suite.id;
+
+    return (
+      <div key={suite.id}>
+        <NodeRow
+          indent={2 + depth}
+          isActive={active}
+          isRenaming={isRenamingSuite}
+          // Suites that have children get a chevron; leaves get a dot.
+          chevron={
+            hasChildren ? (
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleSuiteExpand(suite.id);
+                }}
+                className="inline-flex items-center"
+              >
+                <Chevron open={isOpen} />
+              </button>
+            ) : (
+              <span className="inline-block w-3" />
+            )
+          }
+          onLabelClick={() => pickSuite(modName, suite.name)}
+          icon={
+            <span
+              className={cn(
+                'h-1.5 w-1.5 flex-shrink-0 rounded-full',
+                active ? 'bg-primary' : 'bg-text-3/40',
+              )}
+            />
+          }
+          label={suite.name}
+          suffix={
+            suite._count && suite._count.testCases > 0 ? (
+              <span
+                className={cn(
+                  'ml-1 rounded-full px-1.5 py-px text-[10px]',
+                  active ? 'bg-primary/20 text-primary-text' : 'bg-surface-2 text-text-3',
+                )}
+              >
+                {suite._count.testCases}
+              </span>
+            ) : null
+          }
+          renameDraft={isRenamingSuite ? edit!.draft : ''}
+          onRenameChange={v => setEdit(e => (e ? { ...e, draft: v } : e))}
+          onRenameSubmit={submitEdit}
+          onRenameCancel={cancelEdit}
+          actions={
+            <>
+              <NodeAction
+                icon="ti-folder-plus"
+                title="Add subfolder"
+                onClick={() => startAdd('add-subsuite', suite.id)}
+              />
+              <NodeAction
+                icon="ti-copy"
+                title="Copy suite to another module"
+                onClick={() =>
+                  setCopyTarget({
+                    kind: 'suite',
+                    id: suite.id,
+                    name: suite.name,
+                    sourceModuleId: moduleId,
+                    sourcePortalId: portalId,
+                  })
+                }
+              />
+              <NodeAction
+                icon="ti-pencil"
+                title="Rename suite"
+                onClick={() => startRename('rename-suite', suite.id, suite.name)}
+              />
+              <NodeAction
+                icon="ti-trash"
+                title="Delete suite"
+                danger
+                onClick={() => removeSuite(suite)}
+              />
+            </>
+          }
+        />
+
+        {(isOpen || isAddingChildHere) && (
+          <div className="ml-4 border-l border-border pl-1">
+            {suite.children.map(child =>
+              renderSuiteNode(child, depth + 1, modName, moduleId, portalId),
+            )}
+            {isAddingChildHere && (
+              <InlineRow
+                indent={2 + depth + 1}
+                placeholder="Subfolder name…"
+                draft={edit.draft}
+                setDraft={v => setEdit(e => (e ? { ...e, draft: v } : e))}
+                onSubmit={submitEdit}
+                onCancel={cancelEdit}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // ─── Render ────────────────────────────────────────────────
   return (
@@ -447,6 +702,20 @@ export function TestCaseList({
             </p>
           </div>
           <div className="flex flex-shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={!activeNode || exporting}
+              className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+              title={activeNode ? `Export ${activeNode.suite.name} to Excel` : 'Pick a suite first'}
+            >
+              {exporting ? (
+                <i className="ti ti-loader-2 animate-spin text-[16px]" />
+              ) : (
+                <i className="ti ti-file-spreadsheet text-[16px]" />
+              )}
+              Export
+            </button>
             <button
               type="button"
               onClick={() => setShowImport(true)}
@@ -626,81 +895,10 @@ export function TestCaseList({
                                         No suites yet
                                       </p>
                                     )}
-                                  {mod.suites.map(suite => {
-                                    const active =
-                                      activeNode?.suite.id === suite.id &&
-                                      activeNode?.module.id === mod.id;
-                                    const isRenamingSuite =
-                                      edit?.kind === 'rename-suite' && edit.targetId === suite.id;
-                                    return (
-                                      <NodeRow
-                                        key={suite.id}
-                                        indent={2}
-                                        isActive={active}
-                                        isRenaming={isRenamingSuite}
-                                        onLabelClick={() => pickSuite(mod.name, suite.name)}
-                                        icon={
-                                          <span
-                                            className={cn(
-                                              'h-1.5 w-1.5 flex-shrink-0 rounded-full',
-                                              active ? 'bg-primary' : 'bg-text-3/40',
-                                            )}
-                                          />
-                                        }
-                                        label={suite.name}
-                                        suffix={
-                                          suite._count && suite._count.testCases > 0 ? (
-                                            <span
-                                              className={cn(
-                                                'ml-1 rounded-full px-1.5 py-px text-[10px]',
-                                                active
-                                                  ? 'bg-primary/20 text-primary-text'
-                                                  : 'bg-surface-2 text-text-3',
-                                              )}
-                                            >
-                                              {suite._count.testCases}
-                                            </span>
-                                          ) : null
-                                        }
-                                        renameDraft={isRenamingSuite ? edit!.draft : ''}
-                                        onRenameChange={v =>
-                                          setEdit(e => (e ? { ...e, draft: v } : e))
-                                        }
-                                        onRenameSubmit={submitEdit}
-                                        onRenameCancel={cancelEdit}
-                                        actions={
-                                          <>
-                                            <NodeAction
-                                              icon="ti-copy"
-                                              title="Copy suite to another module"
-                                              onClick={() =>
-                                                setCopyTarget({
-                                                  kind: 'suite',
-                                                  id: suite.id,
-                                                  name: suite.name,
-                                                  sourceModuleId: mod.id,
-                                                  sourcePortalId: portal.id,
-                                                })
-                                              }
-                                            />
-                                            <NodeAction
-                                              icon="ti-pencil"
-                                              title="Rename suite"
-                                              onClick={() =>
-                                                startRename('rename-suite', suite.id, suite.name)
-                                              }
-                                            />
-                                            <NodeAction
-                                              icon="ti-trash"
-                                              title="Delete suite"
-                                              danger
-                                              onClick={() => removeSuite(suite)}
-                                            />
-                                          </>
-                                        }
-                                      />
-                                    );
-                                  })}
+                                  {/* Recursive — each suite renders itself + nested children. */}
+                                  {mod.suites.map(suite =>
+                                    renderSuiteNode(suite, 0, mod.name, mod.id, portal.id),
+                                  )}
 
                                   {/* Inline "add suite" input at the bottom of the module. */}
                                   {edit?.kind === 'add-suite' && edit.targetId === mod.id && (

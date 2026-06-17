@@ -59,7 +59,14 @@ export async function POST(req: Request) {
     if (rows.length - 1 > MAX_ROWS) return bad(`CSV exceeds ${MAX_ROWS} rows`);
 
     const header = rows[0];
-    const col = Object.fromEntries(header.map((h, i) => [h.trim(), i] as const));
+    // First-occurrence wins for duplicate column names (TestRail exports have
+    // TWO "Steps" columns — the second one is usually empty formatting metadata
+    // and would silently overwrite the real one if we used Object.fromEntries).
+    const col: Record<string, number> = {};
+    header.forEach((h, i) => {
+      const k = h.trim();
+      if (col[k] === undefined) col[k] = i;
+    });
     if (col['Title'] === undefined) {
       return bad('CSV is missing required column "Title"');
     }

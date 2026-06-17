@@ -135,7 +135,12 @@ async function main() {
   }
 
   const header = rows[0];
-  const col = Object.fromEntries(header.map((h, i) => [h, i]));
+  // First-occurrence wins — TestRail exports have two "Steps" columns and the
+  // second one is usually empty; without this fix it would shadow the real data.
+  const col = {};
+  header.forEach((h, i) => {
+    if (col[h] === undefined) col[h] = i;
+  });
 
   // Sanity-check expected columns
   for (const required of ['Title', 'Section Hierarchy']) {

@@ -157,17 +157,27 @@ model Module {
 // Was "Feature" — renamed to "Suite" for PRD alignment.
 // DB table is still named `features` (kept via @@map) so no data migration is
 // required for the rename itself.
+// Renamed conceptually to "Folder" — a node in the recursive test-case tree.
+// Each suite belongs to a module, but can also have a parent suite for arbitrary
+// nesting (a → b → c → d). Test cases attach to any node in this tree.
+//
+// Uniqueness within a parent is enforced in the API layer because Postgres
+// composite uniques treat NULL parents as non-equal (so a strict @@unique
+// wouldn't catch sibling-name collisions at the module root).
 model Suite {
   id        String     @id @default(cuid())
   name      String
   module    Module     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   moduleId  String
+  parentId  String?
+  parent    Suite?     @relation("SuiteTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Suite[]    @relation("SuiteTree")
   testCases TestCase[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
-  @@unique([moduleId, name])
   @@index([moduleId])
+  @@index([parentId])
   @@map("features")
 }
 
