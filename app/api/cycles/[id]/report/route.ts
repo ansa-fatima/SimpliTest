@@ -35,7 +35,13 @@ export async function GET(_req: Request, { params }: Ctx) {
     let scopeName: string | null = null;
     if (cycle.scopeType === 'All') scopeName = 'All test cases';
     else if (cycle.scopeType === 'Custom') scopeName = 'Custom selection';
-    else if (cycle.scopeType === 'Module' && cycle.scopeId) {
+    else if (cycle.scopeType === 'Portal' && cycle.scopeId) {
+      const p = await prisma.portal.findUnique({
+        where: { id: cycle.scopeId },
+        select: { name: true },
+      });
+      scopeName = p?.name ?? null;
+    } else if (cycle.scopeType === 'Module' && cycle.scopeId) {
       const m = await prisma.module.findUnique({
         where: { id: cycle.scopeId },
         select: { name: true },

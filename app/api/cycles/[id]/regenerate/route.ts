@@ -25,18 +25,38 @@ export async function POST(_req: Request, { params }: Ctx) {
     });
     if (!cycle) return notFound('Cycle not found');
 
-    // Resolve matching case IDs based on the cycle's scope.
+    // Resolve matching case IDs — walks portal/module/suite attachment points so
+    // module-direct and portal-direct cases are also picked up.
     let caseIds: string[] = [];
     if (cycle.scopeType === 'All') {
       const cases = await prisma.testCase.findMany({
-        where: { suite: { module: { portal: { projectId: cycle.projectId } } } },
+        where: {
+          OR: [
+            { portal: { projectId: cycle.projectId } },
+            { module: { portal: { projectId: cycle.projectId } } },
+            { suite: { module: { portal: { projectId: cycle.projectId } } } },
+          ],
+        },
+        select: { id: true },
+      });
+      caseIds = cases.map(c => c.id);
+    } else if (cycle.scopeType === 'Portal') {
+      if (!cycle.scopeId) return bad('Portal-scope cycle is missing scopeId');
+      const cases = await prisma.testCase.findMany({
+        where: {
+          OR: [
+            { portalId: cycle.scopeId },
+            { module: { portalId: cycle.scopeId } },
+            { suite: { module: { portalId: cycle.scopeId } } },
+          ],
+        },
         select: { id: true },
       });
       caseIds = cases.map(c => c.id);
     } else if (cycle.scopeType === 'Module') {
       if (!cycle.scopeId) return bad('Module-scope cycle is missing scopeId');
       const cases = await prisma.testCase.findMany({
-        where: { suite: { moduleId: cycle.scopeId } },
+        where: { OR: [{ moduleId: cycle.scopeId }, { suite: { moduleId: cycle.scopeId } }] },
         select: { id: true },
       });
       caseIds = cases.map(c => c.id);

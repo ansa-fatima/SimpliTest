@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db';
 import { Prisma, CycleScopeType, CycleStatus, CycleMode } from '@prisma/client';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 
-const SCOPE_TYPES: CycleScopeType[] = ['All', 'Module', 'Suite', 'Custom'];
+const SCOPE_TYPES: CycleScopeType[] = ['All', 'Portal', 'Module', 'Suite', 'Custom'];
 const MODES: CycleMode[] = ['CaseBased', 'Manual'];
 
 // GET /api/cycles
@@ -26,12 +26,21 @@ export async function GET(req: Request) {
       },
     });
 
-    // Resolve scope names (module / suite) in batch
+    // Resolve scope names (portal / module / suite) in batch
+    const portalIds = cycles
+      .filter(c => c.scopeType === 'Portal' && c.scopeId)
+      .map(c => c.scopeId!);
     const moduleIds = cycles
       .filter(c => c.scopeType === 'Module' && c.scopeId)
       .map(c => c.scopeId!);
     const suiteIds = cycles.filter(c => c.scopeType === 'Suite' && c.scopeId).map(c => c.scopeId!);
-    const [modulesById, suitesById] = await Promise.all([
+    const [portalsById, modulesById, suitesById] = await Promise.all([
+      portalIds.length === 0
+        ? Promise.resolve([])
+        : prisma.portal.findMany({
+            where: { id: { in: portalIds } },
+            select: { id: true, name: true },
+          }),
       moduleIds.length === 0
         ? Promise.resolve([])
         : prisma.module.findMany({
@@ -45,6 +54,7 @@ export async function GET(req: Request) {
             select: { id: true, name: true, module: { select: { name: true } } },
           }),
     ]);
+    const portalNameById = new Map(portalsById.map(p => [p.id, p.name]));
     const moduleNameById = new Map(modulesById.map(m => [m.id, m.name]));
     const suiteNameById = new Map(suitesById.map(s => [s.id, `${s.module.name} / ${s.name}`]));
 
@@ -59,6 +69,8 @@ export async function GET(req: Request) {
       let scopeName: string | null = null;
       if (c.scopeType === 'All') scopeName = 'All test cases';
       else if (c.scopeType === 'Custom') scopeName = 'Custom selection';
+      else if (c.scopeType === 'Portal' && c.scopeId)
+        scopeName = portalNameById.get(c.scopeId) ?? null;
       else if (c.scopeType === 'Module' && c.scopeId)
         scopeName = moduleNameById.get(c.scopeId) ?? null;
       else if (c.scopeType === 'Suite' && c.scopeId)
@@ -154,17 +166,40 @@ export async function POST(req: Request) {
       return bad(`scopeType must be one of ${SCOPE_TYPES.join('|')}`);
     }
 
+    // Cases attach at portal/module/suite level, so each scope must walk all three
+    // attachment points to catch every case at-or-below that node.
     let caseIds: string[] = [];
     if (body.scopeType === 'All') {
       const cases = await prisma.testCase.findMany({
-        where: { suite: { module: { portal: { projectId: body.projectId } } } },
+        where: {
+          OR: [
+            { portal: { projectId: body.projectId } },
+            { module: { portal: { projectId: body.projectId } } },
+            { suite: { module: { portal: { projectId: body.projectId } } } },
+          ],
+        },
+        select: { id: true },
+      });
+      caseIds = cases.map(c => c.id);
+    } else if (body.scopeType === 'Portal') {
+      if (!body.scopeId) return bad('scopeId (portalId) is required for Portal scope');
+      const cases = await prisma.testCase.findMany({
+        where: {
+          OR: [
+            { portalId: body.scopeId },
+            { module: { portalId: body.scopeId } },
+            { suite: { module: { portalId: body.scopeId } } },
+          ],
+        },
         select: { id: true },
       });
       caseIds = cases.map(c => c.id);
     } else if (body.scopeType === 'Module') {
       if (!body.scopeId) return bad('scopeId (moduleId) is required for Module scope');
       const cases = await prisma.testCase.findMany({
-        where: { suite: { moduleId: body.scopeId } },
+        where: {
+          OR: [{ moduleId: body.scopeId }, { suite: { moduleId: body.scopeId } }],
+        },
         select: { id: true },
       });
       caseIds = cases.map(c => c.id);

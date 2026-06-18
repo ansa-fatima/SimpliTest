@@ -108,13 +108,22 @@ export async function GET(req: Request) {
     ]);
 
     // Resolve scope names for recent cycles
+    const recentPortalIds = recentCyclesRaw
+      .filter(c => c.scopeType === 'Portal' && c.scopeId)
+      .map(c => c.scopeId!);
     const recentModuleIds = recentCyclesRaw
       .filter(c => c.scopeType === 'Module' && c.scopeId)
       .map(c => c.scopeId!);
     const recentSuiteIds = recentCyclesRaw
       .filter(c => c.scopeType === 'Suite' && c.scopeId)
       .map(c => c.scopeId!);
-    const [recentModules, recentSuites] = await Promise.all([
+    const [recentPortals, recentModules, recentSuites] = await Promise.all([
+      recentPortalIds.length === 0
+        ? Promise.resolve([])
+        : prisma.portal.findMany({
+            where: { id: { in: recentPortalIds } },
+            select: { id: true, name: true },
+          }),
       recentModuleIds.length === 0
         ? Promise.resolve([])
         : prisma.module.findMany({
@@ -128,6 +137,7 @@ export async function GET(req: Request) {
             select: { id: true, name: true, module: { select: { name: true } } },
           }),
     ]);
+    const recentPortalMap = new Map(recentPortals.map(p => [p.id, p.name]));
     const recentModuleMap = new Map(recentModules.map(m => [m.id, m.name]));
     const recentSuiteMap = new Map(recentSuites.map(s => [s.id, `${s.module.name} / ${s.name}`]));
 
@@ -218,6 +228,8 @@ export async function GET(req: Request) {
       let scopeName: string | null = null;
       if (c.scopeType === 'All') scopeName = 'All test cases';
       else if (c.scopeType === 'Custom') scopeName = 'Custom selection';
+      else if (c.scopeType === 'Portal' && c.scopeId)
+        scopeName = recentPortalMap.get(c.scopeId) ?? null;
       else if (c.scopeType === 'Module' && c.scopeId)
         scopeName = recentModuleMap.get(c.scopeId) ?? null;
       else if (c.scopeType === 'Suite' && c.scopeId)

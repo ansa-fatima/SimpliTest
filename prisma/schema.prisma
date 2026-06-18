@@ -276,6 +276,7 @@ enum CycleStatus {
 
 enum CycleScopeType {
   All
+  Portal
   Module
   Suite
   Custom

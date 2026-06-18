@@ -10,6 +10,10 @@ interface ApiModule {
   name: string;
   suites: { id: string; name: string }[];
 }
+interface ApiPortal {
+  id: string;
+  name: string;
+}
 
 export interface CycleFormPayload {
   name: string;
@@ -73,6 +77,7 @@ export function NewCycleModal({
   const [scopeType, setScopeType] = useState<CycleScopeType>(initial?.scopeType ?? 'All');
   const [scopeId, setScopeId] = useState<string>(initial?.scopeId ?? '');
   const [modules, setModules] = useState<ApiModule[]>([]);
+  const [portals, setPortals] = useState<ApiPortal[]>([]);
   const [loadingModules, setLoadingModules] = useState(true);
 
   // ── Manual-mode fields ──────────────────────────────────────
@@ -99,12 +104,20 @@ export function NewCycleModal({
   useEffect(() => {
     (async () => {
       try {
-        const url = projectId ? `/api/modules?projectId=${projectId}` : '/api/modules';
-        const list = await api.get<ApiModule[]>(url);
-        setModules(list);
+        const modUrl = projectId ? `/api/modules?projectId=${projectId}` : '/api/modules';
+        const [mods, ports] = await Promise.all([
+          api.get<ApiModule[]>(modUrl),
+          projectId
+            ? api
+                .get<{ id: string; name: string }[]>(`/api/portals?projectId=${projectId}`)
+                .catch(() => [])
+            : Promise.resolve([]),
+        ]);
+        setModules(mods);
+        setPortals(ports.map(p => ({ id: p.id, name: p.name })));
       } catch (e) {
-        // Not fatal — Manual mode doesn't need modules.
-        console.error('[modules]', e);
+        // Not fatal — Manual mode doesn't need any of this.
+        console.error('[modules/portals]', e);
       } finally {
         setLoadingModules(false);
       }
@@ -114,7 +127,10 @@ export function NewCycleModal({
   // Reset scopeId to a valid value when scopeType or modules change.
   useEffect(() => {
     if (mode !== 'CaseBased') return;
-    if (scopeType === 'Module') {
+    if (scopeType === 'Portal') {
+      const first = portals[0];
+      setScopeId(prev => (portals.some(p => p.id === prev) ? prev : (first?.id ?? '')));
+    } else if (scopeType === 'Module') {
       const first = modules[0];
       setScopeId(prev => (modules.some(m => m.id === prev) ? prev : (first?.id ?? '')));
     } else if (scopeType === 'Suite') {
@@ -125,7 +141,7 @@ export function NewCycleModal({
       setScopeId('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopeType, modules, mode]);
+  }, [scopeType, modules, portals, mode]);
 
   const suites =
     scopeType === 'Suite'
@@ -138,7 +154,11 @@ export function NewCycleModal({
       setError('Name is required');
       return;
     }
-    if (mode === 'CaseBased' && (scopeType === 'Module' || scopeType === 'Suite') && !scopeId) {
+    if (
+      mode === 'CaseBased' &&
+      (scopeType === 'Portal' || scopeType === 'Module' || scopeType === 'Suite') &&
+      !scopeId
+    ) {
       setError(`Pick a ${scopeType.toLowerCase()}`);
       return;
     }
@@ -152,7 +172,8 @@ export function NewCycleModal({
 
     if (mode === 'CaseBased') {
       payload.scopeType = scopeType;
-      payload.scopeId = scopeType === 'Module' || scopeType === 'Suite' ? scopeId : null;
+      payload.scopeId =
+        scopeType === 'Portal' || scopeType === 'Module' || scopeType === 'Suite' ? scopeId : null;
       // Optional context that's useful even when running test cases per-case.
       payload.environment = environment || undefined;
       payload.platform = platform || undefined;
@@ -407,7 +428,7 @@ export function NewCycleModal({
 
                 <Field label="Scope" required>
                   <div className="flex flex-wrap gap-1.5">
-                    {(['All', 'Module', 'Suite'] as CycleScopeType[]).map(t => (
+                    {(['All', 'Portal', 'Module', 'Suite'] as CycleScopeType[]).map(t => (
                       <button
                         key={t}
                         type="button"
@@ -424,6 +445,30 @@ export function NewCycleModal({
                     ))}
                   </div>
                 </Field>
+
+                {scopeType === 'Portal' && (
+                  <Field label="Pick portal">
+                    {loadingModules ? (
+                      <span className="text-xs text-slate-400">Loading…</span>
+                    ) : portals.length === 0 ? (
+                      <span className="text-xs italic text-slate-400">
+                        No portals in this workspace yet.
+                      </span>
+                    ) : (
+                      <select
+                        value={scopeId}
+                        onChange={e => setScopeId(e.target.value)}
+                        className="input"
+                      >
+                        {portals.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </Field>
+                )}
 
                 {scopeType === 'Module' && (
                   <Field label="Pick module">

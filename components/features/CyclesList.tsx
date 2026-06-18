@@ -235,9 +235,13 @@ export function CyclesList({
                           <Chip color="emerald" text={c.moduleName} />
                         ) : (
                           <span className="text-text-2">
-                            {c.scopeType === 'Module' && c.scopeName
-                              ? c.scopeName.split(' / ')[0]
-                              : '—'}
+                            {c.scopeType === 'Portal' && c.scopeName
+                              ? c.scopeName
+                              : c.scopeType === 'Module' && c.scopeName
+                                ? c.scopeName.split(' / ')[0]
+                                : c.scopeType === 'Suite' && c.scopeName
+                                  ? c.scopeName.split(' / ')[0]
+                                  : '—'}
                           </span>
                         )}
                       </td>

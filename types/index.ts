@@ -30,7 +30,7 @@ export interface UserSummary {
 // ─── Test Cycles & Runs ──────────────────────────────────────
 export type RunResult = 'NotRun' | 'Passed' | 'Failed' | 'Blocked' | 'Skipped';
 export type CycleStatus = 'Active' | 'Completed' | 'Archived';
-export type CycleScopeType = 'All' | 'Module' | 'Suite' | 'Custom';
+export type CycleScopeType = 'All' | 'Portal' | 'Module' | 'Suite' | 'Custom';
 export type CycleMode = 'CaseBased' | 'Manual';
 
 export interface Project {
