@@ -21,6 +21,7 @@ interface ApiModule {
   id: string;
   name: string;
   suites: ApiSuite[]; // top-level suites under this module (each may have children)
+  _count?: { testCases: number };
 }
 interface ApiPortal {
   id: string;
@@ -28,7 +29,14 @@ interface ApiPortal {
   slug: string | null;
   icon: string | null;
   modules: ApiModule[];
+  _count?: { testCases: number };
 }
+
+// Tri-level selection: a portal, a module, or a (nested) suite.
+type ActiveSelection =
+  | { kind: 'portal'; portal: ApiPortal }
+  | { kind: 'module'; portal: ApiPortal; module: ApiModule }
+  | { kind: 'suite'; portal: ApiPortal; module: ApiModule; suite: ApiSuite };
 
 interface TestCaseListProps {
   projectId: string | null;
@@ -90,9 +98,27 @@ export function TestCaseList({
     reloadTree();
   }, [reloadTree]);
 
-  // Derive the active suite/module/portal from the legacy "ModName:SuiteName" key.
+  // Elevated selection — used when the user picks a portal or module directly,
+  // without drilling into a suite. Resets whenever currentKey changes (a suite
+  // click in the tree always supersedes a higher-level selection).
+  const [elevated, setElevated] = useState<
+    | { kind: 'portal'; portalId: string }
+    | { kind: 'module'; portalId: string; moduleId: string }
+    | null
+  >(null);
+
+  // Derive the active selection: prefer the elevated portal/module pick,
+  // otherwise fall back to the legacy "ModName:SuiteName" suite key.
   const [curMod, curSuite] = currentKey ? currentKey.split(':') : ['', ''];
-  const activeNode = useMemo(() => {
+  const activeNode = useMemo<ActiveSelection | null>(() => {
+    if (elevated) {
+      const portal = tree.find(p => p.id === elevated.portalId);
+      if (!portal) return null;
+      if (elevated.kind === 'portal') return { kind: 'portal', portal };
+      const mod = portal.modules.find(m => m.id === elevated.moduleId);
+      if (!mod) return null;
+      return { kind: 'module', portal, module: mod };
+    }
     if (!curMod || !curSuite) return null;
     // Walk recursively into nested suites — currentKey carries the LEAF suite
     // name, so we descend depth-first looking for a name match within the module.
@@ -108,14 +134,19 @@ export function TestCaseList({
       for (const m of p.modules) {
         if (m.name !== curMod) continue;
         const s = findInSuites(m.suites);
-        if (s) return { portal: p, module: m, suite: s };
+        if (s) return { kind: 'suite', portal: p, module: m, suite: s };
       }
     }
     return null;
-  }, [tree, curMod, curSuite]);
+  }, [tree, elevated, curMod, curSuite]);
 
-  // Auto-expand the entire path to the active suite — portal, module, AND every ancestor
-  // suite in the parentId chain — so nested selections are visible after reload.
+  // Convenience accessors — null when the active selection doesn't include that level.
+  const activeSuite = activeNode?.kind === 'suite' ? activeNode.suite : null;
+  const activeModule =
+    activeNode?.kind === 'suite' || activeNode?.kind === 'module' ? activeNode.module : null;
+  const activePortal = activeNode?.portal ?? null;
+
+  // Auto-expand the path to the active selection so it's visible after reload.
   useEffect(() => {
     if (!activeNode) return;
     setExpandedPortals(s => {
@@ -124,18 +155,19 @@ export function TestCaseList({
       n.add(activeNode.portal.id);
       return n;
     });
+    if (activeNode.kind === 'portal') return;
     setExpandedModules(s => {
       if (s.has(activeNode.module.id)) return s;
       const n = new Set(s);
       n.add(activeNode.module.id);
       return n;
     });
+    if (activeNode.kind === 'module') return;
     // Walk every ancestor suite via parentId and add them to expandedSuites.
     const ancestorIds: string[] = [];
     let cursor: ApiSuite | null = activeNode.suite;
     while (cursor?.parentId) {
       ancestorIds.push(cursor.parentId);
-      // Locate the parent in the module's tree (depth-first).
       const find = (suites: ApiSuite[], id: string): ApiSuite | null => {
         for (const s of suites) {
           if (s.id === id) return s;
@@ -154,6 +186,12 @@ export function TestCaseList({
       });
     }
   }, [activeNode]);
+
+  // Whenever currentKey changes (a suite click in the legacy parent flow), drop
+  // any elevated portal/module selection so suite clicks always win.
+  useEffect(() => {
+    if (curMod && curSuite) setElevated(null);
+  }, [curMod, curSuite]);
 
   // ─── Filters + paging ──────────────────────────────────────
   const [priorityF, setPriorityF] = useState<Set<Priority>>(new Set());
@@ -176,10 +214,16 @@ export function TestCaseList({
     return () => document.removeEventListener('mousedown', h);
   }, [openFilter]);
 
-  // Reset to page 1 whenever filters or suite change.
+  // Reset to page 1 whenever filters or active selection change.
+  const activeSelectionKey =
+    activeNode?.kind === 'suite'
+      ? activeNode.suite.id
+      : activeNode?.kind === 'module'
+        ? activeNode.module.id
+        : (activeNode?.portal.id ?? null);
   useEffect(() => {
     setPage(1);
-  }, [priorityF, statusF, typeF, ownerF, search, activeNode?.suite.id]);
+  }, [priorityF, statusF, typeF, ownerF, search, activeSelectionKey]);
 
   // ─── Cases (server fetch) ──────────────────────────────────
   const [cases, setCases] = useState<ApiTestCase[]>([]);
@@ -198,12 +242,16 @@ export function TestCaseList({
     try {
       setCasesLoading(true);
       const params = new URLSearchParams({
-        suiteId: activeNode.suite.id,
         page: String(page),
         pageSize: String(PAGE_SIZE),
         sort: 'caseNum',
         order: 'asc',
       });
+      // Filter by the deepest level the user has selected. Higher levels
+      // include every nested case underneath (the API does the OR walk).
+      if (activeNode.kind === 'suite') params.set('suiteId', activeNode.suite.id);
+      else if (activeNode.kind === 'module') params.set('moduleId', activeNode.module.id);
+      else params.set('portalId', activeNode.portal.id);
       priorityF.forEach(p => params.append('priority', p));
       statusF.forEach(s => params.append('status', s));
       typeF.forEach(t => params.append('type', t));
@@ -387,8 +435,9 @@ export function TestCaseList({
         case 'rename-module': {
           if (!edit.targetId) return;
           await api.patch(`/api/modules/${edit.targetId}`, { name });
-          // Keep currentKey in sync if we renamed the active module.
-          if (activeNode?.module.id === edit.targetId) {
+          // Keep currentKey in sync if we renamed the active module (only meaningful
+          // when a suite is selected — module-only selection uses ids, not names).
+          if (activeNode?.kind === 'suite' && activeNode.module.id === edit.targetId) {
             onNavigate(name, activeNode.suite.name);
           }
           break;
@@ -396,7 +445,7 @@ export function TestCaseList({
         case 'rename-suite': {
           if (!edit.targetId) return;
           await api.patch(`/api/features/${edit.targetId}`, { name });
-          if (activeNode?.suite.id === edit.targetId) {
+          if (activeNode?.kind === 'suite' && activeNode.suite.id === edit.targetId) {
             onNavigate(activeNode.module.name, name);
           }
           break;
@@ -457,24 +506,25 @@ export function TestCaseList({
 
   // Top-of-header "+ New suite" shortcut: adds a suite under the active module inline.
   const addSuiteUnderActive = () => {
-    if (!activeNode) return;
-    startAdd('add-suite', activeNode.module.id);
+    if (!activeModule) return;
+    startAdd('add-suite', activeModule.id);
   };
 
-  // Export all cases in the active suite (not just the current page) to an .xlsx.
-  // Honours the active filter chips so users can export e.g. "only failed" if they want —
-  // matches what they see on screen.
+  // Export every case at-or-below the active selection (not just the current
+  // page). Honours the active filter chips so what's exported matches the screen.
   const handleExport = async () => {
     if (!activeNode || exporting) return;
     try {
       setExporting(true);
       const params = new URLSearchParams({
-        suiteId: activeNode.suite.id,
         page: '1',
         pageSize: '1000',
         sort: 'caseNum',
         order: 'asc',
       });
+      if (activeNode.kind === 'suite') params.set('suiteId', activeNode.suite.id);
+      else if (activeNode.kind === 'module') params.set('moduleId', activeNode.module.id);
+      else params.set('portalId', activeNode.portal.id);
       priorityF.forEach(p => params.append('priority', p));
       statusF.forEach(s => params.append('status', s));
       typeF.forEach(t => params.append('type', t));
@@ -491,8 +541,8 @@ export function TestCaseList({
       exportApiTestCases(data.items, {
         workspace: projectName,
         portal: activeNode.portal.name,
-        module: activeNode.module.name,
-        suite: activeNode.suite.name,
+        module: activeModule?.name ?? '',
+        suite: activeSuite?.name ?? '',
       });
     } catch (e) {
       alert(`Export failed: ${(e as Error).message}`);
@@ -524,7 +574,7 @@ export function TestCaseList({
   };
 
   // Sibling suites count for the header subtitle (e.g. "3 suites" under the same module).
-  const siblingSuiteCount = activeNode?.module.suites.length ?? 0;
+  const siblingSuiteCount = activeModule?.suites.length ?? 0;
 
   const toggleSuiteExpand = (id: string) =>
     setExpandedSuites(s => {
@@ -544,7 +594,7 @@ export function TestCaseList({
     moduleId: string,
     portalId: string,
   ): React.ReactNode => {
-    const active = activeNode?.suite.id === suite.id;
+    const active = activeNode?.kind === 'suite' && activeNode.suite.id === suite.id;
     const isRenamingSuite = edit?.kind === 'rename-suite' && edit.targetId === suite.id;
     const hasChildren = suite.children.length > 0;
     const isOpen = expandedSuites.has(suite.id);
@@ -665,16 +715,36 @@ export function TestCaseList({
           {activeNode ? (
             <>
               <Slash />
-              <span className="hover:text-text">{activeNode.portal.name}</span>
-              <Slash />
-              <span className="hover:text-text">{activeNode.module.name}</span>
-              <Slash />
-              <span className="font-medium text-text">{activeNode.suite.name}</span>
+              <span
+                className={cn(
+                  activeNode.kind === 'portal' ? 'font-medium text-text' : 'hover:text-text',
+                )}
+              >
+                {activeNode.portal.name}
+              </span>
+              {activeModule && (
+                <>
+                  <Slash />
+                  <span
+                    className={cn(
+                      activeNode.kind === 'module' ? 'font-medium text-text' : 'hover:text-text',
+                    )}
+                  >
+                    {activeModule.name}
+                  </span>
+                </>
+              )}
+              {activeSuite && (
+                <>
+                  <Slash />
+                  <span className="font-medium text-text">{activeSuite.name}</span>
+                </>
+              )}
             </>
           ) : (
             <>
               <Slash />
-              <span className="text-text-3">Pick a suite</span>
+              <span className="text-text-3">Pick a folder</span>
             </>
           )}
         </div>
@@ -683,13 +753,13 @@ export function TestCaseList({
         <div className="mb-6 flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
-              {activeNode?.suite.name ?? 'Test cases'}
+              {activeSuite?.name ?? activeModule?.name ?? activePortal?.name ?? 'Test cases'}
             </h1>
             <p className="text-[13px] text-text-2">
               {activeNode ? (
                 <>
                   {total} test case{total === 1 ? '' : 's'}
-                  {siblingSuiteCount > 0 && (
+                  {activeNode.kind !== 'suite' && siblingSuiteCount > 0 && (
                     <>
                       <span className="mx-1.5 text-text-3">·</span>
                       {siblingSuiteCount} suite{siblingSuiteCount === 1 ? '' : 's'} in module
@@ -697,7 +767,7 @@ export function TestCaseList({
                   )}
                 </>
               ) : (
-                'Pick a suite from the hierarchy to view its test cases.'
+                'Pick a folder from the hierarchy to view its test cases.'
               )}
             </p>
           </div>
@@ -707,7 +777,11 @@ export function TestCaseList({
               onClick={handleExport}
               disabled={!activeNode || exporting}
               className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-              title={activeNode ? `Export ${activeNode.suite.name} to Excel` : 'Pick a suite first'}
+              title={
+                activeNode
+                  ? `Export ${activeSuite?.name ?? activeModule?.name ?? activePortal?.name} to Excel`
+                  : 'Pick a folder first'
+              }
             >
               {exporting ? (
                 <i className="ti ti-loader-2 animate-spin text-[16px]" />
@@ -729,11 +803,9 @@ export function TestCaseList({
             <button
               type="button"
               onClick={addSuiteUnderActive}
-              disabled={!activeNode}
+              disabled={!activeModule}
               className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-              title={
-                activeNode ? `Add suite under ${activeNode.module.name}` : 'Pick a suite first'
-              }
+              title={activeModule ? `Add suite under ${activeModule.name}` : 'Pick a module first'}
             >
               <i className="ti ti-folder-plus text-[16px]" />
               New suite
@@ -800,13 +872,35 @@ export function TestCaseList({
                     {/* Portal row */}
                     <NodeRow
                       indent={0}
-                      isActive={false}
+                      isActive={activeNode?.kind === 'portal' && activeNode.portal.id === portal.id}
                       isRenaming={isRenamingPortal}
-                      onLabelClick={() => togglePortal(portal.id)}
-                      chevron={<Chevron open={pOpen} />}
+                      onLabelClick={() => {
+                        // Single click: select the portal (so its cases show on the right).
+                        // Chevron click separately toggles expansion.
+                        setElevated({ kind: 'portal', portalId: portal.id });
+                      }}
+                      chevron={
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            togglePortal(portal.id);
+                          }}
+                          className="inline-flex items-center"
+                        >
+                          <Chevron open={pOpen} />
+                        </button>
+                      }
                       icon={<PortalGlyph icon={portal.icon} />}
                       label={portal.name}
                       bold
+                      suffix={
+                        portal._count && portal._count.testCases > 0 ? (
+                          <span className="ml-1 rounded-full bg-surface-2 px-1.5 py-px text-[10px] text-text-3">
+                            {portal._count.testCases}
+                          </span>
+                        ) : null
+                      }
                       renameDraft={isRenamingPortal ? edit!.draft : ''}
                       onRenameChange={v => setEdit(e => (e ? { ...e, draft: v } : e))}
                       onRenameSubmit={submitEdit}
@@ -843,12 +937,39 @@ export function TestCaseList({
                             <div key={mod.id} className="ml-3">
                               <NodeRow
                                 indent={1}
-                                isActive={false}
+                                isActive={
+                                  activeNode?.kind === 'module' && activeNode.module.id === mod.id
+                                }
                                 isRenaming={isRenamingModule}
-                                onLabelClick={() => toggleModule(mod.id)}
-                                chevron={<Chevron open={mOpen} />}
+                                onLabelClick={() => {
+                                  // Selecting a module shows its direct + nested cases.
+                                  setElevated({
+                                    kind: 'module',
+                                    portalId: portal.id,
+                                    moduleId: mod.id,
+                                  });
+                                }}
+                                chevron={
+                                  <button
+                                    type="button"
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      toggleModule(mod.id);
+                                    }}
+                                    className="inline-flex items-center"
+                                  >
+                                    <Chevron open={mOpen} />
+                                  </button>
+                                }
                                 icon={<i className="ti ti-folder text-[14px] text-text-3" />}
                                 label={mod.name}
+                                suffix={
+                                  mod._count && mod._count.testCases > 0 ? (
+                                    <span className="ml-1 rounded-full bg-surface-2 px-1.5 py-px text-[10px] text-text-3">
+                                      {mod._count.testCases}
+                                    </span>
+                                  ) : null
+                                }
                                 renameDraft={isRenamingModule ? edit!.draft : ''}
                                 onRenameChange={v => setEdit(e => (e ? { ...e, draft: v } : e))}
                                 onRenameSubmit={submitEdit}

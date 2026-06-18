@@ -132,7 +132,8 @@ export async function POST(req: Request) {
 
       let portalName: string;
       let moduleName: string;
-      let suiteName: string;
+      // Empty suiteName → attach test case directly to the module (no placeholder suite).
+      let suiteName = '';
 
       if (hierRaw) {
         let parts = hierRaw
@@ -151,14 +152,14 @@ export async function POST(req: Request) {
         } else if (parts.length === 2) {
           portalName = fbPortal || parts[0];
           moduleName = parts[1];
-          suiteName = (r[col['Suite']] || fbSuite || 'General').trim() || 'General';
+          suiteName = (r[col['Suite']] || fbSuite || '').trim();
         } else if (parts.length === 1) {
           portalName = fbPortal || 'Default portal';
           moduleName = fbModule || parts[0];
-          suiteName = (r[col['Suite']] || fbSuite || 'General').trim() || 'General';
+          suiteName = (r[col['Suite']] || fbSuite || '').trim();
         } else {
           // Empty hierarchy on this row — try the fallback.
-          if (fbPortal && fbModule && fbSuite) {
+          if (fbPortal && fbModule) {
             portalName = fbPortal;
             moduleName = fbModule;
             suiteName = fbSuite;
@@ -185,6 +186,9 @@ export async function POST(req: Request) {
         moduleName = fbModule;
         suiteName = fbSuite;
       }
+      // Treat literal "General" as "no suite" — that's the old placeholder behaviour
+      // and the user wants those rows to land directly under the module instead.
+      if (suiteName.trim().toLowerCase() === 'general') suiteName = '';
 
       // ── Get-or-create portal ──
       let portalId = portalIdByName.get(portalName.toLowerCase());
@@ -214,25 +218,28 @@ export async function POST(req: Request) {
         createdModules++;
       }
 
-      // ── Get-or-create suite ──
-      const suiteKey = `${moduleId}|${suiteName.toLowerCase()}`;
-      let suiteId = suiteIdByKey.get(suiteKey);
-      if (!suiteId) {
-        const created = await prisma.suite.create({
-          data: { name: suiteName, moduleId },
-        });
-        suiteId = created.id;
-        suiteIdByKey.set(suiteKey, suiteId);
-        createdSuites++;
+      // ── Get-or-create suite (only when the row actually names one) ──
+      let suiteId: string | null = null;
+      if (suiteName) {
+        const suiteKey = `${moduleId}|${suiteName.toLowerCase()}`;
+        suiteId = suiteIdByKey.get(suiteKey) ?? null;
+        if (!suiteId) {
+          const created = await prisma.suite.create({
+            data: { name: suiteName, moduleId },
+          });
+          suiteId = created.id;
+          suiteIdByKey.set(suiteKey, suiteId);
+          createdSuites++;
+        }
       }
 
-      // ── Skip duplicate test cases (matched by title within the suite) ──
+      // ── Skip duplicate test cases (matched by title within the target parent) ──
       const existing = await prisma.testCase.findFirst({
-        where: { suiteId, title },
+        where: suiteId ? { suiteId, title } : { moduleId, suiteId: null, title },
         select: { id: true },
       });
       if (existing) {
-        skipped.push({ row: rowNum, reason: 'duplicate title in target suite' });
+        skipped.push({ row: rowNum, reason: 'duplicate title in target' });
         continue;
       }
 
@@ -263,7 +270,8 @@ export async function POST(req: Request) {
           type,
           status: 'Active',
           author,
-          suiteId,
+          // Attach to the deepest level the row resolved to (suite > module > portal).
+          ...(suiteId ? { suiteId } : { moduleId }),
         },
       });
       createdCases++;

@@ -20,7 +20,25 @@ const ownerSelect = {
 } as const;
 
 const caseInclude = {
-  suite: { include: { module: { select: { id: true, name: true } } } },
+  portal: { select: { id: true, name: true, projectId: true } },
+  module: {
+    select: {
+      id: true,
+      name: true,
+      portal: { select: { id: true, name: true, projectId: true } },
+    },
+  },
+  suite: {
+    include: {
+      module: {
+        select: {
+          id: true,
+          name: true,
+          portal: { select: { id: true, name: true, projectId: true } },
+        },
+      },
+    },
+  },
   owner: { select: ownerSelect },
 } as const;
 
@@ -84,14 +102,27 @@ export async function PATCH(req: Request, { params }: Ctx) {
         return bad('ownerId must be a string or null');
       }
     }
+    // Re-parent — moving a case between Portal / Module / Suite.
+    // Sending exactly one of portalId/moduleId/suiteId attaches there; the
+    // others are cleared so we don't end up with two parents.
     const newSuiteId =
       typeof body.suiteId === 'string'
         ? body.suiteId
         : typeof body.featureId === 'string'
           ? body.featureId
           : undefined;
-    if (newSuiteId) {
-      data.suite = { connect: { id: newSuiteId } };
+    const newModuleId = typeof body.moduleId === 'string' ? body.moduleId : undefined;
+    const newPortalId = typeof body.portalId === 'string' ? body.portalId : undefined;
+    const reparentCount = [newSuiteId, newModuleId, newPortalId].filter(
+      v => v !== undefined,
+    ).length;
+    if (reparentCount > 1) {
+      return bad('only one of portalId / moduleId / suiteId may be set');
+    }
+    if (reparentCount === 1) {
+      data.suite = newSuiteId ? { connect: { id: newSuiteId } } : { disconnect: true };
+      data.module = newModuleId ? { connect: { id: newModuleId } } : { disconnect: true };
+      data.portal = newPortalId ? { connect: { id: newPortalId } } : { disconnect: true };
     }
 
     if (Object.keys(data).length === 0) return bad('nothing to update');

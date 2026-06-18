@@ -33,10 +33,10 @@ export async function GET(req: Request) {
                 _count: { select: { testCases: true } },
               },
             },
-            _count: { select: { suites: true } },
+            _count: { select: { suites: true, testCases: true } },
           },
         },
-        _count: { select: { modules: true } },
+        _count: { select: { modules: true, testCases: true } },
       },
       orderBy: { createdAt: 'asc' },
     });

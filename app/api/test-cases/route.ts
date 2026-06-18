@@ -16,7 +16,25 @@ const ownerSelect = {
 } as const;
 
 const caseInclude = {
-  suite: { include: { module: { select: { id: true, name: true } } } },
+  portal: { select: { id: true, name: true, projectId: true } },
+  module: {
+    select: {
+      id: true,
+      name: true,
+      portal: { select: { id: true, name: true, projectId: true } },
+    },
+  },
+  suite: {
+    include: {
+      module: {
+        select: {
+          id: true,
+          name: true,
+          portal: { select: { id: true, name: true, projectId: true } },
+        },
+      },
+    },
+  },
   owner: { select: ownerSelect },
 } as const;
 
@@ -60,24 +78,43 @@ export async function GET(req: Request) {
       : 'caseNum';
     const order: 'asc' | 'desc' = sp.get('order') === 'asc' ? 'asc' : 'desc';
 
-    const where: Prisma.TestCaseWhereInput = {};
-    if (suiteId) where.suiteId = suiteId;
-    else if (moduleId) where.suite = { moduleId };
-    else if (portalId) where.suite = { module: { portalId } };
-    else if (projectId) where.suite = { module: { portal: { projectId } } };
+    // Cases attach to a Portal, Module, OR Suite directly. Filtering at a higher
+    // level includes every case nested anywhere underneath. Parent-scope and search
+    // are OR-clauses, so we combine them via AND to keep both effective at once.
+    const ands: Prisma.TestCaseWhereInput[] = [];
+    if (suiteId) {
+      ands.push({ suiteId });
+    } else if (moduleId) {
+      ands.push({ OR: [{ moduleId }, { suite: { moduleId } }] });
+    } else if (portalId) {
+      ands.push({
+        OR: [{ portalId }, { module: { portalId } }, { suite: { module: { portalId } } }],
+      });
+    } else if (projectId) {
+      ands.push({
+        OR: [
+          { portal: { projectId } },
+          { module: { portal: { projectId } } },
+          { suite: { module: { portal: { projectId } } } },
+        ],
+      });
+    }
+    if (search) {
+      ands.push({
+        OR: [
+          { title: { contains: search, mode: 'insensitive' } },
+          { sub: { contains: search, mode: 'insensitive' } },
+          { desc: { contains: search, mode: 'insensitive' } },
+          { expected: { contains: search, mode: 'insensitive' } },
+        ],
+      });
+    }
+    const where: Prisma.TestCaseWhereInput = ands.length ? { AND: ands } : {};
     if (priorities.length) where.priority = { in: priorities };
     if (severities.length) where.severity = { in: severities };
     if (types.length) where.type = { in: types };
     if (statuses.length) where.status = { in: statuses };
     if (ownerIds.length) where.ownerId = { in: ownerIds };
-    if (search) {
-      where.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { sub: { contains: search, mode: 'insensitive' } },
-        { desc: { contains: search, mode: 'insensitive' } },
-        { expected: { contains: search, mode: 'insensitive' } },
-      ];
-    }
 
     const [items, total] = await Promise.all([
       prisma.testCase.findMany({
@@ -108,6 +145,8 @@ export async function POST(req: Request) {
       priority?: Priority;
       severity?: Severity;
       type?: TestType;
+      portalId?: string;
+      moduleId?: string;
       suiteId?: string;
       featureId?: string; // legacy alias
       author?: string;
@@ -117,9 +156,15 @@ export async function POST(req: Request) {
     }>(req);
 
     const title = body?.title?.trim();
-    const suiteId = body?.suiteId ?? body?.featureId;
+    const suiteId = body?.suiteId ?? body?.featureId ?? null;
+    const moduleId = body?.moduleId ?? null;
+    const portalId = body?.portalId ?? null;
+
+    // Exactly one parent must be set — Portal OR Module OR Suite.
+    const parentCount = [portalId, moduleId, suiteId].filter(Boolean).length;
     if (!title) return bad('title is required');
-    if (!suiteId) return bad('suiteId is required');
+    if (parentCount === 0) return bad('portalId, moduleId, or suiteId is required');
+    if (parentCount > 1) return bad('only one of portalId / moduleId / suiteId may be set');
     if (!body?.priority || !PRIORITIES.includes(body.priority))
       return bad('priority must be High|Medium|Low');
     if (!body?.severity || !SEVERITIES.includes(body.severity))
@@ -142,6 +187,8 @@ export async function POST(req: Request) {
         severity: body.severity,
         type: body.type,
         status,
+        portalId,
+        moduleId,
         suiteId,
         author: body.author ?? '',
         ownerId: body.ownerId ?? null,

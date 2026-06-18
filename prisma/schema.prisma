@@ -125,15 +125,16 @@ model Invite {
 // A portal or app inside a platform.
 // e.g. "Admin Portal" / "Teacher Web" / "Parent Mobile" / "Attendance Desktop".
 model Portal {
-  id        String   @id @default(cuid())
+  id        String     @id @default(cuid())
   name      String
   slug      String?
-  icon      String?  // Tabler icon name, e.g. "ti-presentation"
+  icon      String?    // Tabler icon name, e.g. "ti-presentation"
   projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   modules   Module[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  testCases TestCase[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
   @@unique([projectId, name])
   @@index([projectId])
@@ -141,13 +142,14 @@ model Portal {
 }
 
 model Module {
-  id        String   @id @default(cuid())
+  id        String     @id @default(cuid())
   name      String
   portalId  String
-  portal    Portal   @relation(fields: [portalId], references: [id], onDelete: Cascade)
+  portal    Portal     @relation(fields: [portalId], references: [id], onDelete: Cascade)
   suites    Suite[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  testCases TestCase[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
   @@unique([portalId, name])
   @@index([portalId])
@@ -225,9 +227,16 @@ model TestCase {
   severity      Severity
   type          TestType
   status        CaseStatus @default(Active)
+  // A test case attaches to exactly ONE of: Portal, Module, or Suite.
+  // App-layer validation enforces "exactly one set" — Postgres can't express
+  // an XOR constraint cleanly across three FKs without a CHECK constraint.
   // DB column is still named "featureId" (mapped) — Prisma model uses suiteId.
-  suite     Suite      @relation(fields: [suiteId], references: [id], onDelete: Cascade)
-  suiteId   String     @map("featureId")
+  portal    Portal?    @relation(fields: [portalId], references: [id], onDelete: Cascade)
+  portalId  String?
+  module    Module?    @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  moduleId  String?
+  suite     Suite?     @relation(fields: [suiteId], references: [id], onDelete: Cascade)
+  suiteId   String?    @map("featureId")
   author    String     @default("")
   // Optional assigned owner (a user) — shown as avatar in the OWNER column.
   owner     User?      @relation("OwnedTestCases", fields: [ownerId], references: [id], onDelete: SetNull)
@@ -236,6 +245,8 @@ model TestCase {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
+  @@index([portalId])
+  @@index([moduleId])
   @@index([suiteId])
   @@index([priority])
   @@index([severity])

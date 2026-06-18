@@ -19,7 +19,11 @@ export async function GET(_req: Request, { params }: Ctx) {
         runs: {
           include: {
             testCase: {
-              include: { suite: { include: { module: { select: { id: true, name: true } } } } },
+              include: {
+                portal: { select: { id: true, name: true } },
+                module: { select: { id: true, name: true } },
+                suite: { include: { module: { select: { id: true, name: true } } } },
+              },
             },
           },
         },
@@ -86,8 +90,9 @@ export async function GET(_req: Request, { params }: Ctx) {
           priority: tc.priority,
           severity: tc.severity,
           type: tc.type,
-          module: tc.suite.module.name,
-          suite: tc.suite.name,
+          // A case attaches to a portal, module, OR suite — resolve whichever holds it.
+          module: tc.suite?.module.name ?? tc.module?.name ?? tc.portal?.name ?? '',
+          suite: tc.suite?.name ?? '',
           notes: r.notes,
           executedAt: r.executedAt ? r.executedAt.toISOString() : null,
         });
