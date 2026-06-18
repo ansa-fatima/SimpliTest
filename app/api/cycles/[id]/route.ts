@@ -48,6 +48,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
 
     // Manual-mode free-text fields (passing null clears; passing string sets).
     const stringFields = [
+      'portalName',
       'moduleName',
       'featureName',
       'environment',

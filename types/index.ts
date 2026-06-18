@@ -75,6 +75,7 @@ export interface TestCycle {
   summary?: CycleSummary;
 
   // Manual-mode bookkeeping (free text; present for all cycles but only meaningful when mode === 'Manual')
+  portalName?: string | null;
   moduleName?: string | null;
   featureName?: string | null;
   environment?: string | null;

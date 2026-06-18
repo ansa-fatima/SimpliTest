@@ -307,6 +307,7 @@ model TestCycle {
 
   // Manual-mode bookkeeping — free-text so users can record cycles before
   // defining the workspace's module/feature structure. Ignored for CaseBased cycles.
+  portalName     String?
   moduleName     String?
   featureName    String?
   environment    String? // Production / QA / Staging / Dev

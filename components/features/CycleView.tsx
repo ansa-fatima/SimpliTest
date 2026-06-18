@@ -88,13 +88,31 @@ export function CycleView({
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
       <div className="flex-1 overflow-y-auto px-8 py-6">
-        {/* Breadcrumb */}
+        {/* Breadcrumb — surfaces the Portal / Module / Feature scope so the user
+            can see at a glance what this run is targeting. */}
         <div className="mb-2 flex items-center gap-1.5 text-[12px] text-text-3">
           <button onClick={onBack} className="hover:text-text">
             Test runs
           </button>
           <span className="text-text-3">/</span>
           <span className="font-medium text-text">{shortRunCode(cycle)}</span>
+          {(() => {
+            const segments = cycleScopeSegments(cycle);
+            if (segments.length === 0) return null;
+            return (
+              <>
+                <span className="text-text-3">·</span>
+                {segments.map((seg, i) => (
+                  <span key={i} className="inline-flex items-center gap-1.5">
+                    {i > 0 && <span className="text-text-3">›</span>}
+                    <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-text-2">
+                      {seg}
+                    </span>
+                  </span>
+                ))}
+              </>
+            );
+          })()}
         </div>
 
         {/* Header strip */}
@@ -706,6 +724,27 @@ export function SegmentedProgressBar({ counts, total, height = 6 }: SegBarProps)
 }
 
 // ─── helpers ───────────────────────────────────────────────
+
+// Returns the Portal / Module / Feature segments worth surfacing in the breadcrumb.
+// CaseBased cycles derive these from scopeType + scopeName ("Portal" → just the name;
+// "Module" → portal info isn't carried, so we just show the module; "Suite" →
+// scopeName already encodes "ModuleName / SuiteName"). Manual cycles use the
+// free-text portalName / moduleName / featureName entered at quick-log time.
+function cycleScopeSegments(cycle: TestCycle): string[] {
+  const isManual = (cycle.mode ?? 'CaseBased') === 'Manual';
+  if (isManual) {
+    return [cycle.portalName, cycle.moduleName, cycle.featureName].filter(
+      (s): s is string => !!s && s.trim().length > 0,
+    );
+  }
+  if (cycle.scopeType === 'Portal' && cycle.scopeName) return [cycle.scopeName];
+  if (cycle.scopeType === 'Module' && cycle.scopeName) return [cycle.scopeName];
+  if (cycle.scopeType === 'Suite' && cycle.scopeName) {
+    // "Module / Suite" — split for breadcrumb display
+    return cycle.scopeName.split(' / ').filter(Boolean);
+  }
+  return [];
+}
 
 function buildSubtitle(cycle: TestCycle, total: number): string {
   const parts: string[] = [];

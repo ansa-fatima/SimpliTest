@@ -231,19 +231,24 @@ export function CyclesList({
                         })}
                       </td>
                       <td className="px-3 py-2.5">
-                        {isManual ? (
-                          <Chip color="emerald" text={c.moduleName} />
-                        ) : (
-                          <span className="text-text-2">
-                            {c.scopeType === 'Portal' && c.scopeName
+                        {/* Module column — unified Chip styling across Manual + CaseBased.
+                            For CaseBased we resolve module name from the scope ladder. */}
+                        {(() => {
+                          const modText = isManual
+                            ? c.moduleName || c.portalName || (c.scopeName ?? '')
+                            : c.scopeType === 'Portal' && c.scopeName
                               ? c.scopeName
                               : c.scopeType === 'Module' && c.scopeName
                                 ? c.scopeName.split(' / ')[0]
                                 : c.scopeType === 'Suite' && c.scopeName
                                   ? c.scopeName.split(' / ')[0]
-                                  : '—'}
-                          </span>
-                        )}
+                                  : '';
+                          return modText ? (
+                            <Chip color="emerald" text={modText} />
+                          ) : (
+                            <span className="text-text-3">—</span>
+                          );
+                        })()}
                       </td>
                       <td className="px-3 py-2.5 text-text">
                         {isManual ? (
@@ -251,7 +256,7 @@ export function CyclesList({
                         ) : c.scopeType === 'Suite' && c.scopeName ? (
                           (c.scopeName.split(' / ')[1] ?? c.scopeName)
                         ) : (
-                          <span className="text-text-3">{c.name}</span>
+                          <span className="text-text-3">—</span>
                         )}
                       </td>
                       <td className="px-3 py-2.5">

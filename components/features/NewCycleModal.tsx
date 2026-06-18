@@ -24,6 +24,7 @@ export interface CycleFormPayload {
   scopeId?: string | null;
   targetDate?: string | null;
   // Manual-mode fields
+  portalName?: string;
   moduleName?: string;
   featureName?: string;
   environment?: string;
@@ -91,6 +92,7 @@ export function NewCycleModal({
   const [loadingModules, setLoadingModules] = useState(true);
 
   // ── Manual-mode fields ──────────────────────────────────────
+  const [portalName, setPortalName] = useState(initial?.portalName ?? '');
   const [moduleName, setModuleName] = useState(initial?.moduleName ?? '');
   const [featureName, setFeatureName] = useState(initial?.featureName ?? '');
   const [environment, setEnvironment] = useState(initial?.environment ?? '');
@@ -203,6 +205,7 @@ export function NewCycleModal({
       payload.version = version.trim() || undefined;
       payload.ticketLink = ticketLink.trim() || undefined;
     } else {
+      payload.portalName = portalName.trim() || undefined;
       payload.moduleName = moduleName.trim() || undefined;
       payload.featureName = featureName.trim() || undefined;
       payload.environment = environment || undefined;
@@ -290,21 +293,46 @@ export function NewCycleModal({
 
             {mode === 'Manual' ? (
               <>
-                {/* Manual-mode form ───────────────────────────── */}
-                <div className="grid grid-cols-2 gap-3">
+                {/* Manual-mode form ─────────────────────────────
+                    Portal/Module/Feature are linked-but-optional: typing a value
+                    that matches an existing entry suggests the next level via
+                    datalist. Nothing is required — Manual mode is meant for
+                    free-form quick-logs against any combination. */}
+                <div className="grid grid-cols-3 gap-3">
+                  <Field label="Portal">
+                    <input
+                      type="text"
+                      value={portalName}
+                      onChange={e => setPortalName(e.target.value)}
+                      placeholder="e.g. Mobile App"
+                      className="input"
+                      list="cycle-portal-suggestions"
+                    />
+                    <datalist id="cycle-portal-suggestions">
+                      {portals.map(p => (
+                        <option key={p.id} value={p.name} />
+                      ))}
+                    </datalist>
+                  </Field>
                   <Field label="Module">
                     <input
                       type="text"
                       value={moduleName}
                       onChange={e => setModuleName(e.target.value)}
-                      placeholder="e.g. Mobile App"
+                      placeholder="e.g. Attendance"
                       className="input"
                       list="cycle-module-suggestions"
                     />
                     <datalist id="cycle-module-suggestions">
-                      {modules.map(m => (
-                        <option key={m.id} value={m.name} />
-                      ))}
+                      {(() => {
+                        const portalMatch = portals.find(
+                          p => p.name.toLowerCase() === portalName.trim().toLowerCase(),
+                        );
+                        const pool = portalMatch
+                          ? modules.filter(m => m.portalId === portalMatch.id)
+                          : modules;
+                        return pool.map(m => <option key={m.id} value={m.name} />);
+                      })()}
                     </datalist>
                   </Field>
                   <Field label="Feature">
@@ -314,7 +342,17 @@ export function NewCycleModal({
                       onChange={e => setFeatureName(e.target.value)}
                       placeholder="e.g. QR Attendance"
                       className="input"
+                      list="cycle-feature-suggestions"
                     />
+                    <datalist id="cycle-feature-suggestions">
+                      {(() => {
+                        const modMatch = modules.find(
+                          m => m.name.toLowerCase() === moduleName.trim().toLowerCase(),
+                        );
+                        const pool = modMatch ? modMatch.suites : modules.flatMap(m => m.suites);
+                        return pool.map(s => <option key={s.id} value={s.name} />);
+                      })()}
+                    </datalist>
                   </Field>
                 </div>
 

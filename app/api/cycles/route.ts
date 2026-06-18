@@ -104,6 +104,7 @@ export async function POST(req: Request) {
       targetDate?: string | null;
 
       // Manual-mode fields
+      portalName?: string;
       moduleName?: string;
       featureName?: string;
       environment?: string;
@@ -129,6 +130,9 @@ export async function POST(req: Request) {
     const mode: CycleMode = body?.mode && MODES.includes(body.mode) ? body.mode : 'CaseBased';
 
     // ── Manual mode: just create the cycle row with counts. No TestRuns. ──
+    // Quick-log entries record completed work, so they land as 'Completed' by default
+    // — saves the user a follow-up click and matches the workflow ("I ran a cycle and
+    // these are the numbers"). They can still archive later.
     if (mode === 'Manual') {
       const cycle = await prisma.testCycle.create({
         data: {
@@ -136,10 +140,12 @@ export async function POST(req: Request) {
           description: body.description ?? '',
           projectId: body.projectId,
           mode: 'Manual',
+          status: 'Completed',
           // For Manual, scope is irrelevant — default to 'All' (no scopeId required).
           scopeType: 'All',
           scopeId: null,
           targetDate: body.targetDate ? new Date(body.targetDate) : null,
+          portalName: body.portalName?.trim() || null,
           moduleName: body.moduleName?.trim() || null,
           featureName: body.featureName?.trim() || null,
           environment: body.environment?.trim() || null,
