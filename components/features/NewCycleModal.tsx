@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 interface ApiModule {
   id: string;
   name: string;
+  portalId: string;
   suites: { id: string; name: string }[];
 }
 interface ApiPortal {
@@ -74,8 +75,17 @@ export function NewCycleModal({
   );
 
   // ── CaseBased-mode fields ──────────────────────────────────
-  const [scopeType, setScopeType] = useState<CycleScopeType>(initial?.scopeType ?? 'All');
-  const [scopeId, setScopeId] = useState<string>(initial?.scopeId ?? '');
+  // Three independent, OPTIONAL selections. The deepest non-empty value
+  // determines the cycle's effective scope on submit (suite > module > portal > All).
+  const [portalIdF, setPortalIdF] = useState<string>(
+    initial?.scopeType === 'Portal' ? (initial.scopeId ?? '') : '',
+  );
+  const [moduleIdF, setModuleIdF] = useState<string>(
+    initial?.scopeType === 'Module' ? (initial.scopeId ?? '') : '',
+  );
+  const [suiteIdF, setSuiteIdF] = useState<string>(
+    initial?.scopeType === 'Suite' ? (initial.scopeId ?? '') : '',
+  );
   const [modules, setModules] = useState<ApiModule[]>([]);
   const [portals, setPortals] = useState<ApiPortal[]>([]);
   const [loadingModules, setLoadingModules] = useState(true);
@@ -124,29 +134,50 @@ export function NewCycleModal({
     })();
   }, [projectId]);
 
-  // Reset scopeId to a valid value when scopeType or modules change.
+  // Cascading invariants — when a parent changes, child must clear if it no
+  // longer matches. (Portal change → drop module if module not under new portal;
+  // module change → drop suite if suite not under new module.)
   useEffect(() => {
-    if (mode !== 'CaseBased') return;
-    if (scopeType === 'Portal') {
-      const first = portals[0];
-      setScopeId(prev => (portals.some(p => p.id === prev) ? prev : (first?.id ?? '')));
-    } else if (scopeType === 'Module') {
-      const first = modules[0];
-      setScopeId(prev => (modules.some(m => m.id === prev) ? prev : (first?.id ?? '')));
-    } else if (scopeType === 'Suite') {
-      const all = modules.flatMap(m => m.suites);
-      const first = all[0];
-      setScopeId(prev => (all.some(s => s.id === prev) ? prev : (first?.id ?? '')));
-    } else {
-      setScopeId('');
+    if (!moduleIdF) return;
+    const m = modules.find(mm => mm.id === moduleIdF);
+    if (!m) {
+      setModuleIdF('');
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopeType, modules, portals, mode]);
+    if (portalIdF && m.portalId !== portalIdF) setModuleIdF('');
+  }, [portalIdF, moduleIdF, modules]);
 
-  const suites =
-    scopeType === 'Suite'
-      ? modules.flatMap(m => m.suites.map(s => ({ ...s, moduleName: m.name })))
-      : [];
+  useEffect(() => {
+    if (!suiteIdF) return;
+    const owner = modules.find(m => m.suites.some(s => s.id === suiteIdF));
+    if (!owner) {
+      setSuiteIdF('');
+      return;
+    }
+    if (moduleIdF && owner.id !== moduleIdF) setSuiteIdF('');
+    else if (!moduleIdF && portalIdF && owner.portalId !== portalIdF) setSuiteIdF('');
+  }, [moduleIdF, portalIdF, suiteIdF, modules]);
+
+  // Filtered option lists — feed the dropdowns. Picking a parent narrows the
+  // child list; leaving a parent blank leaves the child fully populated.
+  const visibleModules = portalIdF ? modules.filter(m => m.portalId === portalIdF) : modules;
+  const visibleSuites = (() => {
+    if (moduleIdF) {
+      const m = modules.find(mm => mm.id === moduleIdF);
+      return m ? m.suites.map(s => ({ ...s, moduleName: m.name })) : [];
+    }
+    const pool = portalIdF ? visibleModules : modules;
+    return pool.flatMap(m => m.suites.map(s => ({ ...s, moduleName: m.name })));
+  })();
+
+  // Derived scope — deepest non-empty selection wins.
+  const derivedScope: { scopeType: CycleScopeType; scopeId: string | null } = suiteIdF
+    ? { scopeType: 'Suite', scopeId: suiteIdF }
+    : moduleIdF
+      ? { scopeType: 'Module', scopeId: moduleIdF }
+      : portalIdF
+        ? { scopeType: 'Portal', scopeId: portalIdF }
+        : { scopeType: 'All', scopeId: null };
 
   const handleSubmit = async () => {
     setError('');
@@ -154,14 +185,7 @@ export function NewCycleModal({
       setError('Name is required');
       return;
     }
-    if (
-      mode === 'CaseBased' &&
-      (scopeType === 'Portal' || scopeType === 'Module' || scopeType === 'Suite') &&
-      !scopeId
-    ) {
-      setError(`Pick a ${scopeType.toLowerCase()}`);
-      return;
-    }
+    // Scope is OPTIONAL — leaving all three dropdowns blank means "All test cases".
 
     const payload: CycleFormPayload = {
       name: name.trim(),
@@ -171,9 +195,8 @@ export function NewCycleModal({
     };
 
     if (mode === 'CaseBased') {
-      payload.scopeType = scopeType;
-      payload.scopeId =
-        scopeType === 'Portal' || scopeType === 'Module' || scopeType === 'Suite' ? scopeId : null;
+      payload.scopeType = derivedScope.scopeType;
+      payload.scopeId = derivedScope.scopeId;
       // Optional context that's useful even when running test cases per-case.
       payload.environment = environment || undefined;
       payload.platform = platform || undefined;
@@ -426,97 +449,61 @@ export function NewCycleModal({
                   />
                 </Field>
 
-                <Field label="Scope" required>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(['All', 'Portal', 'Module', 'Suite'] as CycleScopeType[]).map(t => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setScopeType(t)}
-                        className={cn(
-                          'cursor-pointer rounded-lg border px-3 py-1.5 text-xs transition-all',
-                          scopeType === t
-                            ? 'border-blue-500 bg-indigo-50 font-semibold text-blue-700'
-                            : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50',
-                        )}
-                      >
-                        {t === 'All' ? 'All test cases' : t}
-                      </button>
-                    ))}
+                {/* Optional cascading scope — leave any of the three blank and that
+                    level is treated as "any". Cycle scope is derived from the deepest
+                    non-empty pick (All / Portal / Module / Suite). */}
+                <Field label="Scope">
+                  <div className="grid grid-cols-3 gap-2">
+                    <select
+                      value={portalIdF}
+                      onChange={e => setPortalIdF(e.target.value)}
+                      disabled={loadingModules}
+                      className="input"
+                    >
+                      <option value="">Any portal</option>
+                      {portals.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={moduleIdF}
+                      onChange={e => setModuleIdF(e.target.value)}
+                      disabled={loadingModules || visibleModules.length === 0}
+                      className="input"
+                    >
+                      <option value="">Any module</option>
+                      {visibleModules.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={suiteIdF}
+                      onChange={e => setSuiteIdF(e.target.value)}
+                      disabled={loadingModules || visibleSuites.length === 0}
+                      className="input"
+                    >
+                      <option value="">Any feature</option>
+                      {visibleSuites.map(s => (
+                        <option key={s.id} value={s.id}>
+                          {moduleIdF ? s.name : `${s.moduleName} — ${s.name}`}
+                        </option>
+                      ))}
+                    </select>
                   </div>
+                  <p className="mt-1.5 text-[11px] text-slate-400">
+                    {derivedScope.scopeType === 'All'
+                      ? 'Includes every test case in this workspace.'
+                      : derivedScope.scopeType === 'Portal'
+                        ? 'Includes every test case under this portal.'
+                        : derivedScope.scopeType === 'Module'
+                          ? 'Includes every test case under this module (direct + nested features).'
+                          : 'Includes only test cases in this feature.'}
+                  </p>
                 </Field>
-
-                {scopeType === 'Portal' && (
-                  <Field label="Pick portal">
-                    {loadingModules ? (
-                      <span className="text-xs text-slate-400">Loading…</span>
-                    ) : portals.length === 0 ? (
-                      <span className="text-xs italic text-slate-400">
-                        No portals in this workspace yet.
-                      </span>
-                    ) : (
-                      <select
-                        value={scopeId}
-                        onChange={e => setScopeId(e.target.value)}
-                        className="input"
-                      >
-                        {portals.map(p => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </Field>
-                )}
-
-                {scopeType === 'Module' && (
-                  <Field label="Pick module">
-                    {loadingModules ? (
-                      <span className="text-xs text-slate-400">Loading…</span>
-                    ) : modules.length === 0 ? (
-                      <span className="text-xs italic text-slate-400">
-                        No modules in this workspace yet.
-                      </span>
-                    ) : (
-                      <select
-                        value={scopeId}
-                        onChange={e => setScopeId(e.target.value)}
-                        className="input"
-                      >
-                        {modules.map(m => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </Field>
-                )}
-
-                {scopeType === 'Suite' && (
-                  <Field label="Pick suite">
-                    {loadingModules ? (
-                      <span className="text-xs text-slate-400">Loading…</span>
-                    ) : suites.length === 0 ? (
-                      <span className="text-xs italic text-slate-400">
-                        No suites yet — add some from Test Cases first.
-                      </span>
-                    ) : (
-                      <select
-                        value={scopeId}
-                        onChange={e => setScopeId(e.target.value)}
-                        className="input"
-                      >
-                        {suites.map(s => (
-                          <option key={s.id} value={s.id}>
-                            {s.moduleName} — {s.name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </Field>
-                )}
 
                 {/* Run context — optional but very useful when sharing the summary. */}
                 <div className="grid grid-cols-2 gap-3">
