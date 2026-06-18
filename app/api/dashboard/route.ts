@@ -7,7 +7,17 @@ export async function GET(req: Request) {
   try {
     const projectId = new URL(req.url).searchParams.get('projectId') || undefined;
     const wsCycle = projectId ? { projectId } : {};
-    const wsCase = projectId ? { suite: { module: { portal: { projectId } } } } : {};
+    // A test case attaches to portal, module, OR suite directly — match any of the
+    // three so the total reflects ALL cases in the workspace, not just suite-anchored ones.
+    const wsCase = projectId
+      ? {
+          OR: [
+            { portal: { projectId } },
+            { module: { portal: { projectId } } },
+            { suite: { module: { portal: { projectId } } } },
+          ],
+        }
+      : {};
 
     const now = new Date();
     const thirtyDaysAgo = new Date(now);
@@ -60,6 +70,9 @@ export async function GET(req: Request) {
         select: {
           id: true,
           name: true,
+          // Direct module-attached cases
+          testCases: { select: { id: true, runs: { select: { result: true } } } },
+          // Plus cases nested in suites below this module
           suites: {
             select: {
               testCases: {
@@ -76,6 +89,7 @@ export async function GET(req: Request) {
         where: projectId ? { portal: { projectId } } : undefined,
         select: {
           name: true,
+          _count: { select: { testCases: true } },
           suites: { select: { _count: { select: { testCases: true } } } },
         },
       }),
@@ -162,30 +176,36 @@ export async function GET(req: Request) {
       skipped: w.skipped,
     }));
 
-    // Cases by module (donut)
+    // Cases by module (donut) — count direct cases plus everything in nested suites.
     const casesByMod = casesByModule
       .map(m => ({
         name: m.name,
-        count: m.suites.reduce((sum, s) => sum + s._count.testCases, 0),
+        count: m._count.testCases + m.suites.reduce((sum, s) => sum + s._count.testCases, 0),
       }))
       .filter(m => m.count > 0);
 
-    // Module stability — pass rate per module across all (non-NotRun) runs
-    const moduleStability = modules.map(m => {
-      let total = 0,
-        passed = 0;
-      for (const s of m.suites) {
-        for (const tc of s.testCases) {
-          for (const r of tc.runs) {
+    // Module stability — pass rate per module across all (non-NotRun) runs.
+    // Walks direct module cases AND cases nested in this module's suites.
+    // Filtered to modules that actually have runs — empty bars are noise.
+    const moduleStability = modules
+      .map(m => {
+        let total = 0,
+          passed = 0;
+        const walkCase = (runs: { result: string }[]) => {
+          for (const r of runs) {
             if (r.result === 'NotRun') continue;
             total++;
             if (r.result === 'Passed') passed++;
           }
+        };
+        for (const tc of m.testCases) walkCase(tc.runs);
+        for (const s of m.suites) {
+          for (const tc of s.testCases) walkCase(tc.runs);
         }
-      }
-      const passRate = total === 0 ? null : Math.round((passed / total) * 100);
-      return { name: m.name, passRate, totalRuns: total };
-    });
+        const passRate = total === 0 ? null : Math.round((passed / total) * 100);
+        return { name: m.name, passRate, totalRuns: total };
+      })
+      .filter(m => m.totalRuns > 0);
 
     // Recent cycles with per-cycle progress + scope name
     const recentCycles = recentCyclesRaw.map(c => {

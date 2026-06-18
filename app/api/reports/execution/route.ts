@@ -31,7 +31,10 @@ export async function GET(req: Request) {
     };
     if (cycleId) where.cycleId = cycleId;
     else if (portalId) {
-      where.testCase = { suite: { module: { portalId } } };
+      // Match runs of cases attached anywhere under the portal — direct, module, or suite.
+      where.testCase = {
+        OR: [{ portalId }, { module: { portalId } }, { suite: { module: { portalId } } }],
+      };
       if (projectId) where.cycle = { projectId };
     } else if (projectId) {
       where.cycle = { projectId };
