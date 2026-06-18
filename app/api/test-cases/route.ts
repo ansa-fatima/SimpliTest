@@ -71,7 +71,7 @@ export async function GET(req: Request) {
     const portalId = sp.get('portalId') || undefined;
 
     const page = Math.max(1, parseInt(sp.get('page') || '1', 10) || 1);
-    const pageSize = Math.min(200, Math.max(1, parseInt(sp.get('pageSize') || '50', 10) || 50));
+    const pageSize = Math.min(5000, Math.max(1, parseInt(sp.get('pageSize') || '50', 10) || 50));
 
     const sortField = ['caseNum', 'title', 'createdAt', 'updatedAt'].includes(sp.get('sort') || '')
       ? (sp.get('sort') as 'caseNum' | 'title' | 'createdAt' | 'updatedAt')

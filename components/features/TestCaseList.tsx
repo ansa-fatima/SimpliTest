@@ -56,7 +56,10 @@ const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
 const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
 const STATUSES: CaseStatus[] = ['Active', 'Draft', 'Archived'];
 
-const PAGE_SIZE = 20;
+// "All" is a soft cap that matches the API's hard limit (5000).
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 5000] as const;
+const DEFAULT_PAGE_SIZE = 50;
+const ALL_PAGE_SIZE = 5000;
 
 type FilterKey = 'Priority' | 'Status' | 'Type' | 'Owner';
 
@@ -202,6 +205,7 @@ export function TestCaseList({
   const filterBarRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
   // Close any open filter dropdown when clicking outside.
   useEffect(() => {
@@ -223,7 +227,7 @@ export function TestCaseList({
         : (activeNode?.portal.id ?? null);
   useEffect(() => {
     setPage(1);
-  }, [priorityF, statusF, typeF, ownerF, search, activeSelectionKey]);
+  }, [priorityF, statusF, typeF, ownerF, search, activeSelectionKey, pageSize]);
 
   // ─── Cases (server fetch) ──────────────────────────────────
   const [cases, setCases] = useState<ApiTestCase[]>([]);
@@ -243,7 +247,7 @@ export function TestCaseList({
       setCasesLoading(true);
       const params = new URLSearchParams({
         page: String(page),
-        pageSize: String(PAGE_SIZE),
+        pageSize: String(pageSize),
         sort: 'caseNum',
         order: 'asc',
       });
@@ -272,7 +276,7 @@ export function TestCaseList({
     } finally {
       setCasesLoading(false);
     }
-  }, [activeNode, page, priorityF, statusF, typeF, ownerF, search, dataVersion]);
+  }, [activeNode, page, pageSize, priorityF, statusF, typeF, ownerF, search, dataVersion]);
 
   useEffect(() => {
     fetchCases();
@@ -1240,7 +1244,7 @@ export function TestCaseList({
                 </div>
 
                 {/* Footer / pagination */}
-                <div className="mt-3 flex items-center justify-between px-1 text-[12px] text-text-3">
+                <div className="mt-3 flex items-center justify-between gap-3 px-1 text-[12px] text-text-3">
                   <span>
                     Showing {cases.length} of {total} case{total === 1 ? '' : 's'}
                     {selected.size > 0 && (
@@ -1250,26 +1254,46 @@ export function TestCaseList({
                       </>
                     )}
                   </span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setPage(p => Math.max(1, p - 1))}
-                      disabled={page === 1}
-                      className="rounded p-1 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <i className="ti ti-chevron-left text-[14px]" />
-                    </button>
-                    <span className="px-1">
-                      Page {page} of {totalPages}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                      disabled={page >= totalPages}
-                      className="rounded p-1 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <i className="ti ti-chevron-right text-[14px]" />
-                    </button>
+                  <div className="flex items-center gap-3">
+                    {/* Per-page selector */}
+                    <label className="flex items-center gap-1.5">
+                      <span>Per page</span>
+                      <select
+                        value={pageSize}
+                        onChange={e => setPageSize(Number(e.target.value))}
+                        className="rounded border border-border bg-surface px-1.5 py-0.5 text-[12px] text-text outline-none focus:border-primary"
+                      >
+                        {PAGE_SIZE_OPTIONS.map(opt => (
+                          <option key={opt} value={opt}>
+                            {opt === ALL_PAGE_SIZE ? 'All' : opt}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {/* Page chevrons — hidden when everything fits on one page */}
+                    {totalPages > 1 && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setPage(p => Math.max(1, p - 1))}
+                          disabled={page === 1}
+                          className="rounded p-1 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <i className="ti ti-chevron-left text-[14px]" />
+                        </button>
+                        <span className="px-1">
+                          Page {page} of {totalPages}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                          disabled={page >= totalPages}
+                          className="rounded p-1 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <i className="ti ti-chevron-right text-[14px]" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </>
