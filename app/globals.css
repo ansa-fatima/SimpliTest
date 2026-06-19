@@ -2,6 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Theme variables — Tailwind reads `rgb(var(--x) / <alpha-value>)`, so each
+ * surface/text/border token is a raw "R G B" triple (no comma, no rgb()).
+ * Light is the default; switching <html data-theme="dark"> swaps the palette.
+ */
+:root {
+  --bg: 250 250 249; /* #FAFAF9 */
+  --surface: 255 255 255; /* #FFFFFF */
+  --surface-2: 245 245 244; /* #F5F5F4 */
+  --surface-3: 238 237 235; /* #EEEDEB */
+  --border: 231 229 228; /* #E7E5E4 */
+  --border-strong: 214 211 209; /* #D6D3D1 */
+  --text: 28 25 23; /* #1C1917 */
+  --text-2: 87 83 78; /* #57534E */
+  --text-3: 168 162 158; /* #A8A29E */
+  --scrollbar-thumb: 214 211 209;
+  --scrollbar-thumb-hover: 168 162 158;
+}
+
+[data-theme='dark'] {
+  --bg: 15 14 13; /* near-black warm stone */
+  --surface: 26 24 22; /* card background */
+  --surface-2: 38 35 32; /* hover/raised surface */
+  --surface-3: 52 48 44; /* badge background */
+  --border: 56 52 48;
+  --border-strong: 82 76 70;
+  --text: 245 245 244; /* near-white */
+  --text-2: 192 187 182; /* secondary copy */
+  --text-3: 134 128 122; /* tertiary copy */
+  --scrollbar-thumb: 82 76 70;
+  --scrollbar-thumb-hover: 134 128 122;
+  color-scheme: dark;
+}
+
 html,
 body {
   height: 100%;
@@ -9,8 +43,8 @@ body {
 }
 
 body {
-  background: #fafaf9;
-  color: #1c1917;
+  background: rgb(var(--bg));
+  color: rgb(var(--text));
   font-family:
     'Inter',
     -apple-system,
@@ -19,13 +53,16 @@ body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 
 * {
   box-sizing: border-box;
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar — uses theme vars so it works in both modes */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -34,12 +71,12 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d6d3d1;
+  background: rgb(var(--scrollbar-thumb));
   border-radius: 5px;
-  border: 2px solid #fafaf9;
+  border: 2px solid rgb(var(--bg));
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #a8a29e;
+  background: rgb(var(--scrollbar-thumb-hover));
 }
 
 /* Tailwind animation utilities for toast */

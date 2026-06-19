@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/lib/theme';
 
 interface RecentCycle {
   id: string;
@@ -45,6 +46,7 @@ export function Dashboard({ onShowTestRuns, onOpenCycle, projectId }: DashboardP
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const { theme, toggle: toggleTheme } = useTheme();
 
   useEffect(() => {
     setLoading(true);
@@ -111,8 +113,14 @@ export function Dashboard({ onShowTestRuns, onOpenCycle, projectId }: DashboardP
         <button className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-[7px] border border-border bg-surface text-text-2 transition-all hover:bg-surface-2 hover:text-text">
           <i className="ti ti-bell text-[17px]" />
         </button>
-        <button className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-[7px] border border-border bg-surface text-text-2 transition-all hover:bg-surface-2 hover:text-text">
-          <i className="ti ti-sun text-[17px]" />
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-[7px] border border-border bg-surface text-text-2 transition-all hover:bg-surface-2 hover:text-text"
+        >
+          <i className={cn('text-[17px]', theme === 'dark' ? 'ti ti-moon' : 'ti ti-sun')} />
         </button>
         <button
           onClick={onShowTestRuns}

@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/Logo';
 import { SessionUser } from '@/hooks/useStore';
 import { api } from '@/lib/client';
+import { useTheme } from '@/lib/theme';
 
 interface SidebarProps {
   page: Page;
@@ -158,7 +159,7 @@ export function Sidebar({
       {/* Account block */}
       {user && <AccountBlock user={user} onLogout={onLogout} onShowProfile={onShowProfile} />}
 
-      {/* Light mode toggle (visual stub — dark mode not implemented yet) */}
+      {/* Theme toggle — flips light/dark via data-theme on <html>, persisted in localStorage. */}
       <div className="px-3 pb-3 pt-1">
         <LightModeToggle />
       </div>
@@ -422,28 +423,48 @@ function MenuRow({
 // ─── Light mode toggle ──────────────────────────────────────
 
 function LightModeToggle() {
-  // Visual-only for now — dark theme will be wired alongside the theme provider work.
+  const { theme, toggle } = useTheme();
+  const isDark = theme === 'dark';
   return (
     <button
       type="button"
-      disabled
-      title="Dark mode coming soon"
-      className="flex w-full cursor-not-allowed items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white py-1.5 text-[12px] font-medium text-slate-700 opacity-90 shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+      onClick={toggle}
+      title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border bg-surface py-1.5 text-[12px] font-medium text-text-2 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-surface-2 hover:text-text"
     >
-      <svg
-        className="h-3.5 w-3.5 text-amber-500"
-        viewBox="0 0 16 16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.6}
-      >
-        <circle cx="8" cy="8" r="2.6" />
-        <path
-          d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M3 13l1-1M12 4l1-1"
-          strokeLinecap="round"
-        />
-      </svg>
-      Light mode
+      {isDark ? (
+        // Moon for dark mode
+        <svg
+          className="h-3.5 w-3.5 text-indigo-300"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.6}
+        >
+          <path
+            d="M13 9.5A5.5 5.5 0 0 1 6.5 3 5.5 5.5 0 1 0 13 9.5Z"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : (
+        // Sun for light mode
+        <svg
+          className="h-3.5 w-3.5 text-amber-500"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.6}
+        >
+          <circle cx="8" cy="8" r="2.6" />
+          <path
+            d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M3 13l1-1M12 4l1-1"
+            strokeLinecap="round"
+          />
+        </svg>
+      )}
+      {isDark ? 'Dark mode' : 'Light mode'}
     </button>
   );
 }

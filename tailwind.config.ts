@@ -1,8 +1,12 @@
 import type { Config } from 'tailwindcss';
 
-// TCMS design tokens (light theme defaults; dark theme via CSS vars).
-// Mirrors index.html PRD design — see /Downloads/index.html
+// TCMS design tokens. Surfaces/borders/text are CSS variables so the theme
+// toggle (light ↔ dark) flips them via `data-theme` on <html>. Brand and
+// semantic palettes stay literal — they read the same in both modes.
+const v = (name: string) => `rgb(var(--${name}) / <alpha-value>)`;
+
 const config: Config = {
+  darkMode: ['class', '[data-theme="dark"]'],
   content: [
     './pages/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
@@ -15,17 +19,17 @@ const config: Config = {
         mono: ['JetBrains Mono', 'monospace'],
       },
       colors: {
-        // Surfaces
-        bg: '#FAFAF9',
-        surface: '#FFFFFF',
-        'surface-2': '#F5F5F4',
-        'surface-3': '#EEEDEB',
+        // Surfaces — theme-aware
+        bg: v('bg'),
+        surface: v('surface'),
+        'surface-2': v('surface-2'),
+        'surface-3': v('surface-3'),
 
-        // Borders
-        border: { DEFAULT: '#E7E5E4', strong: '#D6D3D1' },
+        // Borders — theme-aware
+        border: { DEFAULT: v('border'), strong: v('border-strong') },
 
-        // Text
-        text: { DEFAULT: '#1C1917', 2: '#57534E', 3: '#A8A29E' },
+        // Text — theme-aware
+        text: { DEFAULT: v('text'), 2: v('text-2'), 3: v('text-3') },
 
         // Brand
         primary: {
