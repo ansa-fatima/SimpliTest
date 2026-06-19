@@ -2,18 +2,26 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
+import { cn } from '@/lib/utils';
 
 interface RecentCycle {
   id: string;
   name: string;
   status: 'Active' | 'Completed' | 'Archived';
-  scopeType: 'All' | 'Module' | 'Suite' | 'Custom';
+  mode?: 'CaseBased' | 'Manual';
+  scopeType: 'All' | 'Portal' | 'Module' | 'Suite' | 'Custom';
   scopeName: string | null;
   createdAt: string;
+  completedAt?: string | null;
   total: number;
   done: number;
   passRate: number;
   counts: { NotRun: number; Passed: number; Failed: number; Blocked: number; Skipped: number };
+  // Manual-cycle metadata
+  portalName?: string | null;
+  moduleName?: string | null;
+  featureName?: string | null;
+  issueCount?: number;
 }
 
 interface DashboardData {
@@ -250,27 +258,63 @@ export function Dashboard({ onShowTestRuns, onOpenCycle, projectId }: DashboardP
               </p>
             ) : (
               <div className="flex flex-col gap-3">
-                {data.recentCycles.slice(0, 5).map(c => (
-                  <button
-                    key={c.id}
-                    onClick={() => onOpenCycle?.(c.id)}
-                    className="flex items-center gap-2.5 rounded-md px-1 py-1 text-left text-[13px] transition-colors hover:bg-surface-2"
-                  >
-                    <Avatar name={c.name} status={c.status} />
-                    <div className="flex-1 text-text-2">
-                      <b className="font-medium text-text">{c.name}</b>
-                      <span> · </span>
-                      <span className="text-text-3">
-                        {c.scopeType === 'All' ? 'all cases' : (c.scopeName ?? c.scopeType)}
-                      </span>
-                      <span> · </span>
-                      <span className="text-text-3">
-                        {c.done}/{c.total} runs · {c.passRate}% pass
-                      </span>
-                    </div>
-                    <span className="text-[12px] text-text-3">{relativeTime(c.createdAt)}</span>
-                  </button>
-                ))}
+                {data.recentCycles.slice(0, 5).map(c => {
+                  const isManual = c.mode === 'Manual';
+                  // Quick-log entries don't have per-case runs — express the outcome
+                  // as a single Pass/Fail based on whether any issues were logged.
+                  const manualVerdict =
+                    isManual && (c.issueCount ?? 0) === 0
+                      ? { label: 'Pass', tone: 'text-emerald-700 bg-emerald-50' }
+                      : isManual
+                        ? { label: 'Fail', tone: 'text-red-700 bg-red-50' }
+                        : null;
+                  // Manual cycles store their scope as free text instead of an id —
+                  // fall back to that when scopeName isn't set.
+                  const subText = isManual
+                    ? [c.portalName, c.moduleName, c.featureName].filter(Boolean).join(' › ') ||
+                      'quick log'
+                    : c.scopeType === 'All'
+                      ? 'all cases'
+                      : (c.scopeName ?? c.scopeType);
+                  // Manual rows want their completed-on date so back-dated entries
+                  // read correctly; CaseBased keep the createdAt.
+                  const dateIso = (isManual && c.completedAt) || c.createdAt;
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => onOpenCycle?.(c.id)}
+                      className="flex items-center gap-2.5 rounded-md px-1 py-1 text-left text-[13px] transition-colors hover:bg-surface-2"
+                    >
+                      <Avatar name={c.name} status={c.status} />
+                      <div className="flex-1 text-text-2">
+                        <b className="font-medium text-text">{c.name}</b>
+                        <span> · </span>
+                        <span className="text-text-3">{subText}</span>
+                        <span> · </span>
+                        {manualVerdict ? (
+                          <span
+                            className={cn(
+                              'inline-flex items-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold',
+                              manualVerdict.tone,
+                            )}
+                          >
+                            {manualVerdict.label}
+                            {(c.issueCount ?? 0) > 0 && (
+                              <span className="ml-1 text-text-3">
+                                · {c.issueCount} issue{c.issueCount === 1 ? '' : 's'}
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-text-3">
+                            {c.done}/{c.total} runs · {c.passRate}% pass
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[12px] text-text-3">{relativeTime(dateIso)}</span>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </Panel>

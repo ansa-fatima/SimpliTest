@@ -239,13 +239,21 @@ export async function GET(req: Request) {
         id: c.id,
         name: c.name,
         status: c.status,
+        mode: c.mode,
         scopeType: c.scopeType,
         scopeName,
         createdAt: c.createdAt,
+        completedAt: c.completedAt,
         total,
         done,
         passRate,
         counts,
+        // Manual-cycle aggregates — used by the dashboard to render Pass/Fail
+        // chips for quick-logs (where there are no real runs to %-derive from).
+        moduleName: c.moduleName,
+        featureName: c.featureName,
+        portalName: c.portalName,
+        issueCount: c.issueCount ?? 0,
       };
     });
 
