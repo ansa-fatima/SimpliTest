@@ -224,11 +224,16 @@ export function CyclesList({
                       className="group cursor-pointer border-b border-border transition-colors last:border-b-0 hover:bg-surface-2"
                     >
                       <td className="whitespace-nowrap px-3 py-2.5 text-text-2">
-                        {new Date(c.createdAt).toLocaleDateString('en-GB', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric',
-                        })}
+                        {/* Quick-logs show the executed-on date (back-datable) so
+                            cycles sort by when they actually ran, not when typed. */}
+                        {new Date((isManual && c.completedAt) || c.createdAt).toLocaleDateString(
+                          'en-GB',
+                          {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                          },
+                        )}
                       </td>
                       <td className="px-3 py-2.5">
                         {/* Module column — unified Chip styling across Manual + CaseBased.

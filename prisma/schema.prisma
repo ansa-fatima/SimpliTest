@@ -299,6 +299,10 @@ model TestCycle {
   scopeType   CycleScopeType @default(All)
   scopeId     String?        // moduleId or suiteId; null for All / Custom
   targetDate  DateTime?
+  // When this cycle was actually executed. For Manual (quick-log) entries the
+  // user picks it explicitly so back-dated cycles show up on the day they ran.
+  // For CaseBased cycles it's left null until the run is closed.
+  completedAt DateTime?
   projectId   String
   project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   runs        TestRun[]

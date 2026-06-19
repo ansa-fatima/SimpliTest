@@ -70,6 +70,7 @@ export interface TestCycle {
   scopeId: string | null;
   scopeName?: string | null;
   targetDate: string | null;
+  completedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   summary?: CycleSummary;

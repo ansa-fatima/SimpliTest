@@ -23,6 +23,8 @@ export interface CycleFormPayload {
   scopeType?: CycleScopeType;
   scopeId?: string | null;
   targetDate?: string | null;
+  /** When the cycle was actually executed (Manual-mode back-dating). */
+  completedAt?: string | null;
   // Manual-mode fields
   portalName?: string;
   moduleName?: string;
@@ -92,6 +94,11 @@ export function NewCycleModal({
   const [loadingModules, setLoadingModules] = useState(true);
 
   // ── Manual-mode fields ──────────────────────────────────────
+  const [completedOn, setCompletedOn] = useState(() => {
+    if (initial?.completedAt) return initial.completedAt.slice(0, 10);
+    // Default to today's date for new quick-logs — user can back-date if needed.
+    return new Date().toISOString().slice(0, 10);
+  });
   const [portalName, setPortalName] = useState(initial?.portalName ?? '');
   const [moduleName, setModuleName] = useState(initial?.moduleName ?? '');
   const [featureName, setFeatureName] = useState(initial?.featureName ?? '');
@@ -205,6 +212,8 @@ export function NewCycleModal({
       payload.version = version.trim() || undefined;
       payload.ticketLink = ticketLink.trim() || undefined;
     } else {
+      // Quick-log was executed on `completedOn`; default to today if blank.
+      payload.completedAt = completedOn || new Date().toISOString().slice(0, 10);
       payload.portalName = portalName.trim() || undefined;
       payload.moduleName = moduleName.trim() || undefined;
       payload.featureName = featureName.trim() || undefined;
@@ -298,6 +307,19 @@ export function NewCycleModal({
                     that matches an existing entry suggests the next level via
                     datalist. Nothing is required — Manual mode is meant for
                     free-form quick-logs against any combination. */}
+                <Field label="Completed on" required>
+                  <input
+                    type="date"
+                    value={completedOn}
+                    onChange={e => setCompletedOn(e.target.value)}
+                    max={new Date().toISOString().slice(0, 10)}
+                    className="input"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Back-date a cycle you ran earlier; defaults to today.
+                  </p>
+                </Field>
+
                 <div className="grid grid-cols-3 gap-3">
                   <Field label="Portal">
                     <input

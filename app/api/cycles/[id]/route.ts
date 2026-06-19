@@ -45,6 +45,9 @@ export async function PATCH(req: Request, { params }: Ctx) {
     if (body.targetDate !== undefined) {
       data.targetDate = body.targetDate ? new Date(body.targetDate as string) : null;
     }
+    if (body.completedAt !== undefined) {
+      data.completedAt = body.completedAt ? new Date(body.completedAt as string) : null;
+    }
 
     // Manual-mode free-text fields (passing null clears; passing string sets).
     const stringFields = [

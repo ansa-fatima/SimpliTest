@@ -102,6 +102,7 @@ export async function POST(req: Request) {
       scopeId?: string | null;
       testCaseIds?: string[];
       targetDate?: string | null;
+      completedAt?: string | null;
 
       // Manual-mode fields
       portalName?: string;
@@ -145,6 +146,9 @@ export async function POST(req: Request) {
           scopeType: 'All',
           scopeId: null,
           targetDate: body.targetDate ? new Date(body.targetDate) : null,
+          // Quick-log: completedAt defaults to today if the user didn't pick a date.
+          // They can also back-date to record a cycle they ran days/weeks ago.
+          completedAt: body.completedAt ? new Date(body.completedAt) : new Date(),
           portalName: body.portalName?.trim() || null,
           moduleName: body.moduleName?.trim() || null,
           featureName: body.featureName?.trim() || null,
