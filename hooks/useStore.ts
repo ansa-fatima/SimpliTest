@@ -532,8 +532,6 @@ export function useStore() {
   }, []);
 
   const showEdit = useCallback(() => update({ page: 'edit' }), [update]);
-  const showCreate = useCallback(() => update({ page: 'create' }), [update]);
-  const cancelCreate = useCallback(() => update({ page: 'list' }), [update]);
 
   const addModule = useCallback(
     async (name: string) => {
@@ -749,58 +747,6 @@ export function useStore() {
     setState(s => ({ ...s, page: 'list', dataVersion: s.dataVersion + 1 }));
     showToast('Test case duplicated ✓', 'success');
   }, [showToast, state.currentTC]);
-
-  // Persisted create — POSTs to /api/test-cases. The new case picks up a real auto-incrementing
-  // caseNum from the DB and the list refetches via the dataVersion bump.
-  const createTC = useCallback(
-    async (
-      tc: Omit<TestCase, 'id' | 'created' | 'updatedFull' | 'updated' | 'sub' | 'author'> & {
-        module: string;
-      },
-    ) => {
-      const key = `${tc.module}:${tc.feature}`;
-      // Resolve suiteId from useStore's featureIds map populated by reloadModules.
-      const suiteId = state.featureIds[key];
-      if (!suiteId) {
-        showToast(
-          `Couldn't find suite "${tc.feature}" under module "${tc.module}". Pick a suite first.`,
-          'error',
-        );
-        return;
-      }
-      const userName = state.user?.name || state.user?.username || 'You';
-      try {
-        const created = await api.post<ApiTestCase>('/api/test-cases', {
-          title: tc.title,
-          sub: tc.desc?.split('.')[0] || tc.title,
-          desc: tc.desc,
-          preconditions: (tc as { preconditions?: string }).preconditions ?? '',
-          steps: tc.steps,
-          expected: tc.expected,
-          priority: tc.priority,
-          severity: tc.severity,
-          type: tc.type,
-          suiteId,
-          author: userName,
-        });
-        const local = toLocalTestCase(created);
-        setState(s => {
-          const cases = [...(s.data[key] || []), local];
-          return {
-            ...s,
-            data: { ...s.data, [key]: cases },
-            currentKey: key,
-            page: 'list',
-            dataVersion: s.dataVersion + 1,
-          };
-        });
-        showToast(`Test case ${local.id} created ✓`, 'success');
-      } catch (e) {
-        showToast(`Create failed: ${(e as Error).message}`, 'error');
-      }
-    },
-    [showToast, state.featureIds, state.user],
-  );
 
   // ─── Cycles ────────────────────────────────────────────────
 
@@ -1028,12 +974,9 @@ export function useStore() {
     navFeature,
     viewTC,
     showEdit,
-    showCreate,
-    cancelCreate,
     saveEdit,
     deleteTC,
     duplicateTC,
-    createTC,
     addModule,
     addFeature,
     deleteModule,

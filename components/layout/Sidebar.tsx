@@ -37,7 +37,7 @@ interface SidebarProps {
 }
 
 // Page-buckets used to decide which top-level nav item is "active".
-const TESTCASE_PAGES: Page[] = ['list', 'view', 'edit', 'create'];
+const TESTCASE_PAGES: Page[] = ['list', 'view', 'edit'];
 const TESTRUN_PAGES: Page[] = ['cycles', 'cycle'];
 
 export function Sidebar({

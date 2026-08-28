@@ -8,7 +8,6 @@ export type Page =
   | 'list'
   | 'view'
   | 'edit'
-  | 'create'
   | 'cycles'
   | 'cycle'
   | 'reports'
