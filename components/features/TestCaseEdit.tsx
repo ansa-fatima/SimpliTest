@@ -1,28 +1,54 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { TestCase, Priority, Severity, TestType, Module } from '@/types';
+import { useEffect, useState } from 'react';
+import { TestCase, Priority, Severity, TestType } from '@/types';
+import { api } from '@/lib/client';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { StepEditor } from '@/components/ui/StepEditor';
 import { Button } from '@/components/ui/Button';
 
+// Structurally matches the tree shape /api/portals returns — same duck-typed
+// approach NewTestCaseModal uses, since there's no shared exported type for it.
+interface TreeSuite {
+  id: string;
+  name: string;
+  children: TreeSuite[];
+}
+interface TreeModule {
+  id: string;
+  name: string;
+  suites: TreeSuite[];
+}
+interface TreePortal {
+  id: string;
+  name: string;
+  modules: TreeModule[];
+}
+
 interface TestCaseEditProps {
   tc: TestCase;
-  modules: Module[];
-  currentKey: string;
+  projectId: string | null;
   onBack: () => void;
-  onSave: (patch: Partial<TestCase>) => void;
+  onSave: (
+    patch: Partial<TestCase> & { portalId?: string; moduleId?: string; suiteId?: string },
+  ) => void;
 }
 
 const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
 
-export function TestCaseEdit({ tc, modules, currentKey, onBack, onSave }: TestCaseEditProps) {
-  const moduleMap = useMemo(
-    () => Object.fromEntries(modules.map(m => [m.name, m.features])) as Record<string, string[]>,
-    [modules],
-  );
-  const [mod, feat] = currentKey.split(':');
+// Flattens a suite tree into (id, label) pairs, indenting nested names for select display.
+function flattenSuites(suites: TreeSuite[], depth = 0): { id: string; label: string }[] {
+  return suites.flatMap(s => [
+    { id: s.id, label: `${'—'.repeat(depth)}${depth > 0 ? ' ' : ''}${s.name}` },
+    ...flattenSuites(s.children, depth + 1),
+  ]);
+}
 
+function containsSuite(suites: TreeSuite[], id: string): boolean {
+  return suites.some(s => s.id === id || containsSuite(s.children, id));
+}
+
+export function TestCaseEdit({ tc, projectId, onBack, onSave }: TestCaseEditProps) {
   const [title, setTitle] = useState(tc.title);
   const [desc, setDesc] = useState(tc.desc);
   const [preconditions, setPreconditions] = useState(tc.preconditions ?? '');
@@ -31,28 +57,100 @@ export function TestCaseEdit({ tc, modules, currentKey, onBack, onSave }: TestCa
   const [priority, setPriority] = useState<Priority>(tc.priority);
   const [severity, setSeverity] = useState<Severity>(tc.severity);
   const [type, setType] = useState<TestType>(tc.type);
-  const [feature, setFeature] = useState(tc.feature);
-  const [module, setModule] = useState(mod);
+  const [error, setError] = useState('');
+
+  // Location — Portal → Module → Suite, fetched fresh from the API. The
+  // legacy in-memory `TestCase` shape only carries a flattened `feature`
+  // string, not the structured ids a case actually needs to be re-parented.
+  const [tree, setTree] = useState<TreePortal[]>([]);
+  const [loadingLocation, setLoadingLocation] = useState(true);
+  const [portalId, setPortalId] = useState('');
+  const [moduleId, setModuleId] = useState('');
+  const [suiteId, setSuiteId] = useState('');
+
+  useEffect(() => {
+    if (!tc.apiId || !projectId) {
+      setLoadingLocation(false);
+      return;
+    }
+    (async () => {
+      try {
+        const [treeData, raw] = await Promise.all([
+          api.get<TreePortal[]>(`/api/portals?projectId=${projectId}`),
+          api.get<{ portalId: string | null; moduleId: string | null; suiteId: string | null }>(
+            `/api/test-cases/${tc.apiId}`,
+          ),
+        ]);
+        setTree(treeData);
+        if (raw.suiteId) {
+          const owner = treeData
+            .flatMap(p => p.modules.map(m => ({ p, m })))
+            .find(({ m }) => containsSuite(m.suites, raw.suiteId!));
+          if (owner) {
+            setPortalId(owner.p.id);
+            setModuleId(owner.m.id);
+            setSuiteId(raw.suiteId);
+          }
+        } else if (raw.moduleId) {
+          const owner = treeData.find(p => p.modules.some(m => m.id === raw.moduleId));
+          if (owner) {
+            setPortalId(owner.id);
+            setModuleId(raw.moduleId);
+          }
+        } else if (raw.portalId) {
+          setPortalId(raw.portalId);
+        }
+      } catch (e) {
+        console.error('[edit location]', e);
+      } finally {
+        setLoadingLocation(false);
+      }
+    })();
+  }, [tc.apiId, projectId]);
+
+  const portal = tree.find(p => p.id === portalId);
+  const modules = portal?.modules ?? [];
+  const mod = modules.find(m => m.id === moduleId);
+  const suiteOptions = mod ? flattenSuites(mod.suites) : [];
+
+  useEffect(() => {
+    if (moduleId && !modules.some(m => m.id === moduleId)) setModuleId('');
+  }, [portalId, modules, moduleId]);
+  useEffect(() => {
+    if (suiteId && !suiteOptions.some(s => s.id === suiteId)) setSuiteId('');
+  }, [moduleId, suiteOptions, suiteId]);
+
+  const suiteLabel = suiteOptions.find(s => s.id === suiteId)?.label.replace(/^—+\s*/, '');
+  const breadcrumb =
+    [portal?.name, mod?.name, suiteId ? suiteLabel : null].filter(Boolean).join(' / ') || '…';
 
   const handleSave = () => {
-    if (!title.trim()) return;
+    setError('');
+    if (!title.trim()) {
+      setError('Title is required');
+      return;
+    }
+    if (!portalId) {
+      setError('Pick a portal');
+      return;
+    }
+    const cleanSteps = steps.map(s => s.trim()).filter(Boolean);
+    if (cleanSteps.length === 0) {
+      setError('At least one step is required');
+      return;
+    }
     onSave({
       title: title.trim(),
       sub: desc.split('.')[0] || title.trim(),
       desc,
       preconditions,
       expected,
-      steps: steps.filter(Boolean),
+      steps: cleanSteps,
       priority,
       severity,
       type,
-      feature,
+      ...(suiteId ? { suiteId } : moduleId ? { moduleId } : { portalId }),
     });
-  };
-
-  const handleModuleChange = (m: string) => {
-    setModule(m);
-    setFeature(moduleMap[m]?.[0] || '');
   };
 
   return (
@@ -66,7 +164,7 @@ export function TestCaseEdit({ tc, modules, currentKey, onBack, onSave }: TestCa
           ← Back
         </button>
         <div className="flex flex-1 items-center gap-1 text-xs text-slate-400">
-          {mod} / {feat} / <span className="font-mono font-semibold text-slate-800">{tc.id}</span>
+          {breadcrumb} / <span className="font-mono font-semibold text-slate-800">{tc.id}</span>
           <span
             className="ml-1 inline-block h-2 w-2 rounded-full bg-amber-400"
             title="Unsaved changes"
@@ -109,34 +207,65 @@ export function TestCaseEdit({ tc, modules, currentKey, onBack, onSave }: TestCa
               />
             </div>
 
-            {/* Module */}
+            {/* Portal */}
             <div className="flex flex-col gap-1">
               <label className="text-[11px] font-semibold text-slate-500">
-                Module <span className="text-red-500">*</span>
+                Portal <span className="text-red-500">*</span>
               </label>
               <select
-                value={module}
-                onChange={e => handleModuleChange(e.target.value)}
-                className="w-[130px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-sans text-xs text-slate-900 outline-none focus:border-blue-500"
+                value={portalId}
+                disabled={loadingLocation}
+                onChange={e => {
+                  setPortalId(e.target.value);
+                  setModuleId('');
+                  setSuiteId('');
+                }}
+                className="w-[130px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-sans text-xs text-slate-900 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
               >
-                {modules.map(m => (
-                  <option key={m.name}>{m.name}</option>
+                <option value="">{loadingLocation ? 'Loading…' : 'Select a portal…'}</option>
+                {tree.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
                 ))}
               </select>
             </div>
 
-            {/* Feature */}
+            {/* Module */}
             <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-slate-500">
-                Feature <span className="text-red-500">*</span>
-              </label>
+              <label className="text-[11px] font-semibold text-slate-500">Module</label>
               <select
-                value={feature}
-                onChange={e => setFeature(e.target.value)}
-                className="w-[130px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-sans text-xs text-slate-900 outline-none focus:border-blue-500"
+                value={moduleId}
+                disabled={loadingLocation || modules.length === 0}
+                onChange={e => {
+                  setModuleId(e.target.value);
+                  setSuiteId('');
+                }}
+                className="w-[130px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-sans text-xs text-slate-900 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
               >
-                {(moduleMap[module] || []).map(f => (
-                  <option key={f}>{f}</option>
+                <option value="">Attach to portal directly</option>
+                {modules.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Suite / feature */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-semibold text-slate-500">Feature</label>
+              <select
+                value={suiteId}
+                disabled={loadingLocation || !mod || suiteOptions.length === 0}
+                onChange={e => setSuiteId(e.target.value)}
+                className="w-[130px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-sans text-xs text-slate-900 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+              >
+                <option value="">Attach to module directly</option>
+                {suiteOptions.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
                 ))}
               </select>
             </div>
@@ -280,6 +409,12 @@ export function TestCaseEdit({ tc, modules, currentKey, onBack, onSave }: TestCa
             className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-sans text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
           />
         </div>
+
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+            {error}
+          </div>
+        )}
 
         <hr className="border-slate-100" />
 

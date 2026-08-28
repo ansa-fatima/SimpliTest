@@ -15,7 +15,7 @@ import {
   Portal,
 } from '@/types';
 import { SEED_DATA } from '@/data/testCases';
-import { formatCaseId, nextTestCaseId, todayStr } from '@/lib/utils';
+import { formatCaseId, relativeTime } from '@/lib/utils';
 import { api } from '@/lib/client';
 
 export type UserRole = 'SuperAdmin' | 'QAManager' | 'Tester' | 'Developer' | 'Viewer';
@@ -47,18 +47,6 @@ function toLocalTestCase(c: ApiTestCase): TestCase {
     author: c.author ?? '',
     updatedFull: formatDate(c.updatedAt),
   };
-}
-
-function relativeTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const min = Math.floor(ms / 60_000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const d = Math.floor(hr / 24);
-  if (d < 30) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString();
 }
 
 function formatDate(iso: string): string {
@@ -665,44 +653,44 @@ export function useStore() {
   // Persisted edit — PATCHes /api/test-cases/:apiId, then updates the in-memory copy.
   // Falls back to a local-only edit if the case has no apiId (legacy seed data).
   const saveEdit = useCallback(
-    async (patch: Partial<TestCase>) => {
+    async (
+      patch: Partial<TestCase> & { portalId?: string; moduleId?: string; suiteId?: string },
+    ) => {
       // Snapshot the current case + apiId before async work.
       const current = state.currentTC;
-      if (!current) return;
+      if (!current?.apiId) {
+        showToast('Save failed: no persisted case to update', 'error');
+        return;
+      }
 
-      const persisted = current.apiId
-        ? await (async () => {
-            try {
-              const updated = await api.patch<ApiTestCase>(`/api/test-cases/${current.apiId}`, {
-                title: patch.title,
-                desc: patch.desc,
-                preconditions: patch.preconditions,
-                expected: patch.expected,
-                steps: patch.steps,
-                priority: patch.priority,
-                severity: patch.severity,
-                type: patch.type,
-              });
-              return toLocalTestCase(updated);
-            } catch (e) {
-              showToast(`Save failed: ${(e as Error).message}`, 'error');
-              return null;
-            }
-          })()
-        : null;
+      let updated: ApiTestCase;
+      try {
+        updated = await api.patch<ApiTestCase>(`/api/test-cases/${current.apiId}`, {
+          title: patch.title,
+          desc: patch.desc,
+          preconditions: patch.preconditions,
+          expected: patch.expected,
+          steps: patch.steps,
+          priority: patch.priority,
+          severity: patch.severity,
+          type: patch.type,
+          portalId: patch.portalId,
+          moduleId: patch.moduleId,
+          suiteId: patch.suiteId,
+        });
+      } catch (e) {
+        // Bail out here — don't fake a success toast or merge an unsaved
+        // patch into state when the persist actually failed.
+        showToast(`Save failed: ${(e as Error).message}`, 'error');
+        return;
+      }
 
+      const merged = toLocalTestCase(updated);
       setState(s => {
         if (!s.currentTC) return s;
         const cases = [...(s.data[s.currentKey] || [])];
         const idx = cases.findIndex(c => c.id === s.currentTC!.id);
-        if (idx < 0) return s;
-        const merged: TestCase = persisted ?? {
-          ...s.currentTC,
-          ...patch,
-          updatedFull: 'Just now',
-          updated: 'Just now',
-        };
-        cases[idx] = merged;
+        if (idx >= 0) cases[idx] = merged;
         return {
           ...s,
           data: { ...s.data, [s.currentKey]: cases },
@@ -746,21 +734,21 @@ export function useStore() {
     [showToast, state.data, state.currentKey],
   );
 
-  const duplicateTC = useCallback(() => {
-    setState(s => {
-      if (!s.currentTC) return s;
-      const dup: TestCase = {
-        ...s.currentTC,
-        id: nextTestCaseId(),
-        title: s.currentTC.title + ' (copy)',
-        updated: 'just now',
-        updatedFull: todayStr(),
-      };
-      const cases = [...(s.data[s.currentKey] || []), dup];
-      return { ...s, data: { ...s.data, [s.currentKey]: cases }, page: 'list' };
-    });
-    showToast('Test case duplicated');
-  }, [showToast]);
+  // Persisted duplicate — POSTs to the same bulk endpoint the list view's
+  // Duplicate action uses, so this actually survives a refresh (it used to
+  // only edit an in-memory copy and silently vanish).
+  const duplicateTC = useCallback(async () => {
+    const apiId = state.currentTC?.apiId;
+    if (!apiId) return;
+    try {
+      await api.post('/api/test-cases/bulk', { action: 'duplicate', ids: [apiId] });
+    } catch (e) {
+      showToast(`Duplicate failed: ${(e as Error).message}`, 'error');
+      return;
+    }
+    setState(s => ({ ...s, page: 'list', dataVersion: s.dataVersion + 1 }));
+    showToast('Test case duplicated ✓', 'success');
+  }, [showToast, state.currentTC]);
 
   // Persisted create — POSTs to /api/test-cases. The new case picks up a real auto-incrementing
   // caseNum from the DB and the list refetches via the dataVersion bump.
@@ -1004,8 +992,10 @@ export function useStore() {
   const submitResult = useCallback(
     async (runId: string, result: RunResult, notes?: string) => {
       try {
+        const executedBy = state.user?.name || state.user?.username || 'You';
         const updated = await api.patch<ApiTestRun>(`/api/runs/${runId}`, {
           result,
+          executedBy,
           ...(notes !== undefined ? { notes } : {}),
         });
         // Update local run + refresh summary in one go
@@ -1025,7 +1015,7 @@ export function useStore() {
         showToast(`Failed to save: ${(e as Error).message}`, 'error');
       }
     },
-    [showToast, state.currentCycle],
+    [showToast, state.currentCycle, state.user],
   );
 
   const currentCases = state.data[state.currentKey] || [];

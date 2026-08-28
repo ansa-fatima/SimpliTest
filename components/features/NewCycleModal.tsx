@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { CycleScopeType, CycleMode, Module, TestCycle } from '@/types';
 import { api } from '@/lib/client';
-import { cn } from '@/lib/utils';
+import { cn, localDateStr } from '@/lib/utils';
 
 interface ApiModule {
   id: string;
@@ -97,11 +97,8 @@ export function NewCycleModal({
   const [completedOn, setCompletedOn] = useState(() => {
     if (initial?.completedAt) return initial.completedAt.slice(0, 10);
     // Default to today's date for new quick-logs — user can back-date if needed.
-    return new Date().toISOString().slice(0, 10);
+    return localDateStr();
   });
-  const [portalName, setPortalName] = useState(initial?.portalName ?? '');
-  const [moduleName, setModuleName] = useState(initial?.moduleName ?? '');
-  const [featureName, setFeatureName] = useState(initial?.featureName ?? '');
   const [environment, setEnvironment] = useState(initial?.environment ?? '');
   const [platform, setPlatform] = useState(initial?.platform ?? '');
   const [version, setVersion] = useState(initial?.version ?? '');
@@ -188,10 +185,35 @@ export function NewCycleModal({
         ? { scopeType: 'Portal', scopeId: portalIdF }
         : { scopeType: 'All', scopeId: null };
 
+  // Total issues must equal the sum of its own severity breakdown — otherwise
+  // "Total" and "Critical + Major + Minor" tell two different stories and
+  // whichever one feeds a report (Stability, Dashboard) becomes unreliable.
+  const severitySum = criticalCount + majorCount + minorCount;
+  const severityMismatch =
+    mode === 'Manual' && (issueCount > 0 || severitySum > 0) && severitySum !== issueCount;
+
+  // Every issue should end up accounted for as either Done or still Remaining —
+  // otherwise a run can silently read as "Done" (see cycleStatusBadge in
+  // CyclesList.tsx, which infers status from remainingCount) while issues that
+  // were never actually resolved just sit unaccounted for.
+  const resolvedSum = doneCount + remainingCount;
+  const resolvedMismatch =
+    mode === 'Manual' && (issueCount > 0 || resolvedSum > 0) && resolvedSum !== issueCount;
+
   const handleSubmit = async () => {
     setError('');
     if (!name.trim()) {
       setError('Name is required');
+      return;
+    }
+    if (severityMismatch) {
+      setError(
+        `Critical + Major + Minor (${severitySum}) must equal Total issues (${issueCount}).`,
+      );
+      return;
+    }
+    if (resolvedMismatch) {
+      setError(`Done + Remaining (${resolvedSum}) must equal Total issues (${issueCount}).`);
       return;
     }
     // Scope is OPTIONAL — leaving all three dropdowns blank means "All test cases".
@@ -212,11 +234,29 @@ export function NewCycleModal({
       payload.version = version.trim() || undefined;
       payload.ticketLink = ticketLink.trim() || undefined;
     } else {
-      // Quick-log was executed on `completedOn`; default to today if blank.
-      payload.completedAt = completedOn || new Date().toISOString().slice(0, 10);
-      payload.portalName = portalName.trim() || undefined;
-      payload.moduleName = moduleName.trim() || undefined;
-      payload.featureName = featureName.trim() || undefined;
+      // Quick-log was executed on `completedOn`. If that's still today, capture
+      // the actual moment (not a fabricated midnight) so relative-time displays
+      // (Dashboard, Stability report) read correctly for a log just submitted.
+      // Only a genuinely back-dated pick is anchored to local midnight instead.
+      const chosenDate = completedOn || localDateStr();
+      payload.completedAt =
+        chosenDate === localDateStr()
+          ? new Date().toISOString()
+          : new Date(`${chosenDate}T00:00:00`).toISOString();
+      // Structured location, shared with Detailed mode's cascading picker —
+      // this is what lets the Stability report join a quick log to a real
+      // module/feature instead of matching on free text.
+      payload.scopeType = derivedScope.scopeType;
+      payload.scopeId = derivedScope.scopeId;
+      // Free-text names stay in sync automatically (derived from the picked
+      // node's real name) — every existing consumer (Dashboard, cycle list,
+      // cycle detail breadcrumb) keeps working unchanged.
+      const pickedPortal = portals.find(p => p.id === portalIdF);
+      const pickedModule = modules.find(m => m.id === moduleIdF);
+      const pickedSuite = visibleSuites.find(s => s.id === suiteIdF);
+      payload.portalName = pickedPortal?.name || undefined;
+      payload.moduleName = pickedModule?.name || undefined;
+      payload.featureName = pickedSuite?.name || undefined;
       payload.environment = environment || undefined;
       payload.platform = platform || undefined;
       payload.version = version.trim() || undefined;
@@ -303,16 +343,17 @@ export function NewCycleModal({
             {mode === 'Manual' ? (
               <>
                 {/* Manual-mode form ─────────────────────────────
-                    Portal/Module/Feature are linked-but-optional: typing a value
-                    that matches an existing entry suggests the next level via
-                    datalist. Nothing is required — Manual mode is meant for
-                    free-form quick-logs against any combination. */}
+                    Location uses the SAME cascading Portal→Module→Feature picker
+                    as Detailed runs (shared portalIdF/moduleIdF/suiteIdF state +
+                    derivedScope below) — this is what makes module/feature
+                    stability tracking possible for quick logs: the log is tied to
+                    a real record, not a free-text string that can typo/drift. */}
                 <Field label="Completed on" required>
                   <input
                     type="date"
                     value={completedOn}
                     onChange={e => setCompletedOn(e.target.value)}
-                    max={new Date().toISOString().slice(0, 10)}
+                    max={localDateStr()}
                     className="input"
                   />
                   <p className="mt-1 text-[11px] text-slate-400">
@@ -320,63 +361,53 @@ export function NewCycleModal({
                   </p>
                 </Field>
 
-                <div className="grid grid-cols-3 gap-3">
-                  <Field label="Portal">
-                    <input
-                      type="text"
-                      value={portalName}
-                      onChange={e => setPortalName(e.target.value)}
-                      placeholder="e.g. Mobile App"
+                <Field label="Where does this apply?">
+                  <div className="grid grid-cols-3 gap-2">
+                    <select
+                      value={portalIdF}
+                      onChange={e => setPortalIdF(e.target.value)}
+                      disabled={loadingModules}
                       className="input"
-                      list="cycle-portal-suggestions"
-                    />
-                    <datalist id="cycle-portal-suggestions">
+                    >
+                      <option value="">No portal</option>
                       {portals.map(p => (
-                        <option key={p.id} value={p.name} />
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
                       ))}
-                    </datalist>
-                  </Field>
-                  <Field label="Module">
-                    <input
-                      type="text"
-                      value={moduleName}
-                      onChange={e => setModuleName(e.target.value)}
-                      placeholder="e.g. Attendance"
+                    </select>
+                    <select
+                      value={moduleIdF}
+                      onChange={e => setModuleIdF(e.target.value)}
+                      disabled={loadingModules || visibleModules.length === 0}
                       className="input"
-                      list="cycle-module-suggestions"
-                    />
-                    <datalist id="cycle-module-suggestions">
-                      {(() => {
-                        const portalMatch = portals.find(
-                          p => p.name.toLowerCase() === portalName.trim().toLowerCase(),
-                        );
-                        const pool = portalMatch
-                          ? modules.filter(m => m.portalId === portalMatch.id)
-                          : modules;
-                        return pool.map(m => <option key={m.id} value={m.name} />);
-                      })()}
-                    </datalist>
-                  </Field>
-                  <Field label="Feature">
-                    <input
-                      type="text"
-                      value={featureName}
-                      onChange={e => setFeatureName(e.target.value)}
-                      placeholder="e.g. QR Attendance"
+                    >
+                      <option value="">No module</option>
+                      {visibleModules.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={suiteIdF}
+                      onChange={e => setSuiteIdF(e.target.value)}
+                      disabled={loadingModules || visibleSuites.length === 0}
                       className="input"
-                      list="cycle-feature-suggestions"
-                    />
-                    <datalist id="cycle-feature-suggestions">
-                      {(() => {
-                        const modMatch = modules.find(
-                          m => m.name.toLowerCase() === moduleName.trim().toLowerCase(),
-                        );
-                        const pool = modMatch ? modMatch.suites : modules.flatMap(m => m.suites);
-                        return pool.map(s => <option key={s.id} value={s.name} />);
-                      })()}
-                    </datalist>
-                  </Field>
-                </div>
+                    >
+                      <option value="">No feature</option>
+                      {visibleSuites.map(s => (
+                        <option key={s.id} value={s.id}>
+                          {moduleIdF ? s.name : `${s.moduleName} — ${s.name}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-slate-400">
+                    Picking a module or feature here feeds the Stability report — it counts this log
+                    toward that module/feature&apos;s rolling pass rate.
+                  </p>
+                </Field>
 
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Environment">
@@ -453,6 +484,11 @@ export function NewCycleModal({
                       tone="muted"
                     />
                   </div>
+                  {severityMismatch && (
+                    <p className="mt-1.5 text-[11px] font-medium text-red-600">
+                      Critical + Major + Minor ({severitySum}) must equal Total ({issueCount}).
+                    </p>
+                  )}
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     <CountField
                       label="Done (resolved)"
@@ -467,6 +503,11 @@ export function NewCycleModal({
                       tone="danger"
                     />
                   </div>
+                  {resolvedMismatch && (
+                    <p className="mt-1.5 text-[11px] font-medium text-red-600">
+                      Done + Remaining ({resolvedSum}) must equal Total issues ({issueCount}).
+                    </p>
+                  )}
                 </div>
 
                 {/* Test case counts (optional) */}
@@ -638,7 +679,12 @@ export function NewCycleModal({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting}
+            disabled={submitting || severityMismatch || resolvedMismatch}
+            title={
+              severityMismatch || resolvedMismatch
+                ? 'Fix the issue count mismatch before saving'
+                : undefined
+            }
             className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting && <i className="ti ti-loader-2 animate-spin text-[13px]" />}

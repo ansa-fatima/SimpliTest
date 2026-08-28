@@ -2,16 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/client';
-import { avatarColour, cn, initials } from '@/lib/utils';
+import { avatarColour, cn, initials, relativeTime } from '@/lib/utils';
 import { Portal } from '@/types';
 
 interface ReportsProps {
   projectId: string | null;
   projectName: string;
   portals: Portal[];
+  /** Opens a cycle's detail view — used by the Stability report's log drill-down. */
+  onOpenCycle?: (cycleId: string) => void;
 }
 
-type ReportType = 'execution' | 'release' | 'tester' | 'coverage';
+type ReportType = 'execution' | 'release' | 'tester' | 'coverage' | 'stability';
 
 interface ReportTypeMeta {
   id: ReportType;
@@ -50,6 +52,13 @@ const REPORT_TYPES: ReportTypeMeta[] = [
     icon: 'ti-chart-pie',
     iconColor: 'bg-amber-100 text-amber-700',
   },
+  {
+    id: 'stability',
+    label: 'Stability',
+    sub: 'Module & feature health',
+    icon: 'ti-activity-heartbeat',
+    iconColor: 'bg-rose-100 text-rose-700',
+  },
 ];
 
 interface Filters {
@@ -61,7 +70,7 @@ interface Filters {
 
 const DEFAULT_FILTERS: Filters = { days: '30', portalId: '', cycleId: '', tester: '' };
 
-export function Reports({ projectId, projectName, portals }: ReportsProps) {
+export function Reports({ projectId, projectName, portals, onOpenCycle }: ReportsProps) {
   const [reportType, setReportType] = useState<ReportType>('execution');
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
 
@@ -75,6 +84,8 @@ export function Reports({ projectId, projectName, portals }: ReportsProps) {
       case 'tester':
         return { days: true, portal: false, cycle: false, tester: false };
       case 'coverage':
+        return { days: false, portal: true, cycle: false, tester: false };
+      case 'stability':
         return { days: false, portal: true, cycle: false, tester: false };
     }
   }, [reportType]);
@@ -214,6 +225,15 @@ export function Reports({ projectId, projectName, portals }: ReportsProps) {
                 projectName={projectName}
                 portals={portals}
                 filters={filters}
+              />
+            )}
+            {reportType === 'stability' && (
+              <StabilityReport
+                projectId={projectId}
+                projectName={projectName}
+                portals={portals}
+                filters={filters}
+                onOpenCycle={onOpenCycle}
               />
             )}
           </section>
@@ -998,6 +1018,409 @@ function CoverageReport({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Stability report ───────────────────────────────────────
+
+interface StabilityLog {
+  cycleId: string;
+  kind: 'quicklog' | 'caserun';
+  label: string;
+  detail: string;
+  pass: boolean;
+  ts: string;
+}
+interface StabilityNode {
+  id: string;
+  name: string;
+  total: number;
+  passed: number;
+  failed: number;
+  passRate: number;
+  label: 'Stable' | 'At Risk' | 'Unstable' | 'No data';
+  trend: 'up' | 'down' | 'flat';
+  lastActivity: string | null;
+  logs: StabilityLog[];
+}
+interface StabilityModule extends StabilityNode {
+  suites: StabilityNode[];
+}
+interface StabilityPayload {
+  portals: {
+    id: string;
+    name: string;
+    icon: string | null;
+    modules: StabilityModule[];
+  }[];
+  totals: {
+    totalDataPoints: number;
+    overallPassRate: number;
+    modules: { stable: number; atRisk: number; unstable: number; noData: number };
+  };
+}
+
+function StabilityReport({
+  projectId,
+  projectName,
+  portals,
+  filters,
+  onOpenCycle,
+}: {
+  projectId: string | null;
+  projectName: string;
+  portals: Portal[];
+  filters: Filters;
+  onOpenCycle?: (cycleId: string) => void;
+}) {
+  const [data, setData] = useState<StabilityPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [logsFor, setLogsFor] = useState<{ title: string; logs: StabilityLog[] } | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (projectId) params.set('projectId', projectId);
+    setLoading(true);
+    api
+      .get<StabilityPayload>(`/api/reports/stability?${params.toString()}`)
+      .then(setData)
+      .catch(e => console.error('[stability report]', e))
+      .finally(() => setLoading(false));
+  }, [projectId]);
+
+  const portalsToShow = useMemo(() => {
+    if (!data) return [];
+    if (filters.portalId) return data.portals.filter(p => p.id === filters.portalId);
+    return data.portals;
+  }, [data, filters.portalId]);
+
+  const toggle = (id: string) =>
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const onCsv = () => {
+    if (!data) return;
+    const rows: (string | number)[][] = [
+      ['Portal', 'Module', 'Feature', 'Total', 'Passed', 'Failed', 'Pass rate', 'Health', 'Trend'],
+    ];
+    for (const p of portalsToShow) {
+      for (const m of p.modules) {
+        rows.push([
+          p.name,
+          m.name,
+          '',
+          m.total,
+          m.passed,
+          m.failed,
+          `${m.passRate}%`,
+          m.label,
+          m.trend,
+        ]);
+        for (const s of m.suites) {
+          rows.push([
+            p.name,
+            m.name,
+            s.name,
+            s.total,
+            s.passed,
+            s.failed,
+            `${s.passRate}%`,
+            s.label,
+            s.trend,
+          ]);
+        }
+      }
+    }
+    downloadCsv(`stability-${projectName.toLowerCase().replace(/\s+/g, '-')}.csv`, rows);
+  };
+
+  const portalName = filters.portalId
+    ? (portals.find(p => p.id === filters.portalId)?.name ?? 'Selected portal')
+    : 'All portals';
+
+  return (
+    <div>
+      <ReportHeader
+        title="Stability report"
+        subtitle={`${portalName} · how stable each module & feature is, from quick logs and test runs`}
+        onCsv={onCsv}
+        onPdf={() => window.print()}
+        onShare={() => navigator.clipboard?.writeText(window.location.href)}
+      />
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KpiCard label="Data points" value={data?.totals.totalDataPoints ?? 0} tone="neutral" />
+        <KpiCard
+          label="Overall pass rate"
+          value={`${data?.totals.overallPassRate ?? 0}%`}
+          tone={(data?.totals.overallPassRate ?? 0) >= 80 ? 'success' : 'warning'}
+        />
+        <KpiCard label="At risk modules" value={data?.totals.modules.atRisk ?? 0} tone="warning" />
+        <KpiCard
+          label="Unstable modules"
+          value={data?.totals.modules.unstable ?? 0}
+          tone="danger"
+        />
+      </div>
+
+      {loading && !data ? (
+        <div className="mt-4 rounded-lg border border-border bg-surface p-8 text-center text-text-3">
+          Loading…
+        </div>
+      ) : portalsToShow.length === 0 ? (
+        <div className="mt-4 rounded-lg border border-dashed border-border bg-surface p-8 text-center text-text-3">
+          No portals to show.
+        </div>
+      ) : (
+        <div className="mt-4 space-y-3">
+          {portalsToShow.map(p => (
+            <div key={p.id} className="rounded-lg border border-border bg-surface">
+              <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+                <i
+                  className={cn(
+                    'ti',
+                    p.icon && p.icon.startsWith('ti-') ? p.icon : 'ti-app-window',
+                    'text-[16px] text-text-3',
+                  )}
+                />
+                <span className="text-[13px] font-semibold text-text">{p.name}</span>
+              </div>
+              <div className="divide-y divide-border">
+                {p.modules.length === 0 && (
+                  <p className="px-4 py-3 text-[12px] italic text-text-3">No modules</p>
+                )}
+                {p.modules.map(m => (
+                  <div key={m.id}>
+                    <div className="flex w-full items-center justify-between gap-3 px-4 py-2.5">
+                      {m.suites.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => toggle(m.id)}
+                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+                        >
+                          <i
+                            className={cn(
+                              'ti ti-chevron-right flex-shrink-0 text-[12px] text-text-3 transition-transform',
+                              expanded.has(m.id) && 'rotate-90',
+                            )}
+                          />
+                          <i className="ti ti-folder flex-shrink-0 text-[13px] text-text-3" />
+                          <span className="truncate text-[12.5px] font-medium text-text">
+                            {m.name}
+                          </span>
+                          <StabilityBadge label={m.label} />
+                        </button>
+                      ) : (
+                        <div className="flex min-w-0 flex-1 items-center gap-2 pl-[16px]">
+                          <i className="ti ti-folder flex-shrink-0 text-[13px] text-text-3" />
+                          <span className="truncate text-[12.5px] font-medium text-text">
+                            {m.name}
+                          </span>
+                          <StabilityBadge label={m.label} />
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        disabled={m.total === 0}
+                        onClick={() => setLogsFor({ title: `${m.name} — logs`, logs: m.logs })}
+                        title={m.total > 0 ? `View ${m.total} contributing log(s)` : undefined}
+                        className={cn(
+                          'flex-shrink-0 rounded px-1 py-0.5',
+                          m.total > 0 && 'cursor-pointer hover:bg-surface-2',
+                        )}
+                      >
+                        <StabilityStats node={m} />
+                      </button>
+                    </div>
+                    {expanded.has(m.id) && (
+                      <div className="divide-y divide-border bg-surface-2/40 pl-8">
+                        {m.suites.map(s => (
+                          <div
+                            key={s.id}
+                            className="flex items-center justify-between gap-3 px-4 py-2"
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <i className="ti ti-list-details text-[12px] text-text-3" />
+                              <span className="truncate text-[12px] text-text">{s.name}</span>
+                              <StabilityBadge label={s.label} />
+                            </div>
+                            <button
+                              type="button"
+                              disabled={s.total === 0}
+                              onClick={() =>
+                                setLogsFor({ title: `${m.name} — ${s.name} — logs`, logs: s.logs })
+                              }
+                              title={
+                                s.total > 0 ? `View ${s.total} contributing log(s)` : undefined
+                              }
+                              className={cn(
+                                'flex-shrink-0 rounded px-1 py-0.5',
+                                s.total > 0 && 'cursor-pointer hover:bg-surface-2',
+                              )}
+                            >
+                              <StabilityStats node={s} compact />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {logsFor && (
+        <StabilityLogsModal
+          title={logsFor.title}
+          logs={logsFor.logs}
+          onClose={() => setLogsFor(null)}
+          onOpenCycle={onOpenCycle}
+        />
+      )}
+    </div>
+  );
+}
+
+function StabilityLogsModal({
+  title,
+  logs,
+  onClose,
+  onOpenCycle,
+}: {
+  title: string;
+  logs: StabilityLog[];
+  onClose: () => void;
+  onOpenCycle?: (cycleId: string) => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[80vh] w-full max-w-[520px] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-[13px] font-semibold text-text">{title}</h3>
+            <p className="text-[11px] text-text-3">
+              {logs.length} contributing log{logs.length === 1 ? '' : 's'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-shrink-0 rounded p-1 text-text-3 hover:bg-surface-2 hover:text-text"
+          >
+            <i className="ti ti-x text-[16px]" />
+          </button>
+        </div>
+        <div className="flex-1 divide-y divide-border overflow-y-auto">
+          {logs.length === 0 ? (
+            <p className="px-4 py-6 text-center text-[12px] text-text-3">No logs yet.</p>
+          ) : (
+            logs.map((l, i) => (
+              <button
+                key={`${l.cycleId}-${i}`}
+                type="button"
+                disabled={!onOpenCycle}
+                onClick={() => {
+                  onOpenCycle?.(l.cycleId);
+                  onClose();
+                }}
+                className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-surface-2 disabled:cursor-default disabled:hover:bg-transparent"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <i
+                    className={cn(
+                      'ti flex-shrink-0 text-[15px]',
+                      l.pass ? 'ti-circle-check text-emerald-600' : 'ti-circle-x text-red-600',
+                    )}
+                  />
+                  <div className="min-w-0">
+                    <div className="truncate text-[12px] font-medium text-text">{l.label}</div>
+                    <div className="truncate text-[10.5px] text-text-3">{l.detail}</div>
+                  </div>
+                </div>
+                <span className="flex-shrink-0 text-[10.5px] text-text-3">
+                  {relativeTime(l.ts)}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StabilityBadge({ label }: { label: StabilityNode['label'] }) {
+  const cls =
+    label === 'Stable'
+      ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+      : label === 'At Risk'
+        ? 'bg-amber-50 text-amber-700 ring-amber-200'
+        : label === 'Unstable'
+          ? 'bg-red-50 text-red-700 ring-red-200'
+          : 'bg-slate-100 text-slate-500 ring-slate-200';
+  return (
+    <span
+      className={cn(
+        'inline-flex flex-shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ring-1',
+        cls,
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function StabilityStats({ node, compact }: { node: StabilityNode; compact?: boolean }) {
+  if (node.total === 0) {
+    return <span className="flex-shrink-0 text-[11px] text-text-3">No data yet</span>;
+  }
+  const trendIcon =
+    node.trend === 'up'
+      ? 'ti-trending-up'
+      : node.trend === 'down'
+        ? 'ti-trending-down'
+        : 'ti-minus';
+  const trendColor =
+    node.trend === 'up'
+      ? 'text-emerald-600'
+      : node.trend === 'down'
+        ? 'text-red-600'
+        : 'text-text-3';
+  return (
+    <div className="flex flex-shrink-0 items-center gap-3">
+      {!compact && (
+        <span className="text-[11px] text-text-3">
+          {node.passed}/{node.total} passed
+        </span>
+      )}
+      <i
+        className={cn('ti', trendIcon, trendColor, 'text-[13px]')}
+        title={`Trend: ${node.trend}`}
+      />
+      <span
+        className={cn(
+          'w-9 text-right text-[12px] font-semibold',
+          node.passRate >= 90
+            ? 'text-emerald-700'
+            : node.passRate >= 70
+              ? 'text-amber-700'
+              : 'text-red-700',
+        )}
+      >
+        {node.passRate}%
+      </span>
+      <span className="w-16 flex-shrink-0 text-right text-[10.5px] text-text-3">
+        {node.lastActivity ? relativeTime(node.lastActivity) : '—'}
+      </span>
     </div>
   );
 }

@@ -8,3 +8,4 @@ dist/
 .env.import
 *.log
 .DS_Store
+.claude/

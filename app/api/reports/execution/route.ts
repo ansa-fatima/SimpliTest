@@ -10,6 +10,10 @@ import { ok, serverError } from '@/lib/api';
 //   ?days=7|30|90|365|all   window size (default 30)
 //
 // Powers the "Execution" report shown in the design — KPI tiles + daily bar chart.
+// Blends CaseBased TestRuns with Manual quick logs (their own issueCount === 0 →
+// Pass verdict) — same convention as the Dashboard and Stability report — so a
+// workspace that's mostly quick-logged doesn't show 0% here. Quick logs have no
+// per-run tester, so they're left out entirely when a `tester` filter is active.
 export async function GET(req: Request) {
   try {
     const sp = new URL(req.url).searchParams;
@@ -41,14 +45,60 @@ export async function GET(req: Request) {
     }
     if (tester) where.executedBy = tester;
 
-    const runs = await prisma.testRun.findMany({
-      where,
-      select: { result: true, executedAt: true, executedBy: true },
-    });
+    // Modules/suites under the active portal — needed to attribute Module/Suite
+    // -scoped quick logs to the same portal filter as the TestRun query above.
+    let portalModuleIds: Set<string> | null = null;
+    let portalSuiteIds: Set<string> | null = null;
+    if (portalId && !cycleId) {
+      const mods = await prisma.module.findMany({
+        where: { portalId },
+        select: { id: true, suites: { select: { id: true } } },
+      });
+      portalModuleIds = new Set(mods.map(m => m.id));
+      portalSuiteIds = new Set(mods.flatMap(m => m.suites.map(s => s.id)));
+    }
 
-    const executed = runs.length;
-    const passed = runs.filter(r => r.result === 'Passed').length;
-    const failed = runs.filter(r => r.result === 'Failed').length;
+    const [runs, manualLogsRaw] = await Promise.all([
+      prisma.testRun.findMany({
+        where,
+        select: { result: true, executedAt: true, executedBy: true },
+      }),
+      tester
+        ? Promise.resolve([])
+        : prisma.testCycle.findMany({
+            where: {
+              mode: 'Manual',
+              ...(cycleId ? { id: cycleId } : projectId ? { projectId } : {}),
+            },
+            select: {
+              completedAt: true,
+              createdAt: true,
+              issueCount: true,
+              scopeType: true,
+              scopeId: true,
+            },
+          }),
+    ]);
+
+    const manualLogs = manualLogsRaw.filter(l => {
+      const t = l.completedAt ?? l.createdAt;
+      if (t < from || t > now) return false;
+      if (portalId && !cycleId) {
+        if (l.scopeType === 'Portal') return l.scopeId === portalId;
+        if (l.scopeType === 'Module') return !!l.scopeId && portalModuleIds!.has(l.scopeId);
+        if (l.scopeType === 'Suite') return !!l.scopeId && portalSuiteIds!.has(l.scopeId);
+        return false; // All/Custom-scoped logs don't point at this specific portal
+      }
+      return true;
+    });
+    const manualPass = (l: (typeof manualLogs)[number]) => (l.issueCount ?? 0) === 0;
+
+    const executed = runs.length + manualLogs.length;
+    const passed =
+      runs.filter(r => r.result === 'Passed').length + manualLogs.filter(manualPass).length;
+    const failed =
+      runs.filter(r => r.result === 'Failed').length +
+      manualLogs.filter(l => !manualPass(l)).length;
     const blocked = runs.filter(r => r.result === 'Blocked').length;
     const skipped = runs.filter(r => r.result === 'Skipped').length;
     const passRate = executed === 0 ? 0 : Math.round((passed / executed) * 100);
@@ -91,6 +141,15 @@ export async function GET(req: Request) {
       else if (r.result === 'Failed') b.fail++;
       else if (r.result === 'Blocked') b.blocked++;
       else if (r.result === 'Skipped') b.skipped++;
+    }
+    // Quick logs don't have a Blocked/Skipped concept — just their own verdict.
+    for (const l of manualLogs) {
+      const t = l.completedAt ?? l.createdAt;
+      const b = buckets.find(b => t >= b.from && t < b.to);
+      if (!b) continue;
+      b.total++;
+      if (manualPass(l)) b.pass++;
+      else b.fail++;
     }
     const daily = buckets.map(b => ({
       label: b.label,

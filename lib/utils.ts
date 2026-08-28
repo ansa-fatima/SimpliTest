@@ -84,3 +84,47 @@ export function todayStr(): string {
     year: 'numeric',
   });
 }
+
+// LOCAL calendar date as "YYYY-MM-DD" — for <input type="date"> value/max.
+// NOT the same as `new Date().toISOString().slice(0, 10)`, which reads the
+// UTC date and drifts to the wrong day for part of the day at UTC+ offsets
+// (e.g. a Pakistan user at 2am local is still on "yesterday" in UTC).
+export function localDateStr(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function startOfLocalDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+// Canonical "time ago" formatter. Same calendar day → minute/hour precision
+// (meaningful only when the source timestamp carries a real time-of-day).
+// Different calendar day → day-level granularity instead of raw hour math,
+// since many timestamps here (back-dated quick logs) are date-only and
+// anchored to local midnight — hour math off midnight reads as misleading
+// ("8h ago" for something logged as "today").
+export function relativeTime(iso: string): string {
+  const now = new Date();
+  const ts = new Date(iso);
+
+  if (now.toDateString() === ts.toDateString()) {
+    const min = Math.floor((now.getTime() - ts.getTime()) / 60_000);
+    if (min < 1) return 'just now';
+    if (min < 60) return `${min}m ago`;
+    return `${Math.floor(min / 60)}h ago`;
+  }
+
+  const dayDiff = Math.round(
+    (startOfLocalDay(now).getTime() - startOfLocalDay(ts).getTime()) / 86_400_000,
+  );
+  if (dayDiff <= 1) return 'yesterday';
+  if (dayDiff < 30) return `${dayDiff}d ago`;
+  const months = Math.floor(dayDiff / 30);
+  if (months < 12) return `${months}mo ago`;
+  return ts.toLocaleDateString();
+}

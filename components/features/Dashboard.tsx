@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
-import { cn } from '@/lib/utils';
+import { cn, relativeTime } from '@/lib/utils';
 import { useTheme } from '@/lib/theme';
 
 interface RecentCycle {
@@ -31,7 +31,6 @@ interface DashboardData {
   passRate: { current: number; prev: number; delta: number };
   openFailures: { total: number; newToday: number };
   weeklyRuns: { label: string; pass: number; fail: number; blocked: number; skipped: number }[];
-  casesByModule: { name: string; count: number }[];
   moduleStability: { name: string; passRate: number | null; totalRuns: number }[];
   recentCycles: RecentCycle[];
 }
@@ -102,17 +101,7 @@ export function Dashboard({ onShowTestRuns, onOpenCycle, projectId }: DashboardP
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
       {/* Topbar */}
-      <div className="flex items-center gap-3 border-b border-border bg-surface px-6 py-3">
-        <div className="flex max-w-[480px] flex-1 cursor-pointer items-center gap-2 rounded-[7px] border border-transparent bg-surface-2 px-3 py-1.5 text-[13px] text-text-3 transition-colors hover:border-border">
-          <i className="ti ti-search text-[16px]" />
-          <span>Search cases, runs, defects…</span>
-          <kbd className="ml-auto rounded border border-border bg-surface px-1.5 py-px font-mono text-[11px]">
-            ⌘K
-          </kbd>
-        </div>
-        <button className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-[7px] border border-border bg-surface text-text-2 transition-all hover:bg-surface-2 hover:text-text">
-          <i className="ti ti-bell text-[17px]" />
-        </button>
+      <div className="flex items-center justify-end gap-3 border-b border-border bg-surface px-6 py-3">
         <button
           type="button"
           onClick={toggleTheme}
@@ -134,24 +123,12 @@ export function Dashboard({ onShowTestRuns, onOpenCycle, projectId }: DashboardP
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-8 py-6">
         {/* Page header */}
-        <div className="mb-6 flex items-start justify-between">
-          <div>
-            <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
-              {greeting} 👋
-            </h1>
-            <div className="text-[13px] text-text-2">
-              Here&apos;s what&apos;s happening across QA today.
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <button className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text hover:bg-surface-2">
-              <i className="ti ti-calendar text-[16px]" />
-              Last 7 days
-            </button>
-            <button className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text hover:bg-surface-2">
-              <i className="ti ti-filter text-[16px]" />
-              All modules
-            </button>
+        <div className="mb-6">
+          <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
+            {greeting} 👋
+          </h1>
+          <div className="text-[13px] text-text-2">
+            Here&apos;s what&apos;s happening across QA today.
           </div>
         </div>
 
@@ -169,7 +146,7 @@ export function Dashboard({ onShowTestRuns, onOpenCycle, projectId }: DashboardP
             label="Pass rate"
             value={`${data.passRate.current}%`}
             delta={
-              data.passRate.prev === 0
+              data.runs30d.prev === 0
                 ? 'no prev data'
                 : `${data.passRate.delta >= 0 ? '↑' : '↓'} ${Math.abs(data.passRate.delta)}% vs prev`
             }
@@ -519,17 +496,4 @@ function Avatar({ name, status }: { name: string; status: string }) {
       {initial}
     </span>
   );
-}
-
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60_000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return `${d}d`;
-  const mo = Math.floor(d / 30);
-  return `${mo}mo`;
 }

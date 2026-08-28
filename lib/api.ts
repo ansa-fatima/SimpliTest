@@ -9,10 +9,12 @@ export const notFound = (error = 'Not found') => NextResponse.json({ error }, { 
 
 export const conflict = (error: string) => NextResponse.json({ error }, { status: 409 });
 
+// Never forwards the raw error to the client — it can carry internal details
+// (DB hostnames, stack traces, driver errors). Full detail still goes to the
+// server log for debugging; the client only ever sees a generic message.
 export function serverError(error: unknown) {
   console.error('[api]', error);
-  const msg = error instanceof Error ? error.message : 'Internal server error';
-  return NextResponse.json({ error: msg }, { status: 500 });
+  return NextResponse.json({ error: 'Something went wrong. Please try again.' }, { status: 500 });
 }
 
 /** Translate common Prisma error codes to HTTP responses. Returns null if unknown. */

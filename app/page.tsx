@@ -6,7 +6,6 @@ import { LoginPage } from '@/components/features/LoginPage';
 import { TestCaseList } from '@/components/features/TestCaseList';
 import { TestCaseView } from '@/components/features/TestCaseView';
 import { TestCaseEdit } from '@/components/features/TestCaseEdit';
-import { TestCaseCreate } from '@/components/features/TestCaseCreate';
 import { CyclesList } from '@/components/features/CyclesList';
 import { CycleView } from '@/components/features/CycleView';
 import { Dashboard } from '@/components/features/Dashboard';
@@ -26,12 +25,9 @@ export default function Home() {
     navFeature,
     viewTC,
     showEdit,
-    showCreate,
-    cancelCreate,
     saveEdit,
     deleteTC,
     duplicateTC,
-    createTC,
     addModule,
     addFeature,
     deleteModule,
@@ -152,6 +148,7 @@ export default function Home() {
             projectId={currentProjectId}
             projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
             portals={portals}
+            onOpenCycle={openCycle}
           />
         )}
 
@@ -258,19 +255,9 @@ export default function Home() {
             projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
             currentKey={currentKey}
             onNavigate={navFeature}
-            onShowCreate={showCreate}
+            authorName={user?.name || user?.username || 'You'}
             onOpenCase={viewApiCase}
             dataVersion={dataVersion}
-          />
-        )}
-
-        {page === 'create' && (
-          <TestCaseCreate
-            modules={modules}
-            defaultModule={currentKey.split(':')[0]}
-            defaultFeature={currentKey.split(':')[1]}
-            onCancel={cancelCreate}
-            onSave={createTC}
           />
         )}
 
@@ -294,8 +281,7 @@ export default function Home() {
         {page === 'edit' && currentTC && (
           <TestCaseEdit
             tc={currentTC}
-            modules={modules}
-            currentKey={currentKey}
+            projectId={currentProjectId}
             onBack={() => viewTC(currentTC.id)}
             onSave={saveEdit}
           />

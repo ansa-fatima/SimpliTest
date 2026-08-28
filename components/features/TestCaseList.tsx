@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ApiTestCase, CaseStatus, Priority, TestType, UserSummary } from '@/types';
+import { ApiTestCase, CaseStatus, Priority, Severity, TestType, UserSummary } from '@/types';
 import { api } from '@/lib/client';
 import { exportApiTestCases } from '@/lib/export';
 import { ImportCsvModal } from '@/components/features/ImportCsvModal';
+import { NewTestCaseModal } from '@/components/features/NewTestCaseModal';
 import { TruncatedText } from '@/components/ui/TruncatedText';
 import { avatarColour, cn, initials, priorityBadge, statusBadge, typeBadge } from '@/lib/utils';
 
@@ -45,7 +46,8 @@ interface TestCaseListProps {
   currentKey: string;
   /** Existing useStore action — called when a suite is picked in the in-page tree. */
   onNavigate: (modName: string, featName: string) => void;
-  onShowCreate: () => void;
+  /** Current user's display name — recorded as the author on cases created here. */
+  authorName: string;
   /** Row click — opens the detail screen. Receives the clicked case and the current page list. */
   onOpenCase: (apiCase: ApiTestCase, list: ApiTestCase[]) => void;
   /** Bumped by useStore on create/edit/delete — triggers list re-fetch. */
@@ -53,8 +55,11 @@ interface TestCaseListProps {
 }
 
 const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
+const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
 const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
 const STATUSES: CaseStatus[] = ['Active', 'Draft', 'Archived'];
+const MODAL_SELECT_CLS =
+  'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100';
 
 // "All" is a soft cap that matches the API's hard limit (5000).
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 5000] as const;
@@ -68,7 +73,7 @@ export function TestCaseList({
   projectName,
   currentKey,
   onNavigate,
-  onShowCreate,
+  authorName,
   onOpenCase,
   dataVersion = 0,
 }: TestCaseListProps) {
@@ -227,6 +232,9 @@ export function TestCaseList({
         : (activeNode?.portal.id ?? null);
   useEffect(() => {
     setPage(1);
+    // A selection made on one suite/page shouldn't silently carry over and
+    // get bulk-deleted after the user navigates somewhere else.
+    setSelected(new Set());
   }, [priorityF, statusF, typeF, ownerF, search, activeSelectionKey, pageSize]);
 
   // ─── Cases (server fetch) ──────────────────────────────────
@@ -235,6 +243,20 @@ export function TestCaseList({
   const [totalPages, setTotalPages] = useState(1);
   const [casesLoading, setCasesLoading] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
+  const [showBulkMove, setShowBulkMove] = useState(false);
+  const [showBulkEdit, setShowBulkEdit] = useState(false);
+
+  // Close the per-row "Actions" menu when clicking outside it.
+  useEffect(() => {
+    if (!openRowMenu) return;
+    const h = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest('[data-row-menu]')) setOpenRowMenu(null);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [openRowMenu]);
 
   const fetchCases = useCallback(async () => {
     if (!activeNode) {
@@ -319,6 +341,7 @@ export function TestCaseList({
     | { kind: 'suite'; id: string; name: string; sourceModuleId: string; sourcePortalId: string };
   const [copyTarget, setCopyTarget] = useState<CopyTarget | null>(null);
   const [showImport, setShowImport] = useState(false);
+  const [showNewCase, setShowNewCase] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   // ─── Actions ───────────────────────────────────────────────
@@ -505,6 +528,93 @@ export function TestCaseList({
       await reloadTree();
     } catch (e) {
       alert(`Delete failed: ${(e as Error).message}`);
+    }
+  };
+
+  // Single-row actions (the "…" menu on each test case row).
+  const deleteCase = async (tc: ApiTestCase) => {
+    setOpenRowMenu(null);
+    if (!window.confirm(`Delete "${tc.title}"?\n\nThis cannot be undone.`)) return;
+    try {
+      await api.del(`/api/test-cases/${tc.id}`);
+      await Promise.all([reloadTree(), fetchCases()]);
+    } catch (e) {
+      alert(`Delete failed: ${(e as Error).message}`);
+    }
+  };
+  const duplicateCase = async (tc: ApiTestCase) => {
+    setOpenRowMenu(null);
+    try {
+      await api.post('/api/test-cases/bulk', { action: 'duplicate', ids: [tc.id] });
+      await Promise.all([reloadTree(), fetchCases()]);
+    } catch (e) {
+      alert(`Duplicate failed: ${(e as Error).message}`);
+    }
+  };
+
+  // Bulk actions on the checked rows.
+  const bulkDelete = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    if (
+      !window.confirm(
+        `Delete ${ids.length} test case${ids.length === 1 ? '' : 's'}?\n\nThis cannot be undone.`,
+      )
+    )
+      return;
+    setBulkBusy(true);
+    try {
+      await api.post('/api/test-cases/bulk', { action: 'delete', ids });
+      setSelected(new Set());
+      await Promise.all([reloadTree(), fetchCases()]);
+    } catch (e) {
+      alert(`Bulk delete failed: ${(e as Error).message}`);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+  const bulkDuplicate = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    try {
+      await api.post('/api/test-cases/bulk', { action: 'duplicate', ids });
+      setSelected(new Set());
+      await Promise.all([reloadTree(), fetchCases()]);
+    } catch (e) {
+      alert(`Bulk duplicate failed: ${(e as Error).message}`);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+  const bulkMove = async (suiteId: string) => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    try {
+      await api.post('/api/test-cases/bulk', { action: 'move', ids, targetSuiteId: suiteId });
+      setSelected(new Set());
+      setShowBulkMove(false);
+      await Promise.all([reloadTree(), fetchCases()]);
+    } catch (e) {
+      alert(`Bulk move failed: ${(e as Error).message}`);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+  const bulkEdit = async (patch: Partial<Record<'priority' | 'severity' | 'type', string>>) => {
+    const ids = Array.from(selected);
+    if (ids.length === 0 || Object.keys(patch).length === 0) return;
+    setBulkBusy(true);
+    try {
+      await api.post('/api/test-cases/bulk', { action: 'update', ids, patch });
+      setSelected(new Set());
+      setShowBulkEdit(false);
+      await Promise.all([reloadTree(), fetchCases()]);
+    } catch (e) {
+      alert(`Bulk edit failed: ${(e as Error).message}`);
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -816,7 +926,7 @@ export function TestCaseList({
             </button>
             <button
               type="button"
-              onClick={onShowCreate}
+              onClick={() => setShowNewCase(true)}
               disabled={!activeNode}
               className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-[7px] text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -965,7 +1075,7 @@ export function TestCaseList({
                                     <Chevron open={mOpen} />
                                   </button>
                                 }
-                                icon={<i className="ti ti-folder text-[14px] text-text-3" />}
+                                icon={<i className="ti ti-folder-filled text-[13px] text-text-3" />}
                                 label={mod.name}
                                 suffix={
                                   mod._count && mod._count.testCases > 0 ? (
@@ -1047,7 +1157,7 @@ export function TestCaseList({
                           <div className="ml-3">
                             <InlineRow
                               indent={1}
-                              icon="ti-folder"
+                              icon="ti-folder-filled"
                               placeholder="Module name…"
                               draft={edit.draft}
                               setDraft={v => setEdit(e => (e ? { ...e, draft: v } : e))}
@@ -1183,6 +1293,59 @@ export function TestCaseList({
               />
             ) : (
               <>
+                {selected.size > 0 && (
+                  <div className="mb-3 flex items-center gap-3 rounded-lg border border-primary/30 bg-primary-light/40 px-3 py-2 text-[13px]">
+                    <span className="font-medium text-primary-text">
+                      {selected.size} case{selected.size === 1 ? '' : 's'} selected
+                    </span>
+                    <div className="ml-auto flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowBulkEdit(true)}
+                        disabled={bulkBusy}
+                        className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-2.5 py-1 text-[12px] text-text hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <i className="ti ti-pencil text-[13px]" />
+                        Edit fields
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowBulkMove(true)}
+                        disabled={bulkBusy}
+                        className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-2.5 py-1 text-[12px] text-text hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <i className="ti ti-folder-symlink text-[13px]" />
+                        Move to…
+                      </button>
+                      <button
+                        type="button"
+                        onClick={bulkDuplicate}
+                        disabled={bulkBusy}
+                        className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-2.5 py-1 text-[12px] text-text hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <i className="ti ti-copy text-[13px]" />
+                        Duplicate
+                      </button>
+                      <button
+                        type="button"
+                        onClick={bulkDelete}
+                        disabled={bulkBusy}
+                        className="inline-flex items-center gap-1.5 rounded-[7px] border border-danger/30 bg-surface px-2.5 py-1 text-[12px] text-danger hover:bg-danger-bg disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <i className="ti ti-trash text-[13px]" />
+                        Delete
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelected(new Set())}
+                        title="Clear selection"
+                        className="rounded p-1 text-text-3 hover:bg-surface-2 hover:text-text"
+                      >
+                        <i className="ti ti-x text-[14px]" />
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="overflow-hidden rounded-lg border border-border bg-surface">
                   <table className="w-full table-fixed border-collapse text-[13px]">
                     <thead className="bg-surface-2">
@@ -1227,14 +1390,47 @@ export function TestCaseList({
                             <td className="px-4 py-3">
                               <Pill className={typeBadge(tc.type)}>{tc.type}</Pill>
                             </td>
-                            <td className="px-2 py-3 text-right">
+                            <td
+                              className="relative px-2 py-3 text-right"
+                              onClick={e => e.stopPropagation()}
+                              data-row-menu
+                            >
                               <button
                                 type="button"
                                 title="Actions"
-                                className="invisible rounded p-1 text-text-3 transition-colors hover:bg-surface-3 hover:text-text group-hover:visible"
+                                onClick={() => setOpenRowMenu(m => (m === tc.id ? null : tc.id))}
+                                className={cn(
+                                  'rounded p-1 text-text-3 transition-colors hover:bg-surface-3 hover:text-text',
+                                  openRowMenu === tc.id
+                                    ? 'visible bg-surface-3 text-text'
+                                    : 'invisible group-hover:visible',
+                                )}
                               >
                                 <i className="ti ti-dots-vertical text-[14px]" />
                               </button>
+                              {openRowMenu === tc.id && (
+                                <div className="absolute right-2 top-full z-20 mt-1 w-36 overflow-hidden rounded-lg border border-border bg-surface py-1 text-left shadow-lg">
+                                  <RowMenuItem
+                                    icon="ti-eye"
+                                    label="View"
+                                    onClick={() => {
+                                      setOpenRowMenu(null);
+                                      onOpenCase(tc, cases);
+                                    }}
+                                  />
+                                  <RowMenuItem
+                                    icon="ti-copy"
+                                    label="Duplicate"
+                                    onClick={() => duplicateCase(tc)}
+                                  />
+                                  <RowMenuItem
+                                    icon="ti-trash"
+                                    label="Delete"
+                                    danger
+                                    onClick={() => deleteCase(tc)}
+                                  />
+                                </div>
+                              )}
                             </td>
                           </tr>
                         );
@@ -1331,6 +1527,42 @@ export function TestCaseList({
           onImported={async () => {
             await reloadTree();
           }}
+        />
+      )}
+
+      {showNewCase && activeNode && (
+        <NewTestCaseModal
+          tree={tree}
+          initial={{
+            portalId: activeNode.portal.id,
+            moduleId: activeNode.kind !== 'portal' ? activeNode.module.id : undefined,
+            suiteId: activeNode.kind === 'suite' ? activeNode.suite.id : undefined,
+          }}
+          authorName={authorName}
+          onClose={() => setShowNewCase(false)}
+          onCreated={async () => {
+            setShowNewCase(false);
+            await Promise.all([reloadTree(), fetchCases()]);
+          }}
+        />
+      )}
+
+      {showBulkMove && (
+        <BulkMoveModal
+          tree={tree}
+          count={selected.size}
+          busy={bulkBusy}
+          onClose={() => setShowBulkMove(false)}
+          onMove={bulkMove}
+        />
+      )}
+
+      {showBulkEdit && (
+        <BulkEditModal
+          count={selected.size}
+          busy={bulkBusy}
+          onClose={() => setShowBulkEdit(false)}
+          onSave={bulkEdit}
         />
       )}
     </div>
@@ -1581,6 +1813,274 @@ function CheckBox({ checked, onChange }: { checked: boolean; onChange: () => voi
         />
       )}
     </button>
+  );
+}
+
+function RowMenuItem({
+  icon,
+  label,
+  onClick,
+  danger,
+}: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] transition-colors',
+        danger ? 'text-danger hover:bg-danger-bg' : 'text-text hover:bg-surface-2',
+      )}
+    >
+      <i className={cn('ti', icon, 'text-[13px]')} />
+      {label}
+    </button>
+  );
+}
+
+// Flattens a suite's nested children into one pickable list, indenting nested
+// names with " / " so a deeply-nested suite is still identifiable in a flat
+// <select> (move/edit targets don't need the full tree UI, just a valid pick).
+function flattenSuites(suites: ApiSuite[], prefix = ''): { id: string; label: string }[] {
+  return suites.flatMap(s => [
+    { id: s.id, label: prefix + s.name },
+    ...flattenSuites(s.children, `${prefix}${s.name} / `),
+  ]);
+}
+
+function BulkMoveModal({
+  tree,
+  count,
+  busy,
+  onClose,
+  onMove,
+}: {
+  tree: ApiPortal[];
+  count: number;
+  busy: boolean;
+  onClose: () => void;
+  onMove: (suiteId: string) => void;
+}) {
+  const [portalId, setPortalId] = useState('');
+  const [moduleId, setModuleId] = useState('');
+  const [suiteId, setSuiteId] = useState('');
+
+  const portal = tree.find(p => p.id === portalId);
+  const modules = portal?.modules ?? [];
+  const mod = modules.find(m => m.id === moduleId);
+  const suites = mod ? flattenSuites(mod.suites) : [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-[440px] rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-base font-bold text-slate-900">
+            Move {count} case{count === 1 ? '' : 's'}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded p-1 text-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold text-slate-500">Portal</span>
+            <select
+              value={portalId}
+              onChange={e => {
+                setPortalId(e.target.value);
+                setModuleId('');
+                setSuiteId('');
+              }}
+              className={MODAL_SELECT_CLS}
+            >
+              <option value="">Select a portal…</option>
+              {tree.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold text-slate-500">Module</span>
+            <select
+              value={moduleId}
+              disabled={!portal}
+              onChange={e => {
+                setModuleId(e.target.value);
+                setSuiteId('');
+              }}
+              className={MODAL_SELECT_CLS}
+            >
+              <option value="">Select a module…</option>
+              {modules.map(m => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold text-slate-500">Feature</span>
+            <select
+              value={suiteId}
+              disabled={!mod}
+              onChange={e => setSuiteId(e.target.value)}
+              className={MODAL_SELECT_CLS}
+            >
+              <option value="">Select a feature…</option>
+              {suites.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="text-[11px] text-slate-400">
+            Cases move to the selected feature — a feature (not a module or portal) is required as
+            the destination.
+          </p>
+        </div>
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => suiteId && onMove(suiteId)}
+            disabled={busy || !suiteId}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy && <i className="ti ti-loader-2 animate-spin text-[13px]" />}
+            Move
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BulkEditModal({
+  count,
+  busy,
+  onClose,
+  onSave,
+}: {
+  count: number;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (patch: Partial<Record<'priority' | 'severity' | 'type', string>>) => void;
+}) {
+  const [priority, setPriority] = useState('');
+  const [severity, setSeverity] = useState('');
+  const [type, setType] = useState('');
+
+  const patch: Partial<Record<'priority' | 'severity' | 'type', string>> = {};
+  if (priority) patch.priority = priority;
+  if (severity) patch.severity = severity;
+  if (type) patch.type = type;
+  const hasChange = Object.keys(patch).length > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-[400px] rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-base font-bold text-slate-900">
+            Edit {count} case{count === 1 ? '' : 's'}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded p-1 text-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+          >
+            ✕
+          </button>
+        </div>
+        <p className="mb-3 text-xs text-slate-400">
+          Only the fields you change here are applied — leave a field on &quot;No change&quot; to
+          skip it.
+        </p>
+        <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold text-slate-500">Priority</span>
+            <select
+              value={priority}
+              onChange={e => setPriority(e.target.value)}
+              className={MODAL_SELECT_CLS}
+            >
+              <option value="">No change</option>
+              {PRIORITIES.map(p => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold text-slate-500">Severity</span>
+            <select
+              value={severity}
+              onChange={e => setSeverity(e.target.value)}
+              className={MODAL_SELECT_CLS}
+            >
+              <option value="">No change</option>
+              {SEVERITIES.map(s => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold text-slate-500">Type</span>
+            <select
+              value={type}
+              onChange={e => setType(e.target.value)}
+              className={MODAL_SELECT_CLS}
+            >
+              <option value="">No change</option>
+              {TYPES.map(t => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => hasChange && onSave(patch)}
+            disabled={busy || !hasChange}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy && <i className="ti ti-loader-2 animate-spin text-[13px]" />}
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

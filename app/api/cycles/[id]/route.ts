@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { CycleStatus } from '@prisma/client';
+import { CycleStatus, CycleScopeType } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
 interface Ctx {
@@ -7,6 +7,7 @@ interface Ctx {
 }
 
 const STATUSES: CycleStatus[] = ['Active', 'Completed', 'Archived'];
+const SCOPE_TYPES: CycleScopeType[] = ['All', 'Portal', 'Module', 'Suite', 'Custom'];
 
 // GET /api/cycles/:id
 export async function GET(_req: Request, { params }: Ctx) {
@@ -47,6 +48,15 @@ export async function PATCH(req: Request, { params }: Ctx) {
     }
     if (body.completedAt !== undefined) {
       data.completedAt = body.completedAt ? new Date(body.completedAt as string) : null;
+    }
+
+    // Scope (Manual-mode quick logs use this to feed the Stability report).
+    if (body.scopeType !== undefined) {
+      if (!SCOPE_TYPES.includes(body.scopeType as CycleScopeType)) return bad('invalid scopeType');
+      const scopeType = body.scopeType as CycleScopeType;
+      data.scopeType = scopeType;
+      data.scopeId =
+        scopeType === 'All' || scopeType === 'Custom' ? null : (body.scopeId as string) || null;
     }
 
     // Manual-mode free-text fields (passing null clears; passing string sets).

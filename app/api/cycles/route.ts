@@ -45,18 +45,25 @@ export async function GET(req: Request) {
         ? Promise.resolve([])
         : prisma.module.findMany({
             where: { id: { in: moduleIds } },
-            select: { id: true, name: true },
+            select: { id: true, name: true, portal: { select: { name: true } } },
           }),
       suiteIds.length === 0
         ? Promise.resolve([])
         : prisma.suite.findMany({
             where: { id: { in: suiteIds } },
-            select: { id: true, name: true, module: { select: { name: true } } },
+            select: {
+              id: true,
+              name: true,
+              module: { select: { name: true, portal: { select: { name: true } } } },
+            },
           }),
     ]);
     const portalNameById = new Map(portalsById.map(p => [p.id, p.name]));
     const moduleNameById = new Map(modulesById.map(m => [m.id, m.name]));
+    const modulePortalNameById = new Map(modulesById.map(m => [m.id, m.portal.name]));
     const suiteNameById = new Map(suitesById.map(s => [s.id, `${s.module.name} / ${s.name}`]));
+    const suiteModuleNameById = new Map(suitesById.map(s => [s.id, s.module.name]));
+    const suitePortalNameById = new Map(suitesById.map(s => [s.id, s.module.portal.name]));
 
     const enriched = cycles.map(c => {
       const counts = { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
@@ -76,7 +83,33 @@ export async function GET(req: Request) {
       else if (c.scopeType === 'Suite' && c.scopeId)
         scopeName = suiteNameById.get(c.scopeId) ?? null;
 
-      return { ...rest, scopeName, summary: { total, done, percent, counts } };
+      // Portal/module name, resolved for BOTH modes. CaseBased cycles never
+      // have these as DB fields, so they're always derived from scope. Manual
+      // quick logs carry them as free text from the picker, but the picker
+      // lets a module/suite be picked without its portal, so fall back to
+      // deriving from scope there too whenever the free-text field is blank —
+      // otherwise those logs silently drop out of "sort/filter by portal".
+      let portalName = c.portalName;
+      let moduleName = c.moduleName;
+      if (c.mode !== 'Manual' || !portalName || !moduleName) {
+        if (c.scopeType === 'Portal' && c.scopeId) {
+          portalName = portalName ?? portalNameById.get(c.scopeId) ?? null;
+        } else if (c.scopeType === 'Module' && c.scopeId) {
+          moduleName = moduleName ?? moduleNameById.get(c.scopeId) ?? null;
+          portalName = portalName ?? modulePortalNameById.get(c.scopeId) ?? null;
+        } else if (c.scopeType === 'Suite' && c.scopeId) {
+          moduleName = moduleName ?? suiteModuleNameById.get(c.scopeId) ?? null;
+          portalName = portalName ?? suitePortalNameById.get(c.scopeId) ?? null;
+        }
+      }
+
+      return {
+        ...rest,
+        portalName,
+        moduleName,
+        scopeName,
+        summary: { total, done, percent, counts },
+      };
     });
 
     return ok(enriched);
@@ -135,6 +168,13 @@ export async function POST(req: Request) {
     // — saves the user a follow-up click and matches the workflow ("I ran a cycle and
     // these are the numbers"). They can still archive later.
     if (mode === 'Manual') {
+      // Scope is optional for Manual — a quick log can be logged with no module/feature
+      // picked at all. When present it must still be a valid scope type, and it's what
+      // lets the Stability report join this log to a real module/feature.
+      const scopeType: CycleScopeType =
+        body.scopeType && SCOPE_TYPES.includes(body.scopeType) ? body.scopeType : 'All';
+      const scopeId = scopeType === 'All' || scopeType === 'Custom' ? null : body.scopeId || null;
+
       const cycle = await prisma.testCycle.create({
         data: {
           name,
@@ -142,9 +182,8 @@ export async function POST(req: Request) {
           projectId: body.projectId,
           mode: 'Manual',
           status: 'Completed',
-          // For Manual, scope is irrelevant — default to 'All' (no scopeId required).
-          scopeType: 'All',
-          scopeId: null,
+          scopeType,
+          scopeId,
           targetDate: body.targetDate ? new Date(body.targetDate) : null,
           // Quick-log: completedAt defaults to today if the user didn't pick a date.
           // They can also back-date to record a cycle they ran days/weeks ago.

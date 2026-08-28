@@ -18,6 +18,8 @@ interface Member {
   status: MemberStatus;
   createdAt: string;
   lastActiveAt: string | null;
+  /** Present only for pending-invite rows — id is a synthetic `invite_<id>`, not a real user id. */
+  invite?: { token: string; expiresAt: string };
 }
 
 interface MembersPayload {
@@ -118,6 +120,18 @@ export function Members({
   };
 
   const onRemove = async (m: Member) => {
+    // Pending rows carry a synthetic `invite_<id>` id, not a real User id —
+    // revoke the invite itself instead of trying to delete a nonexistent user.
+    if (m.invite) {
+      if (!window.confirm(`Revoke the invite to ${m.email}?`)) return;
+      try {
+        await api.del(`/api/invites/${m.invite.token}`);
+        await reload();
+      } catch (e) {
+        alert(`Failed: ${(e as Error).message}`);
+      }
+      return;
+    }
     if (!window.confirm(`Remove ${m.name || m.email} from the workspace?`)) return;
     try {
       await api.del(`/api/users/${m.id}`);
@@ -451,7 +465,7 @@ function MemberRow({
               {canRemove && !isSelf && (
                 <MenuItem
                   icon="ti-trash"
-                  label="Remove from workspace"
+                  label={member.invite ? 'Revoke invite' : 'Remove from workspace'}
                   danger
                   onClick={() => {
                     setMenuOpen(false);

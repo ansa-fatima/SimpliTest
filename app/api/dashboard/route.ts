@@ -3,6 +3,11 @@ import { ok, serverError } from '@/lib/api';
 
 // GET /api/dashboard?projectId=...
 // Returns stats + chart data for the home dashboard, optionally scoped to a project.
+//
+// Every metric here blends two signals, same convention as the Stability
+// report: CaseBased TestRuns (Passed/Failed) AND Manual quick logs (their own
+// issueCount === 0 → Pass verdict). A workspace that's mostly quick-logged
+// would otherwise show 0% everywhere despite plenty of real activity.
 export async function GET(req: Request) {
   try {
     const projectId = new URL(req.url).searchParams.get('projectId') || undefined;
@@ -34,8 +39,8 @@ export async function GET(req: Request) {
       openFailures,
       newFailuresToday,
       modules,
-      casesByModule,
       allRuns,
+      manualLogs,
       recentCyclesRaw,
     ] = await Promise.all([
       prisma.testCase.count({ where: wsCase }),
@@ -45,11 +50,7 @@ export async function GET(req: Request) {
           NOT: { result: 'NotRun' },
           testCase: wsCase,
         },
-        select: {
-          result: true,
-          executedAt: true,
-          testCase: { select: { suite: { select: { module: { select: { name: true } } } } } },
-        },
+        select: { result: true, executedAt: true },
       }),
       prisma.testRun.findMany({
         where: {
@@ -63,7 +64,11 @@ export async function GET(req: Request) {
         where: { result: 'Failed', cycle: { status: 'Active', ...wsCycle } },
       }),
       prisma.testRun.count({
-        where: { result: 'Failed', executedAt: { gte: todayStart }, cycle: wsCycle },
+        where: {
+          result: 'Failed',
+          executedAt: { gte: todayStart },
+          cycle: { status: 'Active', ...wsCycle },
+        },
       }),
       prisma.module.findMany({
         where: projectId ? { portal: { projectId } } : undefined,
@@ -75,6 +80,7 @@ export async function GET(req: Request) {
           // Plus cases nested in suites below this module
           suites: {
             select: {
+              id: true,
               testCases: {
                 select: {
                   id: true,
@@ -85,17 +91,22 @@ export async function GET(req: Request) {
           },
         },
       }),
-      prisma.module.findMany({
-        where: projectId ? { portal: { projectId } } : undefined,
-        select: {
-          name: true,
-          _count: { select: { testCases: true } },
-          suites: { select: { _count: { select: { testCases: true } } } },
-        },
-      }),
       prisma.testRun.findMany({
         where: { executedAt: { not: null }, cycle: wsCycle },
         select: { result: true, executedAt: true },
+      }),
+      // All Manual (quick-log) cycles — reused for the 30d pass rate, the 8-week
+      // trend, and per-module stability. Unwindowed here; each derivation below
+      // filters by date itself.
+      prisma.testCycle.findMany({
+        where: { mode: 'Manual', ...wsCycle },
+        select: {
+          completedAt: true,
+          createdAt: true,
+          issueCount: true,
+          scopeType: true,
+          scopeId: true,
+        },
       }),
       prisma.testCycle.findMany({
         where: { status: { not: 'Archived' }, ...wsCycle },
@@ -141,13 +152,22 @@ export async function GET(req: Request) {
     const recentModuleMap = new Map(recentModules.map(m => [m.id, m.name]));
     const recentSuiteMap = new Map(recentSuites.map(s => [s.id, `${s.module.name} / ${s.name}`]));
 
-    // Pass rate for 30d window
-    const passed30d = runs30d.filter(r => r.result === 'Passed').length;
-    const passRate = runs30d.length === 0 ? 0 : Math.round((passed30d / runs30d.length) * 100);
+    const logTs = (l: { completedAt: Date | null; createdAt: Date }) =>
+      l.completedAt ?? l.createdAt;
+    const logPass = (l: { issueCount: number | null }) => (l.issueCount ?? 0) === 0;
+    const manualCurrent = manualLogs.filter(l => logTs(l) >= thirtyDaysAgo);
+    const manualPrev = manualLogs.filter(l => logTs(l) >= sixtyDaysAgo && logTs(l) < thirtyDaysAgo);
 
-    const passedPrev = runsPrev30d.filter(r => r.result === 'Passed').length;
-    const passRatePrev =
-      runsPrev30d.length === 0 ? 0 : Math.round((passedPrev / runsPrev30d.length) * 100);
+    // Pass rate for 30d window — CaseBased runs + quick logs, blended.
+    const passed30d =
+      runs30d.filter(r => r.result === 'Passed').length + manualCurrent.filter(logPass).length;
+    const total30d = runs30d.length + manualCurrent.length;
+    const passRate = total30d === 0 ? 0 : Math.round((passed30d / total30d) * 100);
+
+    const passedPrev =
+      runsPrev30d.filter(r => r.result === 'Passed').length + manualPrev.filter(logPass).length;
+    const totalPrev = runsPrev30d.length + manualPrev.length;
+    const passRatePrev = totalPrev === 0 ? 0 : Math.round((passedPrev / totalPrev) * 100);
 
     // 8-week window: bucket by ISO week starting Monday
     const weeks: {
@@ -178,6 +198,14 @@ export async function GET(req: Request) {
       else if (r.result === 'Blocked') w.blocked++;
       else if (r.result === 'Skipped') w.skipped++;
     }
+    // Quick logs don't have a Blocked/Skipped concept — just their own Pass/Fail verdict.
+    for (const l of manualLogs) {
+      const t = logTs(l);
+      const w = weeks.find(w => t >= w.start && t < w.end);
+      if (!w) continue;
+      if (logPass(l)) w.pass++;
+      else w.fail++;
+    }
     const weeklyRuns = weeks.map(w => ({
       label: w.label,
       pass: w.pass,
@@ -186,17 +214,10 @@ export async function GET(req: Request) {
       skipped: w.skipped,
     }));
 
-    // Cases by module (donut) — count direct cases plus everything in nested suites.
-    const casesByMod = casesByModule
-      .map(m => ({
-        name: m.name,
-        count: m._count.testCases + m.suites.reduce((sum, s) => sum + s._count.testCases, 0),
-      }))
-      .filter(m => m.count > 0);
-
-    // Module stability — pass rate per module across all (non-NotRun) runs.
-    // Walks direct module cases AND cases nested in this module's suites.
-    // Filtered to modules that actually have runs — empty bars are noise.
+    // Module stability — pass rate per module across all (non-NotRun) runs,
+    // plus quick logs scoped to that module or one of its suites (matches the
+    // Stability report's attribution — logs scoped to All/Portal/Custom don't
+    // point at a specific module, so they're not counted here).
     const moduleStability = modules
       .map(m => {
         let total = 0,
@@ -209,8 +230,17 @@ export async function GET(req: Request) {
           }
         };
         for (const tc of m.testCases) walkCase(tc.runs);
+        const suiteIds = new Set(m.suites.map(s => s.id));
         for (const s of m.suites) {
           for (const tc of s.testCases) walkCase(tc.runs);
+        }
+        for (const l of manualLogs) {
+          const scoped =
+            (l.scopeType === 'Module' && l.scopeId === m.id) ||
+            (l.scopeType === 'Suite' && l.scopeId && suiteIds.has(l.scopeId));
+          if (!scoped) continue;
+          total++;
+          if (logPass(l)) passed++;
         }
         const passRate = total === 0 ? null : Math.round((passed / total) * 100);
         return { name: m.name, passRate, totalRuns: total };
@@ -219,11 +249,25 @@ export async function GET(req: Request) {
 
     // Recent cycles with per-cycle progress + scope name
     const recentCycles = recentCyclesRaw.map(c => {
-      const counts = { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
-      for (const r of c.runs) counts[r.result]++;
-      const total = c.runs.length;
-      const done = total - counts.NotRun;
-      const passRate = total === 0 ? 0 : Math.round((counts.Passed / total) * 100);
+      let counts = { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
+      let total: number;
+      let done: number;
+      let passRate: number;
+      if (c.mode === 'Manual') {
+        // Quick logs have no per-case runs — represent the log itself as one
+        // pass/fail data point so summaries that reduce over `counts` (the
+        // Execution summary donut) count it instead of silently ignoring it.
+        const isPass = (c.issueCount ?? 0) === 0;
+        counts = { ...counts, Passed: isPass ? 1 : 0, Failed: isPass ? 0 : 1 };
+        total = 1;
+        done = 1;
+        passRate = isPass ? 100 : 0;
+      } else {
+        for (const r of c.runs) counts[r.result]++;
+        total = c.runs.length;
+        done = total - counts.NotRun;
+        passRate = total === 0 ? 0 : Math.round((counts.Passed / total) * 100);
+      }
 
       let scopeName: string | null = null;
       if (c.scopeType === 'All') scopeName = 'All test cases';
@@ -259,11 +303,10 @@ export async function GET(req: Request) {
 
     return ok({
       totalCases,
-      runs30d: { total: runs30d.length, prev: runsPrev30d.length },
+      runs30d: { total: total30d, prev: totalPrev },
       passRate: { current: passRate, prev: passRatePrev, delta: passRate - passRatePrev },
       openFailures: { total: openFailures, newToday: newFailuresToday },
       weeklyRuns,
-      casesByModule: casesByMod,
       moduleStability,
       recentCycles,
     });

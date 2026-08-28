@@ -32,12 +32,25 @@ export async function GET(req: Request) {
     const releases = cycles.map(c => {
       const counts = { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
       const testers = new Set<string>();
-      for (const r of c.runs) {
-        counts[r.result]++;
-        if (r.executedBy) testers.add(r.executedBy);
+      let total: number;
+      let done: number;
+      if (c.mode === 'Manual') {
+        // Quick logs have no per-case runs — represent the log itself as one
+        // pass/fail data point (its own issueCount === 0 verdict) instead of
+        // leaving it at a misleading 0/0/0%.
+        const isPass = (c.issueCount ?? 0) === 0;
+        counts.Passed = isPass ? 1 : 0;
+        counts.Failed = isPass ? 0 : 1;
+        total = 1;
+        done = 1;
+      } else {
+        for (const r of c.runs) {
+          counts[r.result]++;
+          if (r.executedBy) testers.add(r.executedBy);
+        }
+        total = c.runs.length;
+        done = total - counts.NotRun;
       }
-      const total = c.runs.length;
-      const done = total - counts.NotRun;
       const passRate = done === 0 ? 0 : Math.round((counts.Passed / done) * 100);
       const percent = total === 0 ? 0 : Math.round((done / total) * 100);
       return {

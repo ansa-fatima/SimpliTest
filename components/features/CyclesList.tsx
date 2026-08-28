@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { TestCycle, CycleStatus, CycleMode, Module } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { NewCycleModal, CycleFormPayload } from './NewCycleModal';
@@ -26,6 +26,19 @@ const STATUS_BADGE: Record<CycleStatus, string> = {
 };
 
 type ModeFilter = 'all' | 'CaseBased' | 'Manual';
+type SortKey = 'date' | 'portal' | 'module' | 'status';
+
+// Cycles with no name on a field (e.g. an 'All'-scoped run has no portal/module)
+// always sort to the end, regardless of direction — a blank isn't "less than"
+// a real value, it just doesn't have one to compare.
+function compareNullsLast(a: string | null | undefined, b: string | null | undefined, dir: 1 | -1) {
+  const aEmpty = !a;
+  const bEmpty = !b;
+  if (aEmpty && bEmpty) return 0;
+  if (aEmpty) return 1;
+  if (bEmpty) return -1;
+  return dir * a!.localeCompare(b!);
+}
 
 export function CyclesList({
   cycles,
@@ -40,6 +53,10 @@ export function CyclesList({
 }: CyclesListProps) {
   const [filter, setFilter] = useState<CycleStatus | 'All'>('All');
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
+  // Date/newest-first is the default so a newly-added cycle lands in the right
+  // spot with no extra step — it's just where a fresh `cycles` array sorts to.
+  const [sortKey, setSortKey] = useState<SortKey>('date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [createMode, setCreateMode] = useState<CycleMode | null>(null);
   const [editingCycle, setEditingCycle] = useState<TestCycle | null>(null);
   const [reportFor, setReportFor] = useState<string | null>(null);
@@ -66,6 +83,29 @@ export function CyclesList({
     }
     return { label: c.status, cls: STATUS_BADGE[c.status] };
   };
+
+  // Quick-logs show the executed-on date (back-datable) so cycles sort by
+  // when they actually ran, not when the record was typed up.
+  const cycleDate = (c: TestCycle) =>
+    new Date(((c.mode ?? 'CaseBased') === 'Manual' && c.completedAt) || c.createdAt).getTime();
+
+  const sorted = useMemo(() => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      switch (sortKey) {
+        case 'portal':
+          return compareNullsLast(a.portalName, b.portalName, dir);
+        case 'module':
+          return compareNullsLast(a.moduleName, b.moduleName, dir);
+        case 'status':
+          return dir * cycleStatusBadge(a).label.localeCompare(cycleStatusBadge(b).label);
+        case 'date':
+        default:
+          return dir * (cycleDate(a) - cycleDate(b));
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, sortKey, sortDir]);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
@@ -139,6 +179,39 @@ export function CyclesList({
               {s}
             </button>
           ))}
+
+          {/* Sort */}
+          <div className="ml-auto flex items-center gap-1.5">
+            <span className="text-[11px] text-text-3">Sort by</span>
+            <select
+              value={sortKey}
+              onChange={e => setSortKey(e.target.value as SortKey)}
+              className="rounded-[7px] border border-border bg-surface px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
+            >
+              <option value="date">Date</option>
+              <option value="portal">Portal</option>
+              <option value="module">Module</option>
+              <option value="status">Status</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))}
+              title={
+                sortDir === 'asc'
+                  ? 'Ascending — click for descending'
+                  : 'Descending — click for ascending'
+              }
+              className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-[7px] border border-border bg-surface text-text-2 hover:bg-surface-2"
+            >
+              <i
+                className={cn(
+                  'ti',
+                  sortDir === 'asc' ? 'ti-sort-ascending' : 'ti-sort-descending',
+                  'text-[14px]',
+                )}
+              />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -163,7 +236,9 @@ export function CyclesList({
             <table className="w-full border-collapse text-[12.5px]">
               <thead className="bg-surface-2">
                 <tr>
+                  <Th>Name</Th>
                   <Th>Date</Th>
+                  <Th>Portal</Th>
                   <Th>Module</Th>
                   <Th>Feature</Th>
                   <Th>Environment</Th>
@@ -194,7 +269,7 @@ export function CyclesList({
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(c => {
+                {sorted.map(c => {
                   const isManual = (c.mode ?? 'CaseBased') === 'Manual';
                   const status = cycleStatusBadge(c);
 
@@ -223,6 +298,12 @@ export function CyclesList({
                       }}
                       className="group cursor-pointer border-b border-border transition-colors last:border-b-0 hover:bg-surface-2"
                     >
+                      <td
+                        className="max-w-[160px] truncate px-3 py-2.5 font-medium text-text"
+                        title={c.name}
+                      >
+                        {c.name}
+                      </td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-text-2">
                         {/* Quick-logs show the executed-on date (back-datable) so
                             cycles sort by when they actually ran, not when typed. */}
@@ -236,24 +317,21 @@ export function CyclesList({
                         )}
                       </td>
                       <td className="px-3 py-2.5">
-                        {/* Module column — unified Chip styling across Manual + CaseBased.
-                            For CaseBased we resolve module name from the scope ladder. */}
-                        {(() => {
-                          const modText = isManual
-                            ? c.moduleName || c.portalName || (c.scopeName ?? '')
-                            : c.scopeType === 'Portal' && c.scopeName
-                              ? c.scopeName
-                              : c.scopeType === 'Module' && c.scopeName
-                                ? c.scopeName.split(' / ')[0]
-                                : c.scopeType === 'Suite' && c.scopeName
-                                  ? c.scopeName.split(' / ')[0]
-                                  : '';
-                          return modText ? (
-                            <Chip color="emerald" text={modText} />
-                          ) : (
-                            <span className="text-text-3">—</span>
-                          );
-                        })()}
+                        {/* Portal/Module are resolved server-side for both cycle
+                            modes (see /api/cycles), so both columns can just
+                            render the field directly — no per-mode branching. */}
+                        {c.portalName ? (
+                          <Chip color="slate" text={c.portalName} />
+                        ) : (
+                          <span className="text-text-3">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        {c.moduleName ? (
+                          <Chip color="emerald" text={c.moduleName} />
+                        ) : (
+                          <span className="text-text-3">—</span>
+                        )}
                       </td>
                       <td className="px-3 py-2.5 text-text">
                         {isManual ? (
