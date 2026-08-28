@@ -24,8 +24,7 @@ interface Member {
 
 interface MembersPayload {
   items: Member[];
-  counts: { total: number; active: number; pending: number; seatsLeft: number };
-  plan: { name: string; seats: number };
+  counts: { total: number; active: number; pending: number };
 }
 
 const ROLES: Role[] = ['SuperAdmin', 'QAManager', 'Tester', 'Developer', 'Viewer'];
@@ -167,26 +166,15 @@ export function Members({
           </button>
         </div>
 
-        {/* KPI cards */}
-        <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        {/* KPI cards — real counts only, no invented plan/seat limit. */}
+        <div className="mb-5 grid grid-cols-3 gap-3">
           <KpiCard icon="ti-users" label="Members" value={data?.counts.total ?? 0} />
+          <KpiCard icon="ti-user-check" label="Active" value={data?.counts.active ?? 0} />
           <KpiCard
             icon="ti-clock"
             label="Pending"
             value={data?.counts.pending ?? 0}
             valueClass={(data?.counts.pending ?? 0) > 0 ? 'text-amber-700' : 'text-text'}
-          />
-          <KpiCard
-            icon="ti-armchair"
-            label="Seats left"
-            value={data?.counts.seatsLeft ?? 0}
-            valueClass={(data?.counts.seatsLeft ?? 1) === 0 ? 'text-red-700' : 'text-text'}
-          />
-          <KpiCard
-            icon="ti-receipt"
-            label="Plan"
-            value={data ? `${data.plan.name} · ${data.plan.seats}` : '—'}
-            small
           />
         </div>
 

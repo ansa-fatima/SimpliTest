@@ -3,11 +3,8 @@ import { ok, bad, serverError } from '@/lib/api';
 import { requireUser } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
-// Plan limits — flat for now; later this becomes per-workspace billing.
-const PLAN = { name: 'Team', seats: 20 };
-
 // GET /api/members?projectId=...
-// Workspace-scoped member list + plan/seat metadata. Caller must be a member
+// Workspace-scoped member list. Caller must be a member
 // of the target workspace. Each row carries Membership.role (the user's role
 // *inside this workspace*) plus their derived status / lastActiveAt.
 export async function GET(req: Request) {
@@ -104,10 +101,9 @@ export async function GET(req: Request) {
       total: combined.length,
       active: items.length,
       pending: inviteRows.length,
-      seatsLeft: Math.max(0, PLAN.seats - combined.length),
     };
 
-    return ok({ items: combined, counts, plan: PLAN, myRole: my.role });
+    return ok({ items: combined, counts, myRole: my.role });
   } catch (e) {
     return serverError(e);
   }
