@@ -235,9 +235,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
         <div className="relative animate-[fadeUp_0.6s_0.1s_both]">
           <div className="mb-7 flex flex-col gap-3">
-            <Stat value="1,284 cases" label="across 8 products" />
-            <Stat value="87% pass rate" label="last 7 days" offset />
-            <Stat value="4 portals" label="Admin · Teacher · Parent · Student" />
+            <Stat value="Organize" label="by portal, module, and feature" />
+            <Stat value="Track" label="test runs and quick logs together" offset />
+            <Stat value="See" label="stability trends as you go" />
           </div>
           <div className="text-[20px] font-semibold leading-snug tracking-[-0.01em]">
             The QA workspace your team will actually enjoy using.
