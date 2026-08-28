@@ -22,6 +22,7 @@ export interface CycleFormPayload {
   mode?: CycleMode;
   scopeType?: CycleScopeType;
   scopeId?: string | null;
+  testCaseIds?: string[];
   targetDate?: string | null;
   /** When the cycle was actually executed (Manual-mode back-dating). */
   completedAt?: string | null;
@@ -93,6 +94,19 @@ export function NewCycleModal({
   const [portals, setPortals] = useState<ApiPortal[]>([]);
   const [loadingModules, setLoadingModules] = useState(true);
 
+  // Custom scope — pick specific test cases instead of a location. Only
+  // meaningful for CaseBased; scope is 'location' unless the initial cycle
+  // was itself Custom-scoped (editing isn't supported for Custom yet, so this
+  // only ever starts true when freshly created that way isn't possible —
+  // kept simple: always starts on 'location').
+  const [scopePickMode, setScopePickMode] = useState<'location' | 'custom'>('location');
+  const [customSearch, setCustomSearch] = useState('');
+  const [customResults, setCustomResults] = useState<
+    { id: string; caseNum: number; title: string }[]
+  >([]);
+  const [customLoading, setCustomLoading] = useState(false);
+  const [selectedCaseIds, setSelectedCaseIds] = useState<Set<string>>(new Set());
+
   // ── Manual-mode fields ──────────────────────────────────────
   const [completedOn, setCompletedOn] = useState(() => {
     if (initial?.completedAt) return initial.completedAt.slice(0, 10);
@@ -139,6 +153,33 @@ export function NewCycleModal({
       }
     })();
   }, [projectId]);
+
+  // Custom-scope case picker — searches the whole workspace, debounced so
+  // every keystroke doesn't fire a request.
+  useEffect(() => {
+    if (mode !== 'CaseBased' || scopePickMode !== 'custom') return;
+    let cancelled = false;
+    setCustomLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ page: '1', pageSize: '50', sort: 'caseNum' });
+        if (projectId) params.set('projectId', projectId);
+        if (customSearch.trim()) params.set('search', customSearch.trim());
+        const data = await api.get<{ items: { id: string; caseNum: number; title: string }[] }>(
+          `/api/test-cases?${params.toString()}`,
+        );
+        if (!cancelled) setCustomResults(data.items);
+      } catch (e) {
+        console.error('[case picker]', e);
+      } finally {
+        if (!cancelled) setCustomLoading(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [mode, scopePickMode, customSearch, projectId]);
 
   // Cascading invariants — when a parent changes, child must clear if it no
   // longer matches. (Portal change → drop module if module not under new portal;
@@ -226,8 +267,17 @@ export function NewCycleModal({
     };
 
     if (mode === 'CaseBased') {
-      payload.scopeType = derivedScope.scopeType;
-      payload.scopeId = derivedScope.scopeId;
+      if (scopePickMode === 'custom') {
+        if (selectedCaseIds.size === 0) {
+          setError('Pick at least one test case');
+          return;
+        }
+        payload.scopeType = 'Custom';
+        payload.testCaseIds = Array.from(selectedCaseIds);
+      } else {
+        payload.scopeType = derivedScope.scopeType;
+        payload.scopeId = derivedScope.scopeId;
+      }
       // Optional context that's useful even when running test cases per-case.
       payload.environment = environment || undefined;
       payload.platform = platform || undefined;
@@ -550,60 +600,140 @@ export function NewCycleModal({
                   />
                 </Field>
 
-                {/* Optional cascading scope — leave any of the three blank and that
-                    level is treated as "any". Cycle scope is derived from the deepest
-                    non-empty pick (All / Portal / Module / Suite). */}
                 <Field label="Scope">
-                  <div className="grid grid-cols-3 gap-2">
-                    <select
-                      value={portalIdF}
-                      onChange={e => setPortalIdF(e.target.value)}
-                      disabled={loadingModules}
-                      className="input"
+                  <div className="mb-2 flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setScopePickMode('location')}
+                      className={cn(
+                        'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                        scopePickMode === 'location'
+                          ? 'border-blue-500 bg-blue-50 font-semibold text-blue-700'
+                          : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50',
+                      )}
                     >
-                      <option value="">Any portal</option>
-                      {portals.map(p => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={moduleIdF}
-                      onChange={e => setModuleIdF(e.target.value)}
-                      disabled={loadingModules || visibleModules.length === 0}
-                      className="input"
+                      By location
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScopePickMode('custom')}
+                      className={cn(
+                        'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                        scopePickMode === 'custom'
+                          ? 'border-blue-500 bg-blue-50 font-semibold text-blue-700'
+                          : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50',
+                      )}
                     >
-                      <option value="">Any module</option>
-                      {visibleModules.map(m => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={suiteIdF}
-                      onChange={e => setSuiteIdF(e.target.value)}
-                      disabled={loadingModules || visibleSuites.length === 0}
-                      className="input"
-                    >
-                      <option value="">Any feature</option>
-                      {visibleSuites.map(s => (
-                        <option key={s.id} value={s.id}>
-                          {moduleIdF ? s.name : `${s.moduleName} — ${s.name}`}
-                        </option>
-                      ))}
-                    </select>
+                      Pick specific cases
+                    </button>
                   </div>
-                  <p className="mt-1.5 text-[11px] text-slate-400">
-                    {derivedScope.scopeType === 'All'
-                      ? 'Includes every test case in this workspace.'
-                      : derivedScope.scopeType === 'Portal'
-                        ? 'Includes every test case under this portal.'
-                        : derivedScope.scopeType === 'Module'
-                          ? 'Includes every test case under this module (direct + nested features).'
-                          : 'Includes only test cases in this feature.'}
-                  </p>
+
+                  {scopePickMode === 'location' ? (
+                    <>
+                      {/* Optional cascading scope — leave any of the three blank and that
+                          level is treated as "any". Cycle scope is derived from the deepest
+                          non-empty pick (All / Portal / Module / Suite). */}
+                      <div className="grid grid-cols-3 gap-2">
+                        <select
+                          value={portalIdF}
+                          onChange={e => setPortalIdF(e.target.value)}
+                          disabled={loadingModules}
+                          className="input"
+                        >
+                          <option value="">Any portal</option>
+                          {portals.map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={moduleIdF}
+                          onChange={e => setModuleIdF(e.target.value)}
+                          disabled={loadingModules || visibleModules.length === 0}
+                          className="input"
+                        >
+                          <option value="">Any module</option>
+                          {visibleModules.map(m => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={suiteIdF}
+                          onChange={e => setSuiteIdF(e.target.value)}
+                          disabled={loadingModules || visibleSuites.length === 0}
+                          className="input"
+                        >
+                          <option value="">Any feature</option>
+                          {visibleSuites.map(s => (
+                            <option key={s.id} value={s.id}>
+                              {moduleIdF ? s.name : `${s.moduleName} — ${s.name}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-slate-400">
+                        {derivedScope.scopeType === 'All'
+                          ? 'Includes every test case in this workspace.'
+                          : derivedScope.scopeType === 'Portal'
+                            ? 'Includes every test case under this portal.'
+                            : derivedScope.scopeType === 'Module'
+                              ? 'Includes every test case under this module (direct + nested features).'
+                              : 'Includes only test cases in this feature.'}
+                      </p>
+                    </>
+                  ) : (
+                    <div>
+                      <input
+                        type="text"
+                        value={customSearch}
+                        onChange={e => setCustomSearch(e.target.value)}
+                        placeholder="Search test cases by title…"
+                        className="input"
+                      />
+                      <div className="mt-2 max-h-[180px] overflow-y-auto rounded-lg border border-slate-200">
+                        {customLoading ? (
+                          <p className="p-3 text-center text-[11px] text-slate-400">Loading…</p>
+                        ) : customResults.length === 0 ? (
+                          <p className="p-3 text-center text-[11px] text-slate-400">
+                            No test cases match.
+                          </p>
+                        ) : (
+                          customResults.map(tc => {
+                            const checked = selectedCaseIds.has(tc.id);
+                            return (
+                              <label
+                                key={tc.id}
+                                className="flex cursor-pointer items-center gap-2 border-b border-slate-100 px-2.5 py-1.5 text-[12px] last:border-b-0 hover:bg-slate-50"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() =>
+                                    setSelectedCaseIds(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(tc.id)) next.delete(tc.id);
+                                      else next.add(tc.id);
+                                      return next;
+                                    })
+                                  }
+                                />
+                                <span className="font-mono text-[10.5px] text-slate-400">
+                                  TC-{String(tc.caseNum).padStart(2, '0')}
+                                </span>
+                                <span className="truncate text-slate-700">{tc.title}</span>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-slate-400">
+                        {selectedCaseIds.size} case{selectedCaseIds.size === 1 ? '' : 's'} selected
+                      </p>
+                    </div>
+                  )}
                 </Field>
 
                 {/* Run context — optional but very useful when sharing the summary. */}
