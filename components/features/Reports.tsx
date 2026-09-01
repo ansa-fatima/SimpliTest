@@ -13,7 +13,7 @@ interface ReportsProps {
   onOpenCycle?: (cycleId: string) => void;
 }
 
-type ReportType = 'execution' | 'release' | 'tester' | 'coverage' | 'stability';
+type ReportType = 'execution' | 'release' | 'stability';
 
 interface ReportTypeMeta {
   id: ReportType;
@@ -37,20 +37,6 @@ const REPORT_TYPES: ReportTypeMeta[] = [
     sub: 'Sprint summary',
     icon: 'ti-rocket',
     iconColor: 'bg-emerald-100 text-emerald-700',
-  },
-  {
-    id: 'tester',
-    label: 'Tester perf',
-    sub: 'Performance',
-    icon: 'ti-users',
-    iconColor: 'bg-pink-100 text-pink-700',
-  },
-  {
-    id: 'coverage',
-    label: 'Coverage',
-    sub: 'Module coverage',
-    icon: 'ti-chart-pie',
-    iconColor: 'bg-amber-100 text-amber-700',
   },
   {
     id: 'stability',
@@ -81,10 +67,6 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
         return { days: true, portal: true, cycle: true, tester: true };
       case 'release':
         return { days: true, portal: false, cycle: false, tester: false };
-      case 'tester':
-        return { days: true, portal: false, cycle: false, tester: false };
-      case 'coverage':
-        return { days: false, portal: true, cycle: false, tester: false };
       case 'stability':
         return { days: false, portal: true, cycle: false, tester: false };
     }
@@ -94,33 +76,11 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
       <div className="flex-1 overflow-y-auto px-8 py-6">
         {/* Header */}
-        <div className="mb-6 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
-              Reports
-            </h1>
-            <p className="text-[13px] text-text-2">Generate, schedule, and share QA reports.</p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled
-              title="Coming soon"
-              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text-3"
-            >
-              <i className="ti ti-history text-[15px]" />
-              History
-            </button>
-            <button
-              type="button"
-              disabled
-              title="Coming soon"
-              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text-3"
-            >
-              <i className="ti ti-clock text-[15px]" />
-              Schedule
-            </button>
-          </div>
+        <div className="mb-6">
+          <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
+            Reports
+          </h1>
+          <p className="text-[13px] text-text-2">Generate and share QA reports.</p>
         </div>
 
         {/* Report type cards */}
@@ -215,17 +175,6 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
             )}
             {reportType === 'release' && (
               <ReleaseReport projectId={projectId} projectName={projectName} filters={filters} />
-            )}
-            {reportType === 'tester' && (
-              <TesterReport projectId={projectId} projectName={projectName} filters={filters} />
-            )}
-            {reportType === 'coverage' && (
-              <CoverageReport
-                projectId={projectId}
-                projectName={projectName}
-                portals={portals}
-                filters={filters}
-              />
             )}
             {reportType === 'stability' && (
               <StabilityReport
@@ -682,350 +631,11 @@ function ReleaseReport({
   );
 }
 
-// ─── Tester perf report ─────────────────────────────────────
-
-interface TesterPayload {
-  testers: {
-    name: string;
-    executed: number;
-    passed: number;
-    failed: number;
-    blocked: number;
-    skipped: number;
-    passRate: number;
-    avgPerDay: number;
-  }[];
-  totals: { testers: number; executed: number; avgPassRate: number };
-}
-
-function TesterReport({
-  projectId,
-  projectName,
-  filters,
-}: {
-  projectId: string | null;
-  projectName: string;
-  filters: Filters;
-}) {
-  const [data, setData] = useState<TesterPayload | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    const params = new URLSearchParams({ days: filters.days });
-    if (projectId) params.set('projectId', projectId);
-    setLoading(true);
-    api
-      .get<TesterPayload>(`/api/reports/tester-perf?${params.toString()}`)
-      .then(setData)
-      .catch(e => console.error('[tester report]', e))
-      .finally(() => setLoading(false));
-  }, [projectId, filters.days]);
-
-  const onCsv = () => {
-    if (!data) return;
-    const rows = [
-      ['Tester', 'Executed', 'Passed', 'Failed', 'Blocked', 'Pass rate', 'Avg/day'],
-      ...data.testers.map(t => [
-        t.name,
-        t.executed,
-        t.passed,
-        t.failed,
-        t.blocked,
-        `${t.passRate}%`,
-        t.avgPerDay,
-      ]),
-    ];
-    downloadCsv(`tester-perf-${projectName.toLowerCase().replace(/\s+/g, '-')}.csv`, rows);
-  };
-
-  return (
-    <div>
-      <ReportHeader
-        title="Tester performance"
-        subtitle={`${data?.totals.testers ?? 0} testers · ${windowLabel(filters.days)}`}
-        onCsv={onCsv}
-        onPdf={() => window.print()}
-        onShare={() => navigator.clipboard?.writeText(window.location.href)}
-      />
-
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        <KpiCard label="Active testers" value={data?.totals.testers ?? 0} tone="neutral" />
-        <KpiCard label="Total executed" value={data?.totals.executed ?? 0} tone="neutral" />
-        <KpiCard
-          label="Avg pass rate"
-          value={`${data?.totals.avgPassRate ?? 0}%`}
-          tone={(data?.totals.avgPassRate ?? 0) >= 80 ? 'success' : 'warning'}
-        />
-      </div>
-
-      <div className="mt-4 overflow-hidden rounded-lg border border-border bg-surface">
-        <table className="w-full text-[12.5px]">
-          <thead className="bg-surface-2">
-            <tr>
-              <Th>Tester</Th>
-              <Th width="80px">Executed</Th>
-              <Th width="80px">Pass</Th>
-              <Th width="80px">Fail</Th>
-              <Th width="80px">Block</Th>
-              <Th width="160px">Pass rate</Th>
-              <Th width="80px">Avg/day</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && !data ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-text-3">
-                  Loading…
-                </td>
-              </tr>
-            ) : (data?.testers.length ?? 0) === 0 ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-text-3">
-                  No executions recorded in this window.
-                </td>
-              </tr>
-            ) : (
-              data!.testers.map(t => (
-                <tr
-                  key={t.name}
-                  className="border-b border-border last:border-b-0 hover:bg-surface-2"
-                >
-                  <td className="px-3 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={cn(
-                          'inline-flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-semibold',
-                          avatarColour(t.name),
-                        )}
-                      >
-                        {initials(t.name)}
-                      </span>
-                      <span className="font-medium text-text">{t.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2.5 text-text-2">{t.executed}</td>
-                  <td className="px-3 py-2.5 text-emerald-700">{t.passed}</td>
-                  <td className="px-3 py-2.5 text-red-700">{t.failed}</td>
-                  <td className="px-3 py-2.5 text-amber-700">{t.blocked}</td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
-                        <div
-                          className={cn(
-                            'h-full transition-all',
-                            t.passRate >= 80
-                              ? 'bg-emerald-500'
-                              : t.passRate >= 50
-                                ? 'bg-amber-500'
-                                : 'bg-red-500',
-                          )}
-                          style={{ width: `${t.passRate}%` }}
-                        />
-                      </div>
-                      <span
-                        className={cn(
-                          'w-10 text-right font-semibold',
-                          t.passRate >= 80
-                            ? 'text-emerald-700'
-                            : t.passRate >= 50
-                              ? 'text-amber-700'
-                              : 'text-red-700',
-                        )}
-                      >
-                        {t.passRate}%
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2.5 text-text-2">{t.avgPerDay}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// ─── Coverage report ────────────────────────────────────────
-
-interface CoveragePayload {
-  portals: {
-    id: string;
-    name: string;
-    icon: string | null;
-    totalCases: number;
-    covered: number;
-    coverage: number;
-    modules: { id: string; name: string; totalCases: number; covered: number; coverage: number }[];
-  }[];
-  totals: { totalCases: number; covered: number; overall: number; portals: number };
-}
-
-function CoverageReport({
-  projectId,
-  projectName,
-  portals,
-  filters,
-}: {
-  projectId: string | null;
-  projectName: string;
-  portals: Portal[];
-  filters: Filters;
-}) {
-  const [data, setData] = useState<CoveragePayload | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    const params = new URLSearchParams();
-    if (projectId) params.set('projectId', projectId);
-    setLoading(true);
-    api
-      .get<CoveragePayload>(`/api/reports/coverage?${params.toString()}`)
-      .then(setData)
-      .catch(e => console.error('[coverage report]', e))
-      .finally(() => setLoading(false));
-  }, [projectId]);
-
-  const portalsToShow = useMemo(() => {
-    if (!data) return [];
-    if (filters.portalId) return data.portals.filter(p => p.id === filters.portalId);
-    return data.portals;
-  }, [data, filters.portalId]);
-
-  const onCsv = () => {
-    if (!data) return;
-    const rows: (string | number)[][] = [['Portal', 'Module', 'Total', 'Covered', 'Coverage']];
-    for (const p of portalsToShow) {
-      for (const m of p.modules) {
-        rows.push([p.name, m.name, m.totalCases, m.covered, `${m.coverage}%`]);
-      }
-    }
-    downloadCsv(`coverage-${projectName.toLowerCase().replace(/\s+/g, '-')}.csv`, rows);
-  };
-
-  const portalName = filters.portalId
-    ? (portals.find(p => p.id === filters.portalId)?.name ?? 'Selected portal')
-    : 'All portals';
-
-  return (
-    <div>
-      <ReportHeader
-        title="Coverage report"
-        subtitle={`${portalName} · all-time test cases`}
-        onCsv={onCsv}
-        onPdf={() => window.print()}
-        onShare={() => navigator.clipboard?.writeText(window.location.href)}
-      />
-
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        <KpiCard label="Total cases" value={data?.totals.totalCases ?? 0} tone="neutral" />
-        <KpiCard label="With coverage" value={data?.totals.covered ?? 0} tone="success" />
-        <KpiCard
-          label="Overall coverage"
-          value={`${data?.totals.overall ?? 0}%`}
-          tone={(data?.totals.overall ?? 0) >= 80 ? 'success' : 'warning'}
-        />
-      </div>
-
-      {loading && !data ? (
-        <div className="mt-4 rounded-lg border border-border bg-surface p-8 text-center text-text-3">
-          Loading…
-        </div>
-      ) : portalsToShow.length === 0 ? (
-        <div className="mt-4 rounded-lg border border-dashed border-border bg-surface p-8 text-center text-text-3">
-          No portals to show.
-        </div>
-      ) : (
-        <div className="mt-4 space-y-3">
-          {portalsToShow.map(p => (
-            <div key={p.id} className="rounded-lg border border-border bg-surface">
-              <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <i
-                    className={cn(
-                      'ti',
-                      p.icon && p.icon.startsWith('ti-') ? p.icon : 'ti-app-window',
-                      'text-[16px] text-text-3',
-                    )}
-                  />
-                  <span className="text-[13px] font-semibold text-text">{p.name}</span>
-                  <span className="text-[11px] text-text-3">
-                    {p.covered}/{p.totalCases} covered
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="h-1.5 w-32 overflow-hidden rounded-full bg-surface-2">
-                    <div
-                      className={cn(
-                        'h-full',
-                        p.coverage >= 80
-                          ? 'bg-emerald-500'
-                          : p.coverage >= 50
-                            ? 'bg-amber-500'
-                            : 'bg-red-500',
-                      )}
-                      style={{ width: `${p.coverage}%` }}
-                    />
-                  </div>
-                  <span
-                    className={cn(
-                      'text-[12.5px] font-semibold',
-                      p.coverage >= 80
-                        ? 'text-emerald-700'
-                        : p.coverage >= 50
-                          ? 'text-amber-700'
-                          : 'text-red-700',
-                    )}
-                  >
-                    {p.coverage}%
-                  </span>
-                </div>
-              </div>
-              <div className="divide-y divide-border">
-                {p.modules.length === 0 && (
-                  <p className="px-4 py-3 text-[12px] italic text-text-3">No modules</p>
-                )}
-                {p.modules.map(m => (
-                  <div key={m.id} className="flex items-center justify-between px-4 py-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <i className="ti ti-folder text-[13px] text-text-3" />
-                      <span className="truncate text-[12.5px] text-text">{m.name}</span>
-                      <span className="text-[11px] text-text-3">
-                        ({m.covered}/{m.totalCases})
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="h-1 w-24 overflow-hidden rounded-full bg-surface-2">
-                        <div
-                          className={cn(
-                            'h-full',
-                            m.coverage >= 80
-                              ? 'bg-emerald-500'
-                              : m.coverage >= 50
-                                ? 'bg-amber-500'
-                                : 'bg-red-500',
-                          )}
-                          style={{ width: `${m.coverage}%` }}
-                        />
-                      </div>
-                      <span className="w-10 text-right text-[12px] text-text-2">{m.coverage}%</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── Stability report ───────────────────────────────────────
 
 interface StabilityLog {
   cycleId: string;
+  cycleName: string;
   kind: 'quicklog' | 'caserun';
   label: string;
   detail: string;
@@ -1077,7 +687,9 @@ function StabilityReport({
   const [data, setData] = useState<StabilityPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [logsFor, setLogsFor] = useState<{ title: string; logs: StabilityLog[] } | null>(null);
+  const [panelFor, setPanelFor] = useState<{ breadcrumb: string; node: StabilityNode } | null>(
+    null,
+  );
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -1198,37 +810,40 @@ function StabilityReport({
                 {p.modules.map(m => (
                   <div key={m.id}>
                     <div className="flex w-full items-center justify-between gap-3 px-4 py-2.5">
-                      {m.suites.length > 0 ? (
+                      <div className="flex min-w-0 flex-1 items-center gap-1">
+                        {m.suites.length > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => toggle(m.id)}
+                            aria-label={expanded.has(m.id) ? 'Collapse' : 'Expand'}
+                            className="flex-shrink-0 rounded p-0.5 hover:bg-surface-2"
+                          >
+                            <i
+                              className={cn(
+                                'ti ti-chevron-right text-[12px] text-text-3 transition-transform',
+                                expanded.has(m.id) && 'rotate-90',
+                              )}
+                            />
+                          </button>
+                        ) : (
+                          <span className="w-[20px] flex-shrink-0" />
+                        )}
                         <button
                           type="button"
-                          onClick={() => toggle(m.id)}
-                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+                          onClick={() => setPanelFor({ breadcrumb: p.name, node: m })}
+                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left hover:underline"
                         >
-                          <i
-                            className={cn(
-                              'ti ti-chevron-right flex-shrink-0 text-[12px] text-text-3 transition-transform',
-                              expanded.has(m.id) && 'rotate-90',
-                            )}
-                          />
                           <i className="ti ti-folder flex-shrink-0 text-[13px] text-text-3" />
                           <span className="truncate text-[12.5px] font-medium text-text">
                             {m.name}
                           </span>
                           <StabilityBadge label={m.label} />
                         </button>
-                      ) : (
-                        <div className="flex min-w-0 flex-1 items-center gap-2 pl-[16px]">
-                          <i className="ti ti-folder flex-shrink-0 text-[13px] text-text-3" />
-                          <span className="truncate text-[12.5px] font-medium text-text">
-                            {m.name}
-                          </span>
-                          <StabilityBadge label={m.label} />
-                        </div>
-                      )}
+                      </div>
                       <button
                         type="button"
                         disabled={m.total === 0}
-                        onClick={() => setLogsFor({ title: `${m.name} — logs`, logs: m.logs })}
+                        onClick={() => setPanelFor({ breadcrumb: p.name, node: m })}
                         title={m.total > 0 ? `View ${m.total} contributing log(s)` : undefined}
                         className={cn(
                           'flex-shrink-0 rounded px-1 py-0.5',
@@ -1245,16 +860,22 @@ function StabilityReport({
                             key={s.id}
                             className="flex items-center justify-between gap-3 px-4 py-2"
                           >
-                            <div className="flex min-w-0 items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPanelFor({ breadcrumb: `${p.name} › ${m.name}`, node: s })
+                              }
+                              className="flex min-w-0 items-center gap-2 text-left hover:underline"
+                            >
                               <i className="ti ti-list-details text-[12px] text-text-3" />
                               <span className="truncate text-[12px] text-text">{s.name}</span>
                               <StabilityBadge label={s.label} />
-                            </div>
+                            </button>
                             <button
                               type="button"
                               disabled={s.total === 0}
                               onClick={() =>
-                                setLogsFor({ title: `${m.name} — ${s.name} — logs`, logs: s.logs })
+                                setPanelFor({ breadcrumb: `${p.name} › ${m.name}`, node: s })
                               }
                               title={
                                 s.total > 0 ? `View ${s.total} contributing log(s)` : undefined
@@ -1278,11 +899,11 @@ function StabilityReport({
         </div>
       )}
 
-      {logsFor && (
-        <StabilityLogsModal
-          title={logsFor.title}
-          logs={logsFor.logs}
-          onClose={() => setLogsFor(null)}
+      {panelFor && (
+        <StabilityDrilldownPanel
+          breadcrumb={panelFor.breadcrumb}
+          node={panelFor.node}
+          onClose={() => setPanelFor(null)}
           onOpenCycle={onOpenCycle}
         />
       )}
@@ -1290,65 +911,231 @@ function StabilityReport({
   );
 }
 
-function StabilityLogsModal({
-  title,
-  logs,
+// Buckets a node's chronological logs into up to `maxBuckets` groups and
+// returns each group's pass rate — cheap client-side trend line, no new
+// endpoint needed since the report already returns every log with a ts.
+function bucketPassRates(logs: StabilityLog[], maxBuckets = 8): number[] {
+  if (logs.length < 2) return [];
+  const sorted = [...logs].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+  const n = Math.min(maxBuckets, sorted.length);
+  const size = Math.ceil(sorted.length / n);
+  const out: number[] = [];
+  for (let i = 0; i < sorted.length; i += size) {
+    const chunk = sorted.slice(i, i + size);
+    out.push(Math.round((chunk.filter(l => l.pass).length / chunk.length) * 100));
+  }
+  return out;
+}
+
+function StabilityDrilldownPanel({
+  breadcrumb,
+  node,
   onClose,
   onOpenCycle,
 }: {
-  title: string;
-  logs: StabilityLog[];
+  breadcrumb: string;
+  node: StabilityNode;
   onClose: () => void;
   onOpenCycle?: (cycleId: string) => void;
 }) {
+  const trendPoints = useMemo(() => bucketPassRates(node.logs), [node.logs]);
+
+  // Group failed data points by their cycle — one row per failed test cycle
+  // or quick log, not per failed test case, so a regression run with 12
+  // failing cases shows up once instead of 12 times.
+  const failedCycles = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        cycleId: string;
+        cycleName: string;
+        kind: 'quicklog' | 'caserun';
+        count: number;
+        detail: string;
+        latestTs: string;
+      }
+    >();
+    for (const l of node.logs) {
+      if (l.pass) continue;
+      const g = groups.get(l.cycleId);
+      if (g) {
+        g.count++;
+        if (new Date(l.ts) > new Date(g.latestTs)) g.latestTs = l.ts;
+      } else {
+        groups.set(l.cycleId, {
+          cycleId: l.cycleId,
+          cycleName: l.cycleName,
+          kind: l.kind,
+          count: 1,
+          detail: l.detail,
+          latestTs: l.ts,
+        });
+      }
+    }
+    return Array.from(groups.values()).sort(
+      (a, b) => new Date(b.latestTs).getTime() - new Date(a.latestTs).getTime(),
+    );
+  }, [node.logs]);
+
+  const chartColor =
+    node.label === 'Stable'
+      ? 'text-emerald-600'
+      : node.label === 'At Risk'
+        ? 'text-amber-600'
+        : node.label === 'Unstable'
+          ? 'text-red-600'
+          : 'text-text-3';
+
+  const linePoints = trendPoints
+    .map((v, i) => {
+      const x = trendPoints.length === 1 ? 190 : 15 + (350 * i) / (trendPoints.length - 1);
+      const y = 95 - (v / 100) * 80;
+      return `${x},${y}`;
+    })
+    .join(' ');
+  const areaPoints = trendPoints.length >= 2 ? `${linePoints} 365,95 15,95` : '';
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[80vh] w-full max-w-[520px] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl">
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <div className="min-w-0">
-            <h3 className="truncate text-[13px] font-semibold text-text">{title}</h3>
-            <p className="text-[11px] text-text-3">
-              {logs.length} contributing log{logs.length === 1 ? '' : 's'}
-            </p>
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
+      <div className="flex h-full w-full max-w-[420px] flex-col overflow-hidden border-l border-border bg-surface shadow-2xl">
+        <div className="border-b border-border px-5 py-4">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <span className="truncate text-[11px] text-text-3">{breadcrumb}</span>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-shrink-0 rounded p-1 text-text-3 hover:bg-surface-2 hover:text-text"
+            >
+              <i className="ti ti-x text-[16px]" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-shrink-0 rounded p-1 text-text-3 hover:bg-surface-2 hover:text-text"
-          >
-            <i className="ti ti-x text-[16px]" />
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="truncate text-[16px] font-semibold text-text">{node.name}</span>
+            <StabilityBadge label={node.label} />
+          </div>
         </div>
-        <div className="flex-1 divide-y divide-border overflow-y-auto">
-          {logs.length === 0 ? (
-            <p className="px-4 py-6 text-center text-[12px] text-text-3">No logs yet.</p>
+
+        <div className="border-b border-border px-5 py-4">
+          {node.total === 0 ? (
+            <p className="text-[12px] text-text-3">No test runs yet for this module.</p>
           ) : (
-            logs.map((l, i) => (
+            <>
+              <div className="mb-0.5 flex items-baseline gap-2.5">
+                <span className="text-[26px] font-semibold text-text">{node.passRate}%</span>
+                <span
+                  className={cn(
+                    'flex items-center gap-1 text-[12px]',
+                    node.trend === 'up'
+                      ? 'text-emerald-600'
+                      : node.trend === 'down'
+                        ? 'text-red-600'
+                        : 'text-text-3',
+                  )}
+                >
+                  <i
+                    className={cn(
+                      'ti',
+                      node.trend === 'up'
+                        ? 'ti-trending-up'
+                        : node.trend === 'down'
+                          ? 'ti-trending-down'
+                          : 'ti-minus',
+                    )}
+                  />
+                  {node.trend === 'up' ? 'improving' : node.trend === 'down' ? 'declining' : 'flat'}
+                </span>
+              </div>
+              <p className="mb-3 text-[12px] text-text-3">
+                {node.passed} passed / {node.failed} failed · {node.total} data point
+                {node.total === 1 ? '' : 's'}
+              </p>
+
+              {trendPoints.length >= 2 && (
+                <svg viewBox="0 0 380 110" className="h-[90px] w-full">
+                  <line
+                    x1="15"
+                    y1="23"
+                    x2="365"
+                    y2="23"
+                    stroke="currentColor"
+                    className="text-text-3"
+                    strokeOpacity={0.3}
+                    strokeDasharray="3,3"
+                  />
+                  <text x="368" y="26" fill="currentColor" className="text-text-3" fontSize="9">
+                    90%
+                  </text>
+                  <line
+                    x1="15"
+                    y1="39"
+                    x2="365"
+                    y2="39"
+                    stroke="currentColor"
+                    className="text-text-3"
+                    strokeOpacity={0.3}
+                    strokeDasharray="3,3"
+                  />
+                  <text x="368" y="42" fill="currentColor" className="text-text-3" fontSize="9">
+                    70%
+                  </text>
+                  <polygon
+                    className={chartColor}
+                    fill="currentColor"
+                    fillOpacity={0.08}
+                    points={areaPoints}
+                  />
+                  <polyline
+                    className={chartColor}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.8}
+                    points={linePoints}
+                  />
+                </svg>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between px-5 pb-1.5 pt-3">
+          <span className="text-[12px] font-semibold text-red-600">
+            Failed runs ({failedCycles.length})
+          </span>
+          {failedCycles.length > 0 && <span className="text-[11px] text-text-3">newest first</span>}
+        </div>
+
+        <div className="flex-1 overflow-y-auto pb-2">
+          {failedCycles.length === 0 ? (
+            <p className="px-5 py-6 text-center text-[12px] text-text-3">
+              No failures — this module is healthy.
+            </p>
+          ) : (
+            failedCycles.map(g => (
               <button
-                key={`${l.cycleId}-${i}`}
+                key={g.cycleId}
                 type="button"
                 disabled={!onOpenCycle}
                 onClick={() => {
-                  onOpenCycle?.(l.cycleId);
+                  onOpenCycle?.(g.cycleId);
                   onClose();
                 }}
-                className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-surface-2 disabled:cursor-default disabled:hover:bg-transparent"
+                className="flex w-full items-center gap-2.5 px-5 py-2.5 text-left hover:bg-surface-2 disabled:cursor-default disabled:hover:bg-transparent"
               >
-                <div className="flex min-w-0 items-center gap-2">
-                  <i
-                    className={cn(
-                      'ti flex-shrink-0 text-[15px]',
-                      l.pass ? 'ti-circle-check text-emerald-600' : 'ti-circle-x text-red-600',
-                    )}
-                  />
-                  <div className="min-w-0">
-                    <div className="truncate text-[12px] font-medium text-text">{l.label}</div>
-                    <div className="truncate text-[10.5px] text-text-3">{l.detail}</div>
+                <i className="ti ti-circle-x flex-shrink-0 text-[15px] text-red-600" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[12px] font-medium text-text">{g.cycleName}</div>
+                  <div className="truncate text-[10.5px] text-text-3">
+                    {g.kind === 'caserun'
+                      ? `${g.count} case${g.count === 1 ? '' : 's'} failed`
+                      : g.detail}
                   </div>
                 </div>
                 <span className="flex-shrink-0 text-[10.5px] text-text-3">
-                  {relativeTime(l.ts)}
+                  {relativeTime(g.latestTs)}
                 </span>
+                {onOpenCycle && (
+                  <i className="ti ti-arrow-up-right flex-shrink-0 text-[13px] text-primary" />
+                )}
               </button>
             ))
           )}

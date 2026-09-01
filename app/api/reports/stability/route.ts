@@ -23,6 +23,7 @@ type DataPoint = {
   pass: boolean;
   ts: Date;
   cycleId: string;
+  cycleName: string;
   kind: 'quicklog' | 'caserun';
   label: string;
   detail: string;
@@ -53,6 +54,7 @@ function stats(points: DataPoint[]) {
     .sort((a, b) => b.ts.getTime() - a.ts.getTime())
     .map(p => ({
       cycleId: p.cycleId,
+      cycleName: p.cycleName,
       kind: p.kind,
       label: p.label,
       detail: p.detail,
@@ -125,6 +127,7 @@ export async function GET(req: Request) {
         pass: r.result === 'Passed',
         ts: r.executedAt ?? r.updatedAt,
         cycleId: r.cycleId,
+        cycleName: r.cycle.name,
         kind: 'caserun',
         label: r.testCase.title,
         detail: `${r.result} · ${r.cycle.name}`,
@@ -139,6 +142,7 @@ export async function GET(req: Request) {
         pass,
         ts: log.completedAt ?? log.createdAt,
         cycleId: log.id,
+        cycleName: log.name,
         kind: 'quicklog',
         label: log.name,
         detail: pass ? 'Pass' : `Fail · ${log.issueCount} issue${log.issueCount === 1 ? '' : 's'}`,

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ApiTestCase, CaseStatus, Priority, Severity, TestType, UserSummary } from '@/types';
+import { ApiTestCase, Priority, Severity, TestType, UserSummary } from '@/types';
 import { api } from '@/lib/client';
 import { exportApiTestCases } from '@/lib/export';
 import { ImportCsvModal } from '@/components/features/ImportCsvModal';
@@ -57,7 +57,6 @@ interface TestCaseListProps {
 const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
 const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
 const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
-const STATUSES: CaseStatus[] = ['Active', 'Draft', 'Archived'];
 const MODAL_SELECT_CLS =
   'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100';
 
@@ -66,7 +65,7 @@ const PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 5000] as const;
 const DEFAULT_PAGE_SIZE = 50;
 const ALL_PAGE_SIZE = 5000;
 
-type FilterKey = 'Priority' | 'Status' | 'Type' | 'Owner';
+type FilterKey = 'Priority' | 'Type';
 
 export function TestCaseList({
   projectId,
@@ -203,9 +202,7 @@ export function TestCaseList({
 
   // ─── Filters + paging ──────────────────────────────────────
   const [priorityF, setPriorityF] = useState<Set<Priority>>(new Set());
-  const [statusF, setStatusF] = useState<Set<CaseStatus>>(new Set<CaseStatus>(['Active']));
   const [typeF, setTypeF] = useState<Set<TestType>>(new Set());
-  const [ownerF, setOwnerF] = useState<Set<string>>(new Set());
   const [openFilter, setOpenFilter] = useState<FilterKey | null>(null);
   const filterBarRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
@@ -235,7 +232,7 @@ export function TestCaseList({
     // A selection made on one suite/page shouldn't silently carry over and
     // get bulk-deleted after the user navigates somewhere else.
     setSelected(new Set());
-  }, [priorityF, statusF, typeF, ownerF, search, activeSelectionKey, pageSize]);
+  }, [priorityF, typeF, search, activeSelectionKey, pageSize]);
 
   // ─── Cases (server fetch) ──────────────────────────────────
   const [cases, setCases] = useState<ApiTestCase[]>([]);
@@ -279,9 +276,7 @@ export function TestCaseList({
       else if (activeNode.kind === 'module') params.set('moduleId', activeNode.module.id);
       else params.set('portalId', activeNode.portal.id);
       priorityF.forEach(p => params.append('priority', p));
-      statusF.forEach(s => params.append('status', s));
       typeF.forEach(t => params.append('type', t));
-      ownerF.forEach(o => params.append('ownerId', o));
       if (search.trim()) params.set('search', search.trim());
 
       const data = await api.get<{
@@ -298,25 +293,11 @@ export function TestCaseList({
     } finally {
       setCasesLoading(false);
     }
-  }, [activeNode, page, pageSize, priorityF, statusF, typeF, ownerF, search, dataVersion]);
+  }, [activeNode, page, pageSize, priorityF, typeF, search, dataVersion]);
 
   useEffect(() => {
     fetchCases();
   }, [fetchCases]);
-
-  // ─── Users (owner filter) ──────────────────────────────────
-  const [users, setUsers] = useState<UserSummary[]>([]);
-  useEffect(() => {
-    api
-      .get<UserSummary[]>('/api/users')
-      .then(setUsers)
-      .catch(e => console.error('[users fetch]', e));
-  }, []);
-  const userById = useMemo(() => {
-    const m = new Map<string, UserSummary>();
-    users.forEach(u => m.set(u.id, u));
-    return m;
-  }, [users]);
 
   // ─── Tree mutation state ───────────────────────────────────
   // Tracks an in-progress create/rename. `targetId` = parent for adds, node for renames.
@@ -640,9 +621,7 @@ export function TestCaseList({
       else if (activeNode.kind === 'module') params.set('moduleId', activeNode.module.id);
       else params.set('portalId', activeNode.portal.id);
       priorityF.forEach(p => params.append('priority', p));
-      statusF.forEach(s => params.append('status', s));
       typeF.forEach(t => params.append('type', t));
-      ownerF.forEach(o => params.append('ownerId', o));
       if (search.trim()) params.set('search', search.trim());
 
       const data = await api.get<{ items: ApiTestCase[]; total: number }>(
@@ -667,13 +646,10 @@ export function TestCaseList({
 
   const clearAll = () => {
     setPriorityF(new Set());
-    setStatusF(new Set());
     setTypeF(new Set());
-    setOwnerF(new Set());
     setSearch('');
   };
-  const activeFilterCount =
-    priorityF.size + statusF.size + typeF.size + ownerF.size + (search.trim() ? 1 : 0);
+  const activeFilterCount = priorityF.size + typeF.size + (search.trim() ? 1 : 0);
 
   const toggleSelect = (id: string) =>
     setSelected(s => {
@@ -1005,7 +981,7 @@ export function TestCaseList({
                           <Chevron open={pOpen} />
                         </button>
                       }
-                      icon={<PortalGlyph icon={portal.icon} />}
+                      icon={<PortalGlyph />}
                       label={portal.name}
                       bold
                       suffix={
@@ -1200,20 +1176,6 @@ export function TestCaseList({
                 onOpen={() => setOpenFilter(openFilter === 'Priority' ? null : 'Priority')}
               />
               <FilterChip
-                label="Status"
-                icon="ti-circle-dot"
-                options={STATUSES}
-                selected={statusF}
-                onToggle={v => {
-                  const n = new Set(statusF);
-                  n.has(v) ? n.delete(v) : n.add(v);
-                  setStatusF(n);
-                }}
-                onClear={() => setStatusF(new Set())}
-                isOpen={openFilter === 'Status'}
-                onOpen={() => setOpenFilter(openFilter === 'Status' ? null : 'Status')}
-              />
-              <FilterChip
                 label="Type"
                 icon="ti-category"
                 options={TYPES}
@@ -1227,28 +1189,6 @@ export function TestCaseList({
                 isOpen={openFilter === 'Type'}
                 onOpen={() => setOpenFilter(openFilter === 'Type' ? null : 'Type')}
               />
-              <OwnerFilterChip
-                users={users}
-                selected={ownerF}
-                onToggle={uid => {
-                  const n = new Set(ownerF);
-                  n.has(uid) ? n.delete(uid) : n.add(uid);
-                  setOwnerF(n);
-                }}
-                onClear={() => setOwnerF(new Set())}
-                isOpen={openFilter === 'Owner'}
-                onOpen={() => setOpenFilter(openFilter === 'Owner' ? null : 'Owner')}
-              />
-
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-[7px] border border-dashed border-border px-2.5 py-1 text-[12px] text-text-3 hover:bg-surface-2"
-                disabled
-                title="More filters coming soon"
-              >
-                <i className="ti ti-plus text-[13px]" />
-                Add filter
-              </button>
 
               {activeFilterCount > 0 && (
                 <button
@@ -1586,10 +1526,9 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-function PortalGlyph({ icon }: { icon: string | null }) {
-  if (icon && icon.startsWith('ti-')) {
-    return <i className={cn('ti', icon, 'text-[14px] text-text-3')} />;
-  }
+// Every portal shows the same glyph — a per-portal custom icon made the tree
+// look inconsistent between portals rather than helping distinguish them.
+function PortalGlyph() {
   return <i className="ti ti-app-window text-[14px] text-text-3" />;
 }
 
@@ -2199,90 +2138,6 @@ function FilterChip<T extends string>({
               >
                 <CheckBox checked={checked} onChange={() => onToggle(opt)} />
                 <span className="text-text">{opt}</span>
-              </label>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Owner filter (uses user list, not enum) ─────────────────
-
-function OwnerFilterChip({
-  users,
-  selected,
-  onToggle,
-  onClear,
-  isOpen,
-  onOpen,
-}: {
-  users: UserSummary[];
-  selected: Set<string>;
-  onToggle: (id: string) => void;
-  onClear: () => void;
-  isOpen: boolean;
-  onOpen: () => void;
-}) {
-  const count = selected.size;
-  const singleUser = count === 1 ? users.find(u => u.id === Array.from(selected)[0]) : null;
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={onOpen}
-        className={cn(
-          'inline-flex items-center gap-1.5 rounded-[7px] border px-2.5 py-1 text-[12px] transition-colors',
-          count > 0
-            ? 'border-primary bg-primary-light font-medium text-primary-text'
-            : 'border-border bg-surface text-text-2 hover:bg-surface-2',
-        )}
-      >
-        <i className="ti ti-user text-[13px]" />
-        {singleUser ? `Owner: ${singleUser.name || singleUser.username}` : 'Owner'}
-        {count > 1 && (
-          <span className="ml-0.5 rounded-full bg-primary px-1.5 py-px font-mono text-[10px] text-white">
-            {count}
-          </span>
-        )}
-        {count > 0 ? (
-          <i
-            role="button"
-            onClick={e => {
-              e.stopPropagation();
-              onClear();
-            }}
-            className="ti ti-x ml-0.5 text-[12px] hover:text-text"
-          />
-        ) : (
-          <i className="ti ti-chevron-down text-[12px]" />
-        )}
-      </button>
-
-      {isOpen && (
-        <div className="absolute left-0 top-[calc(100%+4px)] z-30 max-h-[260px] w-[220px] overflow-auto rounded-lg border border-border bg-surface py-1.5 shadow-[0_4px_24px_-4px_rgba(28,25,23,0.12)]">
-          {users.length === 0 && (
-            <p className="px-3 py-2 text-[12px] italic text-text-3">No users yet</p>
-          )}
-          {users.map(u => {
-            const checked = selected.has(u.id);
-            const label = u.name || u.username;
-            return (
-              <label
-                key={u.id}
-                className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[13px] hover:bg-surface-2"
-              >
-                <CheckBox checked={checked} onChange={() => onToggle(u.id)} />
-                <span
-                  className={cn(
-                    'inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[9px] font-semibold',
-                    avatarColour(u.id),
-                  )}
-                >
-                  {initials(label)}
-                </span>
-                <span className="truncate text-text">{label}</span>
               </label>
             );
           })}

@@ -171,7 +171,6 @@ export function Dashboard({ onShowTestRuns, onOpenCycle, projectId }: DashboardP
               data.recentCycles.length > 0 ? `${data.recentCycles.length} total recent` : 'none yet'
             }
             deltaTone="neutral"
-            onClick={onShowTestRuns}
           />
         </div>
 
@@ -199,111 +198,27 @@ export function Dashboard({ onShowTestRuns, onOpenCycle, projectId }: DashboardP
           </Panel>
         </div>
 
-        {/* Pass-rate-by-module + Activity */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Panel title="Pass rate by module">
-            {data.moduleStability.length === 0 ? (
-              <p className="text-[13px] text-text-3">
-                No module data yet — execute some test runs to see stability.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {data.moduleStability.slice(0, 6).map(m => {
-                  const pr = m.passRate ?? 0;
-                  const color = pr >= 85 ? '#16A34A' : pr >= 70 ? '#EA580C' : '#DC2626';
-                  return (
-                    <div key={m.name}>
-                      <div className="mb-1.5 flex justify-between text-[13px]">
-                        <span className="text-text">{m.name}</span>
-                        <span className="font-mono tabular-nums text-text-2">
-                          {m.passRate === null ? '—' : `${m.passRate}%`}
-                        </span>
-                      </div>
-                      <div className="h-1.5 overflow-hidden rounded-[3px] bg-surface-2">
-                        <div
-                          className="h-full rounded-[3px] transition-[width] duration-500"
-                          style={{ width: `${pr}%`, background: color }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </Panel>
-
-          <Panel title="Recent activity">
-            {data.recentCycles.length === 0 ? (
-              <p className="text-[13px] text-text-3">
-                Nothing yet.{' '}
-                <button onClick={onShowTestRuns} className="text-primary hover:underline">
-                  Create a test run
-                </button>{' '}
-                to get started.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {data.recentCycles.slice(0, 5).map(c => {
-                  const isManual = c.mode === 'Manual';
-                  // Quick-log entries don't have per-case runs — express the outcome
-                  // as a single Pass/Fail based on whether any issues were logged.
-                  const manualVerdict =
-                    isManual && (c.issueCount ?? 0) === 0
-                      ? { label: 'Pass', tone: 'text-emerald-700 bg-emerald-50' }
-                      : isManual
-                        ? { label: 'Fail', tone: 'text-red-700 bg-red-50' }
-                        : null;
-                  // Manual cycles store their scope as free text instead of an id —
-                  // fall back to that when scopeName isn't set.
-                  const subText = isManual
-                    ? [c.portalName, c.moduleName, c.featureName].filter(Boolean).join(' › ') ||
-                      'quick log'
-                    : c.scopeType === 'All'
-                      ? 'all cases'
-                      : (c.scopeName ?? c.scopeType);
-                  // Manual rows want their completed-on date so back-dated entries
-                  // read correctly; CaseBased keep the createdAt.
-                  const dateIso = (isManual && c.completedAt) || c.createdAt;
-                  return (
-                    <button
-                      key={c.id}
-                      onClick={() => onOpenCycle?.(c.id)}
-                      className="flex items-center gap-2.5 rounded-md px-1 py-1 text-left text-[13px] transition-colors hover:bg-surface-2"
-                    >
-                      <Avatar name={c.name} status={c.status} />
-                      <div className="flex-1 text-text-2">
-                        <b className="font-medium text-text">{c.name}</b>
-                        <span> · </span>
-                        <span className="text-text-3">{subText}</span>
-                        <span> · </span>
-                        {manualVerdict ? (
-                          <span
-                            className={cn(
-                              'inline-flex items-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold',
-                              manualVerdict.tone,
-                            )}
-                          >
-                            {manualVerdict.label}
-                            {(c.issueCount ?? 0) > 0 && (
-                              <span className="ml-1 text-text-3">
-                                · {c.issueCount} issue{c.issueCount === 1 ? '' : 's'}
-                              </span>
-                            )}
-                          </span>
-                        ) : (
-                          <span className="text-text-3">
-                            {c.done}/{c.total} runs · {c.passRate}% pass
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-[12px] text-text-3">{relativeTime(dateIso)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </Panel>
-        </div>
+        {/* Recent activity */}
+        <Panel
+          title="Recent activity"
+          secondary={data.recentCycles.length > 0 ? `${data.recentCycles.length} recent` : undefined}
+        >
+          {data.recentCycles.length === 0 ? (
+            <p className="text-[13px] text-text-3">
+              Nothing yet.{' '}
+              <button onClick={onShowTestRuns} className="text-primary hover:underline">
+                Create a test run
+              </button>{' '}
+              to get started.
+            </p>
+          ) : (
+            <div className="divide-y divide-border">
+              {data.recentCycles.slice(0, 8).map(c => (
+                <ActivityRow key={c.id} cycle={c} onOpen={onOpenCycle} />
+              ))}
+            </div>
+          )}
+        </Panel>
       </div>
     </div>
   );
@@ -317,29 +232,24 @@ function KpiCard({
   value,
   delta,
   deltaTone,
-  onClick,
 }: {
   icon: string;
   label: string;
   value: string;
   delta: string;
   deltaTone: 'up' | 'down' | 'neutral';
-  onClick?: () => void;
 }) {
   const tone =
     deltaTone === 'up' ? 'text-success' : deltaTone === 'down' ? 'text-danger' : 'text-text-3';
   return (
-    <button
-      onClick={onClick}
-      className="group rounded-lg border border-border bg-surface p-[16px_18px] text-left transition-all hover:-translate-y-px hover:border-border-strong hover:shadow-sm"
-    >
+    <div className="rounded-lg border border-border bg-surface p-[16px_18px]">
       <div className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-text-2">
         <i className={`ti ${icon} text-[14px]`} />
         {label}
       </div>
       <div className="mb-1 text-[28px] font-semibold tracking-[-0.02em] text-text">{value}</div>
       <div className={`flex items-center gap-1 text-[12px] ${tone}`}>{delta}</div>
-    </button>
+    </div>
   );
 }
 
@@ -481,19 +391,81 @@ function DonutChart({
   );
 }
 
-function Avatar({ name, status }: { name: string; status: string }) {
-  const tone =
-    status === 'Active'
-      ? 'bg-[#E0E7FF] text-[#3730A3]'
-      : status === 'Completed'
-        ? 'bg-[#DBEAFE] text-[#1E40AF]'
-        : 'bg-[#F5F5F4] text-[#44403C]';
-  const initial = (name || '?').charAt(0).toUpperCase();
+function ActivityRow({
+  cycle: c,
+  onOpen,
+}: {
+  cycle: RecentCycle;
+  onOpen?: (id: string) => void;
+}) {
+  const isManual = c.mode === 'Manual';
+  // Quick-log entries don't have per-case runs — express the outcome as a
+  // single Pass/Fail based on whether any issues were logged.
+  const manualVerdict =
+    isManual && (c.issueCount ?? 0) === 0
+      ? { label: 'Pass', tone: 'text-emerald-700 bg-emerald-50' }
+      : isManual
+        ? { label: 'Fail', tone: 'text-red-700 bg-red-50' }
+        : null;
+  // Manual cycles store their scope as free text instead of an id — fall
+  // back to that when scopeName isn't set.
+  const subText = isManual
+    ? [c.portalName, c.moduleName, c.featureName].filter(Boolean).join(' › ') || 'quick log'
+    : c.scopeType === 'All'
+      ? 'all cases'
+      : (c.scopeName ?? c.scopeType);
+  // Manual rows want their completed-on date so back-dated entries read
+  // correctly; CaseBased keep the createdAt.
+  const dateIso = (isManual && c.completedAt) || c.createdAt;
+
+  const status = manualVerdict
+    ? manualVerdict.label === 'Pass'
+      ? { icon: 'ti-check', tone: 'bg-emerald-50 text-emerald-600' }
+      : { icon: 'ti-x', tone: 'bg-red-50 text-red-600' }
+    : c.status === 'Active'
+      ? { icon: 'ti-player-play', tone: 'bg-indigo-50 text-indigo-600' }
+      : c.passRate >= 90
+        ? { icon: 'ti-check', tone: 'bg-emerald-50 text-emerald-600' }
+        : { icon: 'ti-alert-triangle', tone: 'bg-amber-50 text-amber-600' };
+
   return (
-    <span
-      className={`flex h-[30px] w-[30px] flex-shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${tone}`}
+    <button
+      onClick={() => onOpen?.(c.id)}
+      className="flex w-full items-start gap-3 py-2.5 text-left transition-colors hover:bg-surface-2"
     >
-      {initial}
-    </span>
+      <span
+        className={cn(
+          'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full',
+          status.tone,
+        )}
+      >
+        <i className={cn('ti', status.icon, 'text-[15px]')} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate text-[13px] font-medium text-text">{c.name}</span>
+          <span className="flex-shrink-0 text-[11.5px] text-text-3">{relativeTime(dateIso)}</span>
+        </div>
+        <div className="mt-1 flex items-center gap-1.5 text-[12px] text-text-3">
+          <span className="truncate">{subText}</span>
+          {manualVerdict ? (
+            <span
+              className={cn(
+                'inline-flex flex-shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold',
+                manualVerdict.tone,
+              )}
+            >
+              {manualVerdict.label}
+              {(c.issueCount ?? 0) > 0 &&
+                ` · ${c.issueCount} issue${c.issueCount === 1 ? '' : 's'}`}
+            </span>
+          ) : (
+            <span className="flex-shrink-0">
+              · {c.done}/{c.total} · {c.passRate}%
+            </span>
+          )}
+        </div>
+      </div>
+    </button>
   );
 }

@@ -3,7 +3,7 @@ import './globals.css';
 import { themeInitScript } from '@/lib/theme';
 
 export const metadata: Metadata = {
-  title: 'Simplitest — Test Case Management System',
+  title: 'Simplitest — Test Management Platform',
   description: 'Organize, track, and export your QA test suite.',
 };
 

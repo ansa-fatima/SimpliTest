@@ -1,6 +1,6 @@
-# TCMS — Test Case Management System
+# Simplitest — Test Management Platform
 
-A production-grade Test Case Management System built with **Next.js 14**, **React 18**, **TypeScript**, and **Tailwind CSS**.
+A production-grade test management platform — test cases, test runs, reports, and team management — built with **Next.js 14**, **React 18**, **TypeScript**, and **Tailwind CSS**.
 
 ---
 

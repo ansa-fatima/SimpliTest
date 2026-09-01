@@ -103,9 +103,31 @@ export async function GET(req: Request) {
     const skipped = runs.filter(r => r.result === 'Skipped').length;
     const passRate = executed === 0 ? 0 : Math.round((passed / executed) * 100);
 
-    // Build daily buckets. Show up to 30 buckets; aggregate by week for >30-day windows.
-    const bucketDays = days === null || days > 30 ? Math.ceil((days ?? 90) / 7) : (days ?? 30);
-    const bucketSize = days === null ? 86_400_000 : days > 30 ? 7 * 86_400_000 : 86_400_000;
+    // Build daily buckets for windows of 30 days or less; aggregate by week
+    // for longer ones. "All time" used to default to a fixed 13-day daily
+    // grid — far shorter than the actual data range the KPIs above already
+    // cover, so the chart silently dropped everything older than 13 days
+    // while the KPI tiles kept counting it. Size the "all time" grid to the
+    // real span of the data instead (weekly buckets, capped so a very old
+    // workspace doesn't render hundreds of bars).
+    let bucketDays: number;
+    let bucketSize: number;
+    if (days === null) {
+      const allTimestamps = [
+        ...runs.map(r => r.executedAt!.getTime()),
+        ...manualLogs.map(l => (l.completedAt ?? l.createdAt).getTime()),
+      ];
+      const earliest = allTimestamps.length ? Math.min(...allTimestamps) : now.getTime();
+      const spanDays = Math.max(1, Math.ceil((now.getTime() - earliest) / 86_400_000));
+      bucketSize = 7 * 86_400_000;
+      bucketDays = Math.min(60, Math.max(1, Math.ceil(spanDays / 7)));
+    } else if (days > 30) {
+      bucketSize = 7 * 86_400_000;
+      bucketDays = Math.ceil(days / 7);
+    } else {
+      bucketSize = 86_400_000;
+      bucketDays = days;
+    }
     const buckets: {
       label: string;
       from: Date;
