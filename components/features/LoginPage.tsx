@@ -134,8 +134,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               {!isRegister && (
                 <button
                   type="button"
-                  className="text-[13px] font-medium text-primary transition-colors hover:text-primary-hover"
+                  className="cursor-help text-[13px] font-medium text-primary transition-colors hover:text-primary-hover"
                   disabled
+                  title="Ask your workspace's Super Admin to reset it from Members"
                 >
                   Forgot?
                 </button>

@@ -34,6 +34,11 @@ model User {
   avatarUrl    String?
   googleId     String?   @unique
   microsoftId  String?   @unique
+  // Admin-mediated password reset — no email sending is configured, so an
+  // admin generates this token from Members and shares the link manually
+  // (same trust model as workspace invites). Cleared once used or expired.
+  resetToken           String?   @unique
+  resetTokenExpiresAt  DateTime?
   role         UserRole   @default(Tester)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt

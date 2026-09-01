@@ -61,6 +61,7 @@ export function Members({
   const [tab, setTab] = useState<TabKey>('all');
   const [search, setSearch] = useState('');
   const [showInvite, setShowInvite] = useState(false);
+  const [resetTarget, setResetTarget] = useState<Member | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -253,6 +254,9 @@ export function Members({
                     canRemove={canRemove}
                     onChangeRole={role => onChangeRole(m.id, role)}
                     onRemove={() => onRemove(m)}
+                    onResetPassword={
+                      canRemove && m.status === 'Active' ? () => setResetTarget(m) : undefined
+                    }
                   />
                 ))
               )}
@@ -272,6 +276,10 @@ export function Members({
           }}
         />
       )}
+
+      {resetTarget && (
+        <ResetPasswordDialog member={resetTarget} onClose={() => setResetTarget(null)} />
+      )}
     </div>
   );
 }
@@ -286,6 +294,7 @@ function MemberRow({
   canRemove,
   onChangeRole,
   onRemove,
+  onResetPassword,
 }: {
   member: Member;
   currentUserId: string;
@@ -294,6 +303,8 @@ function MemberRow({
   canRemove: boolean;
   onChangeRole: (role: Role) => void;
   onRemove: () => void;
+  /** Present only when the caller may reset this member's password (SuperAdmin, Active members only). */
+  onResetPassword?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [editingRole, setEditingRole] = useState(false);
@@ -447,6 +458,16 @@ function MemberRow({
                   onClick={() => {
                     setEditingRole(true);
                     setMenuOpen(false);
+                  }}
+                />
+              )}
+              {onResetPassword && !isSelf && (
+                <MenuItem
+                  icon="ti-key"
+                  label="Reset password"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onResetPassword();
                   }}
                 />
               )}
@@ -774,6 +795,124 @@ function Tab({
         {count}
       </span>
     </button>
+  );
+}
+
+// Admin-triggered password reset — generates a one-time link (no email
+// sending configured) that the admin copies and shares directly, same
+// pattern as the invite link above.
+function ResetPasswordDialog({ member, onClose }: { member: Member; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [resetUrl, setResetUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const generate = async () => {
+    if (busy) return;
+    setErr(null);
+    try {
+      setBusy(true);
+      const res = await api.post<{ resetUrl: string }>(`/api/users/${member.id}/reset-password`);
+      const fullUrl =
+        typeof window !== 'undefined' ? `${window.location.origin}${res.resetUrl}` : res.resetUrl;
+      setResetUrl(fullUrl);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyLink = async () => {
+    if (!resetUrl) return;
+    try {
+      await navigator.clipboard.writeText(resetUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      window.prompt('Copy this reset link', resetUrl);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-[440px] rounded-lg border border-border bg-surface shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)]"
+      >
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <div>
+            <h3 className="text-[14px] font-semibold text-text">
+              Reset password for {member.name || member.username}
+            </h3>
+            <p className="mt-0.5 text-[11.5px] text-text-3">
+              {resetUrl
+                ? 'Share this link directly with them — it expires in 1 hour.'
+                : "They won't be emailed — you'll get a link to send them yourself."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded p-1 text-text-3 hover:bg-surface-2 hover:text-text"
+            title="Close"
+          >
+            <i className="ti ti-x text-[16px]" />
+          </button>
+        </div>
+
+        <div className="space-y-3 px-5 py-4">
+          {err && (
+            <div className="rounded border border-danger/30 bg-danger-bg px-3 py-2 text-[12px] text-danger-text">
+              {err}
+            </div>
+          )}
+
+          {resetUrl ? (
+            <div>
+              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-text-3">
+                Reset link
+              </label>
+              <div className="flex gap-2">
+                <input
+                  readOnly
+                  value={resetUrl}
+                  onFocus={e => e.currentTarget.select()}
+                  className="min-w-0 flex-1 rounded border border-border bg-surface-2/40 px-2 py-1.5 font-mono text-[11.5px] text-text outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={copyLink}
+                  className="inline-flex items-center gap-1 rounded border border-border bg-surface px-2.5 py-1.5 text-[12px] text-text-2 hover:bg-surface-2"
+                >
+                  <i
+                    className={cn(
+                      'ti',
+                      copied ? 'ti-check text-emerald-600' : 'ti-clipboard',
+                      'text-[13px]',
+                    )}
+                  />
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={generate}
+              disabled={busy}
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3.5 py-2 text-[13.5px] font-medium text-white shadow-sm transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy && <i className="ti ti-loader-2 animate-spin text-[15px]" />}
+              Generate reset link
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
