@@ -940,10 +940,11 @@ function StabilityDrilldownPanel({
 }) {
   const trendPoints = useMemo(() => bucketPassRates(node.logs), [node.logs]);
 
-  // Group failed data points by their cycle — one row per failed test cycle
-  // or quick log, not per failed test case, so a regression run with 12
-  // failing cases shows up once instead of 12 times.
-  const failedCycles = useMemo(() => {
+  // Group data points by their cycle — one row per test cycle or quick log,
+  // not per test case, so a regression run with 12 cases shows up once
+  // instead of 12 times. A cycle counts as passing only if every one of its
+  // grouped data points passed.
+  const cyclesList = useMemo(() => {
     const groups = new Map<
       string,
       {
@@ -951,31 +952,37 @@ function StabilityDrilldownPanel({
         cycleName: string;
         kind: 'quicklog' | 'caserun';
         count: number;
+        failCount: number;
         detail: string;
         latestTs: string;
       }
     >();
     for (const l of node.logs) {
-      if (l.pass) continue;
       const g = groups.get(l.cycleId);
       if (g) {
         g.count++;
-        if (new Date(l.ts) > new Date(g.latestTs)) g.latestTs = l.ts;
+        if (!l.pass) g.failCount++;
+        if (new Date(l.ts) > new Date(g.latestTs)) {
+          g.latestTs = l.ts;
+          g.detail = l.detail;
+        }
       } else {
         groups.set(l.cycleId, {
           cycleId: l.cycleId,
           cycleName: l.cycleName,
           kind: l.kind,
           count: 1,
+          failCount: l.pass ? 0 : 1,
           detail: l.detail,
           latestTs: l.ts,
         });
       }
     }
-    return Array.from(groups.values()).sort(
-      (a, b) => new Date(b.latestTs).getTime() - new Date(a.latestTs).getTime(),
-    );
+    return Array.from(groups.values())
+      .map(g => ({ ...g, pass: g.failCount === 0 }))
+      .sort((a, b) => new Date(b.latestTs).getTime() - new Date(a.latestTs).getTime());
   }, [node.logs]);
+  const failingCount = cyclesList.filter(g => !g.pass).length;
 
   const chartColor =
     node.label === 'Stable'
@@ -1017,7 +1024,7 @@ function StabilityDrilldownPanel({
 
         <div className="border-b border-border px-5 py-4">
           {node.total === 0 ? (
-            <p className="text-[12px] text-text-3">No test runs yet for this module.</p>
+            <p className="text-[12px] text-text-3">No data yet for this module.</p>
           ) : (
             <>
               <div className="mb-0.5 flex items-baseline gap-2.5">
@@ -1098,19 +1105,21 @@ function StabilityDrilldownPanel({
         </div>
 
         <div className="flex items-center justify-between px-5 pb-1.5 pt-3">
-          <span className="text-[12px] font-semibold text-red-600">
-            Failed runs ({failedCycles.length})
-          </span>
-          {failedCycles.length > 0 && <span className="text-[11px] text-text-3">newest first</span>}
+          <span className="text-[12px] font-semibold text-text">Cycles ({cyclesList.length})</span>
+          {cyclesList.length > 0 && (
+            <span className="text-[11px] text-text-3">
+              {failingCount > 0 ? `${failingCount} failing · ` : ''}newest first
+            </span>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto pb-2">
-          {failedCycles.length === 0 ? (
+          {cyclesList.length === 0 ? (
             <p className="px-5 py-6 text-center text-[12px] text-text-3">
-              No failures — this module is healthy.
+              No cycles logged against this module yet.
             </p>
           ) : (
-            failedCycles.map(g => (
+            cyclesList.map(g => (
               <button
                 key={g.cycleId}
                 type="button"
@@ -1121,12 +1130,33 @@ function StabilityDrilldownPanel({
                 }}
                 className="flex w-full items-center gap-2.5 px-5 py-2.5 text-left hover:bg-surface-2 disabled:cursor-default disabled:hover:bg-transparent"
               >
-                <i className="ti ti-circle-x flex-shrink-0 text-[15px] text-red-600" />
+                <i
+                  className={cn(
+                    'flex-shrink-0 text-[15px]',
+                    g.pass ? 'ti ti-circle-check text-emerald-600' : 'ti ti-circle-x text-red-600',
+                  )}
+                />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12px] font-medium text-text">{g.cycleName}</div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate text-[12px] font-medium text-text">
+                      {g.cycleName}
+                    </span>
+                    <span
+                      className={cn(
+                        'flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider',
+                        g.kind === 'caserun'
+                          ? 'bg-indigo-50 text-indigo-600'
+                          : 'bg-slate-100 text-slate-500',
+                      )}
+                    >
+                      {g.kind === 'caserun' ? 'Test run' : 'Quick log'}
+                    </span>
+                  </div>
                   <div className="truncate text-[10.5px] text-text-3">
                     {g.kind === 'caserun'
-                      ? `${g.count} case${g.count === 1 ? '' : 's'} failed`
+                      ? g.pass
+                        ? `${g.count} case${g.count === 1 ? '' : 's'} passed`
+                        : `${g.failCount} of ${g.count} case${g.count === 1 ? '' : 's'} failed`
                       : g.detail}
                   </div>
                 </div>

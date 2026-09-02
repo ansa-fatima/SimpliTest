@@ -131,6 +131,11 @@ export function NewCycleModal({
   const [criticalCount, setCriticalCount] = useState(initial?.criticalCount ?? 0);
   const [majorCount, setMajorCount] = useState(initial?.majorCount ?? 0);
   const [minorCount, setMinorCount] = useState(initial?.minorCount ?? 0);
+  // How many of the issues above are resolved vs still open — plain counts
+  // the tester fills in directly, most useful when this cycle retests an
+  // earlier one, but available any time.
+  const [doneCount, setDoneCount] = useState(initial?.doneCount ?? 0);
+  const [remainingCount, setRemainingCount] = useState(initial?.remainingCount ?? 0);
   const [passedCount, setPassedCount] = useState(initial?.passedCount ?? 0);
   const [failedCount, setFailedCount] = useState(initial?.failedCount ?? 0);
   const [blockedCount, setBlockedCount] = useState(initial?.blockedCount ?? 0);
@@ -315,6 +320,8 @@ export function NewCycleModal({
       payload.criticalCount = criticalCount;
       payload.majorCount = majorCount;
       payload.minorCount = minorCount;
+      payload.doneCount = doneCount;
+      payload.remainingCount = remainingCount;
       payload.passedCount = passedCount;
       payload.failedCount = failedCount;
       payload.blockedCount = blockedCount;
@@ -563,6 +570,24 @@ export function NewCycleModal({
                       Critical + Major + Minor ({severitySum}) must equal Total ({issueCount}).
                     </p>
                   )}
+
+                  {/* Resolution — optional. To record a retest, come back and
+                      edit THIS SAME cycle with fresh Done / Remaining numbers
+                      rather than logging a new one. */}
+                  <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-slate-200 pt-2.5">
+                    <CountField
+                      label="Done"
+                      value={doneCount}
+                      onChange={setDoneCount}
+                      tone="success"
+                    />
+                    <CountField
+                      label="Remaining"
+                      value={remainingCount}
+                      onChange={setRemainingCount}
+                      tone="danger"
+                    />
+                  </div>
                 </div>
 
                 {/* Test case counts (optional) */}

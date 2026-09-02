@@ -109,6 +109,7 @@ export async function GET(req: Request) {
           scopeType: true,
           scopeId: true,
           issueCount: true,
+          remainingCount: true,
           completedAt: true,
           createdAt: true,
         },
@@ -137,7 +138,15 @@ export async function GET(req: Request) {
     }
     for (const log of quickLogs) {
       if (!log.scopeId) continue;
-      const pass = (log.issueCount ?? 0) === 0;
+      // A retest that resolves every NEW issue it found but still leaves
+      // older ones open (remainingCount > 0) isn't a clean pass — both must
+      // be zero.
+      const remaining = log.remainingCount ?? 0;
+      const pass = (log.issueCount ?? 0) === 0 && remaining === 0;
+      const failDetail =
+        (log.issueCount ?? 0) > 0
+          ? `Fail · ${log.issueCount} issue${log.issueCount === 1 ? '' : 's'}`
+          : `Fail · ${remaining} issue${remaining === 1 ? '' : 's'} still open`;
       const point: DataPoint = {
         pass,
         ts: log.completedAt ?? log.createdAt,
@@ -145,7 +154,7 @@ export async function GET(req: Request) {
         cycleName: log.name,
         kind: 'quicklog',
         label: log.name,
-        detail: pass ? 'Pass' : `Fail · ${log.issueCount} issue${log.issueCount === 1 ? '' : 's'}`,
+        detail: pass ? 'Pass' : failDetail,
       };
       if (log.scopeType === 'Suite') pushTo(suitePoints, log.scopeId, point);
       else if (log.scopeType === 'Module') pushTo(moduleDirectPoints, log.scopeId, point);

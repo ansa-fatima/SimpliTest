@@ -14,6 +14,7 @@ import { Members } from '@/components/features/Members';
 import { ComingSoon } from '@/components/features/ComingSoon';
 import { WorkspaceOnboarding } from '@/components/features/WorkspaceOnboarding';
 import { Profile } from '@/components/features/Profile';
+import { ManualCycleSummaryModal } from '@/components/features/ManualCycleSummaryModal';
 import { Toast } from '@/components/ui/Toast';
 
 export default function Home() {
@@ -36,6 +37,7 @@ export default function Home() {
     showTestCases,
     showCycles,
     openCycle,
+    closeQuickLogCycle,
     backToCycles,
     createCycle,
     archiveCycle,
@@ -80,6 +82,7 @@ export default function Home() {
     summary,
     cyclesLoading,
     runsLoading,
+    quickLogCycle,
     dataVersion,
   } = state;
 
@@ -314,6 +317,20 @@ export default function Home() {
           />
         )}
       </main>
+
+      {/* Quick log summary — opened from outside the Test Runs page (Dashboard's
+          Recent activity, the Stability report drilldown) since a quick log has
+          no per-case runs to show in CycleView. */}
+      {quickLogCycle && (
+        <ManualCycleSummaryModal
+          cycle={quickLogCycle}
+          onClose={closeQuickLogCycle}
+          onEdit={() => {
+            closeQuickLogCycle();
+            showCycles();
+          }}
+        />
+      )}
 
       {/* Toast notification */}
       {toast && <Toast msg={toast.msg} type={toast.type} />}

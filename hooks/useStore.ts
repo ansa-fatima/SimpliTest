@@ -112,6 +112,11 @@ export interface AppState {
   summary: CycleSummary | null;
   cyclesLoading: boolean;
   runsLoading: boolean;
+  // Quick log (Manual-mode cycle) opened from outside the Test Runs page —
+  // e.g. Dashboard's Recent activity or the Stability report drilldown. Shown
+  // as a read-only summary modal rather than navigating into CycleView, which
+  // has nothing to show for a quick log (no per-case TestRun rows).
+  quickLogCycle: TestCycle | null;
 
   // Monotonic counter — bumped on test-case create/edit/delete so any subscribed
   // list (e.g. TestCaseList) refetches from the API.
@@ -142,6 +147,7 @@ export function useStore() {
     summary: null,
     cyclesLoading: false,
     runsLoading: false,
+    quickLogCycle: null,
     dataVersion: 0,
   });
 
@@ -770,28 +776,49 @@ export function useStore() {
 
   const openCycle = useCallback(
     async (cycleId: string) => {
+      // Resolve the cycle first (cheap local cache hit in the common case) so
+      // a quick log never flashes into the CycleView "Test runs" page before
+      // being redirected — it has no per-case TestRun rows to show there.
+      let cycle = state.cycles.find(c => c.id === cycleId) ?? null;
+      if (!cycle) {
+        try {
+          cycle = await api.get<TestCycle>(`/api/cycles/${cycleId}`);
+        } catch (e) {
+          showToast(`Failed to open cycle: ${(e as Error).message}`, 'error');
+          return;
+        }
+      }
+      if ((cycle.mode ?? 'CaseBased') === 'Manual') {
+        setState(s => ({ ...s, quickLogCycle: cycle }));
+        return;
+      }
+
       setState(s => ({
         ...s,
         page: 'cycle',
-        currentCycle: s.cycles.find(c => c.id === cycleId) || null,
+        currentCycle: cycle,
         runs: [],
         summary: null,
         runsLoading: true,
       }));
       try {
-        const [runs, summary, cycle] = await Promise.all([
+        const [runs, summary, freshCycle] = await Promise.all([
           api.get<ApiTestRun[]>(`/api/cycles/${cycleId}/runs`),
           api.get<CycleSummary>(`/api/cycles/${cycleId}/summary`),
           api.get<TestCycle>(`/api/cycles/${cycleId}`),
         ]);
-        setState(s => ({ ...s, runs, summary, currentCycle: cycle, runsLoading: false }));
+        setState(s => ({ ...s, runs, summary, currentCycle: freshCycle, runsLoading: false }));
       } catch (e) {
         setState(s => ({ ...s, runsLoading: false }));
         showToast(`Failed to open cycle: ${(e as Error).message}`, 'error');
       }
     },
-    [showToast],
+    [showToast, state.cycles],
   );
+
+  const closeQuickLogCycle = useCallback(() => {
+    setState(s => ({ ...s, quickLogCycle: null }));
+  }, []);
 
   const backToCycles = useCallback(() => {
     setState(s => ({ ...s, page: 'cycles', currentCycle: null, runs: [], summary: null }));
@@ -986,6 +1013,7 @@ export function useStore() {
     showTestCases,
     showCycles,
     openCycle,
+    closeQuickLogCycle,
     backToCycles,
     createCycle,
     archiveCycle,
