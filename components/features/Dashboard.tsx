@@ -306,6 +306,7 @@ function TrendChart({ weekly }: { weekly: DashboardData['weeklyRuns'] }) {
 
   const passPts = weekly.map((w, i) => `${x(i)},${y(w.pass)}`).join(' ');
   const failPts = weekly.map((w, i) => `${x(i)},${y(w.fail)}`).join(' ');
+  const blockedPts = weekly.map((w, i) => `${x(i)},${y(w.blocked)}`).join(' ');
   const passAreaPath =
     `M ${x(0)},${H} ` +
     weekly.map((w, i) => `L ${x(i)},${y(w.pass)}`).join(' ') +
@@ -327,6 +328,7 @@ function TrendChart({ weekly }: { weekly: DashboardData['weeklyRuns'] }) {
       <path d={passAreaPath} fill="url(#passGrad)" />
       <polyline fill="none" stroke="#16A34A" strokeWidth="2" points={passPts} />
       <polyline fill="none" stroke="#DC2626" strokeWidth="2" points={failPts} />
+      <polyline fill="none" stroke="#EA580C" strokeWidth="2" points={blockedPts} />
       {weekly.map((w, i) => (
         <text key={i} x={x(i)} y={H - 2} textAnchor="middle" fontSize="9" fill="#A8A29E">
           {w.label}

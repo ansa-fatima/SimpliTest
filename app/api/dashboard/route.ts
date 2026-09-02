@@ -104,6 +104,8 @@ export async function GET(req: Request) {
           completedAt: true,
           createdAt: true,
           issueCount: true,
+          doneCount: true,
+          remainingCount: true,
           scopeType: true,
           scopeId: true,
         },
@@ -154,7 +156,20 @@ export async function GET(req: Request) {
 
     const logTs = (l: { completedAt: Date | null; createdAt: Date }) =>
       l.completedAt ?? l.createdAt;
-    const logPass = (l: { issueCount: number | null }) => (l.issueCount ?? 0) === 0;
+    // Same rule as the Stability report: once a log's Done/Remaining counts
+    // have actually been touched, the live Remaining count decides pass/fail
+    // — not the frozen original issueCount — so a fully-resolved cycle reads
+    // as a pass here too instead of staying stuck as a fail forever.
+    const logPass = (l: {
+      issueCount: number | null;
+      doneCount?: number | null;
+      remainingCount?: number | null;
+    }) => {
+      const done = l.doneCount ?? 0;
+      const remaining = l.remainingCount ?? 0;
+      const tracked = done > 0 || remaining > 0;
+      return tracked ? remaining === 0 : (l.issueCount ?? 0) === 0;
+    };
     const manualCurrent = manualLogs.filter(l => logTs(l) >= thirtyDaysAgo);
     const manualPrev = manualLogs.filter(l => logTs(l) >= sixtyDaysAgo && logTs(l) < thirtyDaysAgo);
 
@@ -257,7 +272,7 @@ export async function GET(req: Request) {
         // Quick logs have no per-case runs — represent the log itself as one
         // pass/fail data point so summaries that reduce over `counts` (the
         // Execution summary donut) count it instead of silently ignoring it.
-        const isPass = (c.issueCount ?? 0) === 0;
+        const isPass = logPass(c);
         counts = { ...counts, Passed: isPass ? 1 : 0, Failed: isPass ? 0 : 1 };
         total = 1;
         done = 1;
