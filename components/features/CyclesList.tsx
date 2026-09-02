@@ -293,7 +293,7 @@ export function CyclesList({
                     <tr
                       key={c.id}
                       onClick={() => {
-                        if (isManual) setEditingCycle(c);
+                        if (isManual) setSummaryFor(c);
                         else onOpen(c.id);
                       }}
                       className="group cursor-pointer border-b border-border transition-colors last:border-b-0 hover:bg-surface-2"
@@ -505,7 +505,14 @@ export function CyclesList({
       {reportFor && <CycleReportModal cycleId={reportFor} onClose={() => setReportFor(null)} />}
 
       {summaryFor && (
-        <ManualCycleSummaryModal cycle={summaryFor} onClose={() => setSummaryFor(null)} />
+        <ManualCycleSummaryModal
+          cycle={summaryFor}
+          onClose={() => setSummaryFor(null)}
+          onEdit={() => {
+            setEditingCycle(summaryFor);
+            setSummaryFor(null);
+          }}
+        />
       )}
     </div>
   );
@@ -626,7 +633,15 @@ function renderTicketLink(value: string) {
 // completion box, "Failed/Blocked" breakdown sections — so the two summary views feel
 // identical regardless of whether the cycle is CaseBased or Manual.
 
-function ManualCycleSummaryModal({ cycle, onClose }: { cycle: TestCycle; onClose: () => void }) {
+function ManualCycleSummaryModal({
+  cycle,
+  onClose,
+  onEdit,
+}: {
+  cycle: TestCycle;
+  onClose: () => void;
+  onEdit: () => void;
+}) {
   const [copied, setCopied] = useState(false);
 
   // Derived numbers (use 0 when fields are null/undefined).
@@ -692,6 +707,9 @@ function ManualCycleSummaryModal({ cycle, onClose }: { cycle: TestCycle; onClose
           <div className="flex items-center gap-2">
             <Button variant="default" onClick={copy}>
               {copied ? '✓ Copied' : '📋 Copy text'}
+            </Button>
+            <Button variant="default" onClick={onEdit}>
+              ✏️ Edit
             </Button>
             <button
               type="button"
