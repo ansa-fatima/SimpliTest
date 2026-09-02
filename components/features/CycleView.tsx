@@ -64,6 +64,23 @@ export function CycleView({
   const done = summary?.done ?? total - counts.NotRun;
   const percent = summary?.percent ?? (total === 0 ? 0 : Math.round((done / total) * 100));
 
+  // Retest tracking — Done/Remaining mirrors the quick-log convention (resolved
+  // vs. still-open), computed live from the current run results rather than a
+  // separate stored counter, so it's always in sync and updates the moment a
+  // failed case is retested to Passed. Severity breakdown is derived the same
+  // way, straight from each currently-failed case's own severity field.
+  const retestDone = counts.Passed;
+  const retestRemaining = counts.Failed;
+  const failureSeverity = useMemo(() => {
+    const tally = { Critical: 0, Major: 0, Minor: 0 };
+    for (const r of runs) {
+      if (r.result !== 'Failed') continue;
+      const sev = r.testCase.severity;
+      if (sev in tally) tally[sev as keyof typeof tally]++;
+    }
+    return tally;
+  }, [runs]);
+
   // Distinct executor names → avatar stack (max 3 + “+N”).
   const executors = useMemo(() => {
     const seen = new Set<string>();
@@ -237,6 +254,27 @@ export function CycleView({
               valueClass="text-slate-500"
             />
           </div>
+
+          {(retestDone > 0 || retestRemaining > 0) && (
+            <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-border pt-3 text-[12px]">
+              <span className="font-medium text-text-2">
+                Retest: <span className="font-semibold text-emerald-700">{retestDone} done</span> ·{' '}
+                <span className="font-semibold text-red-700">{retestRemaining} remaining</span>
+              </span>
+              {retestRemaining > 0 && (
+                <span className="flex items-center gap-3 text-text-2">
+                  <span className="text-text-3">Open failures by severity:</span>
+                  <SeverityDot
+                    color="bg-red-600"
+                    label="Critical"
+                    value={failureSeverity.Critical}
+                  />
+                  <SeverityDot color="bg-orange-500" label="Major" value={failureSeverity.Major} />
+                  <SeverityDot color="bg-yellow-500" label="Minor" value={failureSeverity.Minor} />
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Two-column body */}
@@ -351,7 +389,10 @@ export function CycleView({
             <SelectedCasePanel
               key={selectedRun.id}
               run={selectedRun}
-              readOnly={cycle.status !== 'Active'}
+              // Always editable, even once the cycle is Completed — retesting a
+              // previously-failed case (e.g. marking it Passed once fixed) needs
+              // to work without reopening the whole cycle first.
+              readOnly={false}
               onSubmitResult={onSubmitResult}
             />
           )}
@@ -597,6 +638,16 @@ function Pill({ children, className }: { children: React.ReactNode; className: s
       )}
     >
       {children}
+    </span>
+  );
+}
+
+function SeverityDot({ color, label, value }: { color: string; label: string; value: number }) {
+  return (
+    <span className="flex items-center gap-1 text-text-2">
+      <span className={cn('inline-block h-2 w-2 rounded-full', color)} />
+      <span className="font-semibold text-text">{value}</span>
+      <span>{label}</span>
     </span>
   );
 }
