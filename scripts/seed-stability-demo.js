@@ -64,13 +64,22 @@ async function main() {
       portalName = suite.module.portal.name;
       moduleName = suite.module.name;
       featureName = suite.name;
-      cases = await prisma.testCase.findMany({ where: { suiteId: g.suiteId }, select: { id: true } });
+      cases = await prisma.testCase.findMany({
+        where: { suiteId: g.suiteId },
+        select: { id: true },
+      });
     } else {
-      const mod = await prisma.module.findUnique({ where: { id: g.moduleId }, include: { portal: true } });
+      const mod = await prisma.module.findUnique({
+        where: { id: g.moduleId },
+        include: { portal: true },
+      });
       portalName = mod.portal.name;
       moduleName = mod.name;
       featureName = null;
-      cases = await prisma.testCase.findMany({ where: { moduleId: g.moduleId }, select: { id: true } });
+      cases = await prisma.testCase.findMany({
+        where: { moduleId: g.moduleId },
+        select: { id: true },
+      });
     }
 
     for (let i = 0; i < WEEKS; i++) {
@@ -147,7 +156,9 @@ async function main() {
     }
   }
 
-  console.log(`Created ${totalCycles} demo cycles, ${totalRuns} test runs, ${totalLogs} quick logs.`);
+  console.log(
+    `Created ${totalCycles} demo cycles, ${totalRuns} test runs, ${totalLogs} quick logs.`,
+  );
 }
 
 main()

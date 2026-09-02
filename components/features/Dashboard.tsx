@@ -201,7 +201,9 @@ export function Dashboard({ onShowTestRuns, onOpenCycle, projectId }: DashboardP
         {/* Recent activity */}
         <Panel
           title="Recent activity"
-          secondary={data.recentCycles.length > 0 ? `${data.recentCycles.length} recent` : undefined}
+          secondary={
+            data.recentCycles.length > 0 ? `${data.recentCycles.length} recent` : undefined
+          }
         >
           {data.recentCycles.length === 0 ? (
             <p className="text-[13px] text-text-3">
@@ -391,13 +393,7 @@ function DonutChart({
   );
 }
 
-function ActivityRow({
-  cycle: c,
-  onOpen,
-}: {
-  cycle: RecentCycle;
-  onOpen?: (id: string) => void;
-}) {
+function ActivityRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: string) => void }) {
   const isManual = c.mode === 'Manual';
   // Quick-log entries don't have per-case runs — express the outcome as a
   // single Pass/Fail based on whether any issues were logged.

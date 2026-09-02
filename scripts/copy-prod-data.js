@@ -123,12 +123,7 @@ async function main() {
       idMap,
     );
     for (const m of p.modules) {
-      await createWithFallback(
-        'module',
-        m.id,
-        { name: m.name, portalId: idMap.get(p.id) },
-        idMap,
-      );
+      await createWithFallback('module', m.id, { name: m.name, portalId: idMap.get(p.id) }, idMap);
       const createSuiteTree = async (suites, parentOldId) => {
         for (const s of suites) {
           await createWithFallback(

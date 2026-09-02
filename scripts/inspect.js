@@ -9,7 +9,9 @@ async function main() {
   for (const p of projects) {
     const portals = await prisma.portal.findMany({
       where: { projectId: p.id },
-      include: { modules: { include: { suites: { include: { _count: { select: { testCases: true } } } } } } },
+      include: {
+        modules: { include: { suites: { include: { _count: { select: { testCases: true } } } } } },
+      },
     });
     console.log(`\n=== Project ${p.name} (${p.id}) ===`);
     for (const portal of portals) {
@@ -24,7 +26,13 @@ async function main() {
     const cycleCount = await prisma.testCycle.count({ where: { projectId: p.id } });
     const runCount = await prisma.testRun.count({ where: { cycle: { projectId: p.id } } });
     const caseCount = await prisma.testCase.count({
-      where: { OR: [{ portal: { projectId: p.id } }, { module: { portal: { projectId: p.id } } }, { suite: { module: { portal: { projectId: p.id } } } }] },
+      where: {
+        OR: [
+          { portal: { projectId: p.id } },
+          { module: { portal: { projectId: p.id } } },
+          { suite: { module: { portal: { projectId: p.id } } } },
+        ],
+      },
     });
     console.log(`Cycles: ${cycleCount}, Runs: ${runCount}, TestCases: ${caseCount}`);
 
