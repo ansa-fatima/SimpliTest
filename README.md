@@ -2,6 +2,8 @@
 
 A production-grade test management platform — test cases, test runs, reports, and team management — built with **Next.js 14**, **React 18**, **TypeScript**, and **Tailwind CSS**.
 
+See [docs/PRD.pdf](docs/PRD.pdf) for the product requirements document.
+
 ---
 
 ## Tech Stack
