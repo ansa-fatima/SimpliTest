@@ -52,10 +52,14 @@ export function Members({
   currentUser,
   workspaceId,
   workspaceName,
+  onSelfRoleChanged,
 }: {
   currentUser: SessionUser | null;
   workspaceId: string | null;
   workspaceName: string;
+  /** Called after the signed-in user changes their OWN role, so the caller
+   *  can refresh the session (sidebar) — it doesn't pick this up on its own. */
+  onSelfRoleChanged?: () => void;
 }) {
   const [data, setData] = useState<MembersPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -116,6 +120,7 @@ export function Members({
     try {
       await api.patch(`/api/users/${id}`, { role, projectId: workspaceId });
       await reload();
+      if (id === currentUser?.id) onSelfRoleChanged?.();
     } catch (e) {
       alert(`Failed: ${(e as Error).message}`);
     }

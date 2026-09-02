@@ -101,26 +101,65 @@ export async function PATCH(req: Request, { params }: Ctx) {
       data.passwordHash = await hashPassword(body.newPassword);
     }
 
-    // Role change — Manager+ only. Self-edit is blocked unless the caller is
-    // the creator of the workspace they're acting in (invited members, even
-    // invited SuperAdmins, can never self-edit).
+    // Role change — Manager+ only, scoped to the specific workspace this
+    // change applies to. Self-edit is blocked unless the caller is the
+    // creator of that workspace (invited members, even invited SuperAdmins,
+    // can never self-edit). Updates BOTH the workspace's Membership.role —
+    // the authoritative value the Members list and workspace-scoped RBAC
+    // read — and the legacy global User.role, kept in sync since the
+    // session/sidebar and most other authorization checks still read it.
     if (body?.role !== undefined) {
+      if (!body.projectId) return bad('projectId is required to change a role');
+      if (!ROLES.includes(body.role)) return bad('invalid role');
+
+      const [project, targetMembership, callerMembership] = await Promise.all([
+        prisma.project.findUnique({
+          where: { id: body.projectId },
+          select: { createdById: true },
+        }),
+        prisma.membership.findUnique({
+          where: { userId_projectId: { userId: params.id, projectId: body.projectId } },
+        }),
+        isSelf
+          ? Promise.resolve(null)
+          : prisma.membership.findUnique({
+              where: { userId_projectId: { userId: me.id, projectId: body.projectId } },
+            }),
+      ]);
+      if (!targetMembership) return bad('User is not a member of this workspace', 404);
+
       if (isSelf) {
-        const project = body.projectId
-          ? await prisma.project.findUnique({
-              where: { id: body.projectId },
-              select: { createdById: true },
-            })
-          : null;
         if (!project || project.createdById !== me.id) {
           return bad('You cannot change your own role', 403);
         }
+      } else if (
+        !callerMembership ||
+        !hasRole(
+          {
+            id: me.id,
+            username: '',
+            email: '',
+            name: '',
+            role: callerMembership.role,
+            avatarUrl: null,
+          },
+          'QAManager',
+        )
+      ) {
+        return bad('Requires QA Manager or higher in this workspace', 403);
       }
-      if (!ROLES.includes(body.role)) return bad('invalid role');
-      const touchingSuperAdmin = target.role === 'SuperAdmin' || body.role === 'SuperAdmin';
-      if (touchingSuperAdmin && me.role !== 'SuperAdmin') {
+
+      const callerEffectiveRole = isSelf ? targetMembership.role : callerMembership!.role;
+      const touchingSuperAdmin =
+        targetMembership.role === 'SuperAdmin' || body.role === 'SuperAdmin';
+      if (touchingSuperAdmin && callerEffectiveRole !== 'SuperAdmin') {
         return bad('Only a SuperAdmin can assign or unassign the SuperAdmin role', 403);
       }
+
+      await prisma.membership.update({
+        where: { userId_projectId: { userId: params.id, projectId: body.projectId } },
+        data: { role: body.role },
+      });
       data.role = body.role;
     }
 

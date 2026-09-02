@@ -160,6 +160,7 @@ export default function Home() {
             currentUser={user}
             workspaceId={currentProjectId}
             workspaceName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
+            onSelfRoleChanged={refreshSessionUser}
           />
         )}
 
