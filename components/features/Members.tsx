@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '@/lib/client';
 import { avatarColour, cn, initials } from '@/lib/utils';
 import { SessionUser } from '@/hooks/useStore';
@@ -312,17 +313,36 @@ function MemberRow({
   onResetPassword?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  // The row lives inside a `overflow-hidden` card (needed for its rounded
+  // corners), which silently clips an absolutely-positioned dropdown for any
+  // row that has no room below it in the card — most obviously the last row,
+  // where the menu opened but was invisible. Portaled to <body> and
+  // positioned from the trigger button's own screen coordinates instead, so
+  // it can never be clipped by an ancestor.
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const [editingRole, setEditingRole] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!menuOpen) return;
     const h = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+      const target = e.target as Node;
+      if (buttonRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return;
+      setMenuOpen(false);
     };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [menuOpen]);
+
+  const toggleMenu = () => {
+    if (!menuOpen && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+    }
+    setMenuOpen(o => !o);
+  };
 
   const isSelf = member.id === currentUserId;
   // SuperAdmin can only be touched by another SuperAdmin. Self-editing is
@@ -440,17 +460,23 @@ function MemberRow({
 
       {/* Overflow menu */}
       <td className="relative px-2 py-2.5 text-right">
-        <div className="relative inline-block" ref={menuRef}>
-          <button
-            type="button"
-            onClick={() => setMenuOpen(o => !o)}
-            className="rounded p-1 text-text-3 hover:bg-surface-3 hover:text-text"
-            title="More actions"
-          >
-            <i className="ti ti-dots-vertical text-[14px]" />
-          </button>
-          {menuOpen && (
-            <div className="absolute right-0 top-[calc(100%+4px)] z-30 w-[180px] rounded-lg border border-border bg-surface py-1 text-left shadow-[0_4px_24px_-4px_rgba(28,25,23,0.12)]">
+        <button
+          ref={buttonRef}
+          type="button"
+          onClick={toggleMenu}
+          className="rounded p-1 text-text-3 hover:bg-surface-3 hover:text-text"
+          title="More actions"
+        >
+          <i className="ti ti-dots-vertical text-[14px]" />
+        </button>
+        {menuOpen &&
+          menuPos &&
+          createPortal(
+            <div
+              ref={dropdownRef}
+              style={{ position: 'fixed', top: menuPos.top, right: menuPos.right }}
+              className="z-50 w-[180px] rounded-lg border border-border bg-surface py-1 text-left shadow-[0_4px_24px_-4px_rgba(28,25,23,0.12)]"
+            >
               <MenuItem
                 icon="ti-clipboard"
                 label="Copy email"
@@ -490,9 +516,9 @@ function MemberRow({
                   }}
                 />
               )}
-            </div>
+            </div>,
+            document.body,
           )}
-        </div>
       </td>
     </tr>
   );
