@@ -255,7 +255,7 @@ export function Members({
                     key={m.id}
                     member={m}
                     currentUserId={currentUser?.id ?? ''}
-                    currentUserRole={(currentUser?.role as Role) ?? 'Viewer'}
+                    currentUserRole={myRole ?? 'Viewer'}
                     canManage={canManage}
                     canRemove={canRemove}
                     isCreator={isCreator}
@@ -276,7 +276,7 @@ export function Members({
         <InviteDialog
           workspaceId={workspaceId}
           workspaceName={workspaceName}
-          currentUserRole={(currentUser?.role as Role) ?? 'Viewer'}
+          currentUserRole={myRole ?? 'Viewer'}
           onClose={() => setShowInvite(false)}
           onInvited={async () => {
             await reload();
@@ -361,10 +361,12 @@ function MemberRow({
 
   const isSelf = member.id === currentUserId;
   // SuperAdmin can only be touched by another SuperAdmin. Self-editing is
-  // blocked for everyone except the workspace creator — invited members
-  // (even invited SuperAdmins) can't change their own role.
-  const isProtected =
-    (member.role === 'SuperAdmin' && currentUserRole !== 'SuperAdmin') || (isSelf && !isCreator);
+  // blocked unless the caller is the workspace creator or already holds
+  // SuperAdmin here — a lower-privileged invited member still can't change
+  // their own role.
+  const isProtected = isSelf
+    ? !isCreator && currentUserRole !== 'SuperAdmin'
+    : member.role === 'SuperAdmin' && currentUserRole !== 'SuperAdmin';
   const canEditRole = canManage && !isProtected;
 
   const labelName = member.name || member.username;

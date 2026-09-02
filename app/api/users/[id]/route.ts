@@ -103,11 +103,15 @@ export async function PATCH(req: Request, { params }: Ctx) {
 
     // Role change — Manager+ only, scoped to the specific workspace this
     // change applies to. Self-edit is blocked unless the caller is the
-    // creator of that workspace (invited members, even invited SuperAdmins,
-    // can never self-edit). Updates BOTH the workspace's Membership.role —
-    // the authoritative value the Members list and workspace-scoped RBAC
-    // read — and the legacy global User.role, kept in sync since the
-    // session/sidebar and most other authorization checks still read it.
+    // creator of that workspace OR already holds SuperAdmin there — an
+    // existing workspace SuperAdmin gains nothing by self-editing that they
+    // couldn't already do by editing another account, so gating it just
+    // locks people out with no real security benefit. Everyone else (a
+    // lower-privileged invited member) still can't self-edit. Updates BOTH
+    // the workspace's Membership.role — the authoritative value the Members
+    // list and workspace-scoped RBAC read — and the legacy global User.role,
+    // kept in sync since the session/sidebar and most other authorization
+    // checks still read it.
     if (body?.role !== undefined) {
       if (!body.projectId) return bad('projectId is required to change a role');
       if (!ROLES.includes(body.role)) return bad('invalid role');
@@ -129,7 +133,9 @@ export async function PATCH(req: Request, { params }: Ctx) {
       if (!targetMembership) return bad('User is not a member of this workspace', 404);
 
       if (isSelf) {
-        if (!project || project.createdById !== me.id) {
+        const isWorkspaceCreator = !!project && project.createdById === me.id;
+        const isWorkspaceSuperAdmin = targetMembership.role === 'SuperAdmin';
+        if (!isWorkspaceCreator && !isWorkspaceSuperAdmin) {
           return bad('You cannot change your own role', 403);
         }
       } else if (
