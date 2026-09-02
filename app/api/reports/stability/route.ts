@@ -21,6 +21,11 @@ import { ok, serverError } from '@/lib/api';
 
 type DataPoint = {
   pass: boolean;
+  // 0–1 credit this point contributes to the pass rate. Binary (0 or 1) for
+  // a test case run, but a tracked quick log gets partial credit for partial
+  // resolution — 6 of 8 issues done reads as 75%, not a flat 0% just because
+  // it isn't fully resolved yet.
+  score: number;
   ts: Date;
   cycleId: string;
   cycleName: string;
@@ -31,21 +36,26 @@ type DataPoint = {
 
 function stats(points: DataPoint[]) {
   const total = points.length;
+  // "Passed"/"failed" stay binary counts (how many points are fully clean) —
+  // it's passRate that's now the average of each point's partial-credit
+  // score, so a module with several half-resolved quick logs reads as
+  // meaningfully better than 0% instead of just "failed".
   const passed = points.filter(p => p.pass).length;
   const failed = total - passed;
-  const passRate = total === 0 ? 0 : Math.round((passed / total) * 100);
+  const passRate =
+    total === 0 ? 0 : Math.round((points.reduce((sum, p) => sum + p.score, 0) / total) * 100);
   const label: 'Stable' | 'At Risk' | 'Unstable' | 'No data' =
     total === 0 ? 'No data' : passRate >= 90 ? 'Stable' : passRate >= 70 ? 'At Risk' : 'Unstable';
   const lastActivity = total === 0 ? null : new Date(Math.max(...points.map(p => p.ts.getTime())));
 
-  // Trend: compare the pass rate of the earlier half of data points to the
-  // later half. Needs at least 4 points to say anything meaningful.
+  // Trend: compare the average score of the earlier half of data points to
+  // the later half. Needs at least 4 points to say anything meaningful.
   let trend: 'up' | 'down' | 'flat' = 'flat';
   if (total >= 4) {
     const sorted = [...points].sort((a, b) => a.ts.getTime() - b.ts.getTime());
     const mid = Math.floor(sorted.length / 2);
     const rateOf = (arr: DataPoint[]) =>
-      arr.length === 0 ? 0 : (arr.filter(p => p.pass).length / arr.length) * 100;
+      arr.length === 0 ? 0 : (arr.reduce((sum, p) => sum + p.score, 0) / arr.length) * 100;
     const diff = rateOf(sorted.slice(mid)) - rateOf(sorted.slice(0, mid));
     trend = diff >= 5 ? 'up' : diff <= -5 ? 'down' : 'flat';
   }
@@ -59,6 +69,7 @@ function stats(points: DataPoint[]) {
       label: p.label,
       detail: p.detail,
       pass: p.pass,
+      score: p.score,
       ts: p.ts.toISOString(),
     }));
 
@@ -127,6 +138,7 @@ export async function GET(req: Request) {
     for (const r of runs) {
       const point: DataPoint = {
         pass: r.result === 'Passed',
+        score: r.result === 'Passed' ? 1 : 0,
         ts: r.executedAt ?? r.updatedAt,
         cycleId: r.cycleId,
         cycleName: r.cycle.name,
@@ -150,6 +162,10 @@ export async function GET(req: Request) {
       const remaining = log.remainingCount ?? 0;
       const tracked = done > 0 || remaining > 0;
       const pass = tracked ? remaining === 0 : (log.issueCount ?? 0) === 0;
+      // A tracked log gets partial credit for partial resolution (6 of 8
+      // done = 0.75) instead of an all-or-nothing 0/1 — that's the whole
+      // point of tracking Done/Remaining rather than just Pass/Fail.
+      const score = tracked ? done / (done + remaining) : pass ? 1 : 0;
       let detail: string;
       if (pass) {
         detail = tracked ? `Pass · ${done} issue${done === 1 ? '' : 's'} resolved` : 'Pass';
@@ -161,6 +177,7 @@ export async function GET(req: Request) {
       }
       const point: DataPoint = {
         pass,
+        score,
         ts: log.completedAt ?? log.createdAt,
         cycleId: log.id,
         cycleName: log.name,

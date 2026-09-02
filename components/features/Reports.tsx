@@ -640,6 +640,7 @@ interface StabilityLog {
   label: string;
   detail: string;
   pass: boolean;
+  score: number;
   ts: string;
 }
 interface StabilityNode {
@@ -922,7 +923,7 @@ function bucketPassRates(logs: StabilityLog[], maxBuckets = 8): number[] {
   const out: number[] = [];
   for (let i = 0; i < sorted.length; i += size) {
     const chunk = sorted.slice(i, i + size);
-    out.push(Math.round((chunk.filter(l => l.pass).length / chunk.length) * 100));
+    out.push(Math.round((chunk.reduce((sum, l) => sum + l.score, 0) / chunk.length) * 100));
   }
   return out;
 }
