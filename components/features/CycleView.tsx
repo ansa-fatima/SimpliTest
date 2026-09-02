@@ -79,11 +79,10 @@ export function CycleView({
 
   const subtitle = buildSubtitle(cycle, total);
   const statusTone =
-    cycle.status === 'Active'
-      ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-      : cycle.status === 'Completed'
-        ? 'bg-blue-50 text-blue-700 ring-blue-200'
-        : 'bg-amber-50 text-amber-700 ring-amber-200';
+    cycle.status === 'Completed'
+      ? 'bg-blue-50 text-blue-700 ring-blue-200'
+      : 'bg-amber-50 text-amber-700 ring-amber-200';
+  const statusLabel = cycle.status === 'Active' ? 'Open to do' : cycle.status;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
@@ -128,7 +127,7 @@ export function CycleView({
                   statusTone,
                 )}
               >
-                {cycle.status}
+                {statusLabel}
               </span>
             </div>
             <p className="mt-1 text-[13px] text-text-2">{subtitle}</p>
@@ -173,7 +172,7 @@ export function CycleView({
               <i className="ti ti-clipboard-text text-[15px]" />
               Summary
             </button>
-            {onCloseRun && cycle.status === 'Active' && (
+            {onCloseRun && cycle.status === 'Active' && counts.NotRun === 0 && (
               <button
                 type="button"
                 onClick={() => {

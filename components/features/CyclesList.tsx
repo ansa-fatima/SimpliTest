@@ -20,7 +20,7 @@ interface CyclesListProps {
 }
 
 const STATUS_BADGE: Record<CycleStatus, string> = {
-  Active: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  Active: 'bg-amber-50 text-amber-700 ring-amber-200',
   Completed: 'bg-blue-50 text-blue-700 ring-blue-200',
   Archived: 'bg-amber-50 text-amber-700 ring-amber-200',
 };
@@ -71,16 +71,17 @@ export function CyclesList({
   const manualCount = cycles.filter(c => (c.mode ?? 'CaseBased') === 'Manual').length;
   const detailedCount = cycles.length - manualCount;
 
-  // Status auto-derives from "remaining" for manual cycles — convenient little flag.
+  // Status is always one of: Open to do / Completed / Archived — no other
+  // wording ("Done", "Open-to-do") so the label is consistent everywhere.
+  // Quick logs (Manual) are always Completed the moment they're logged —
+  // whether the issues they found are still open is a separate question,
+  // answered by the Passed/Failed verdict, not by this lifecycle status.
   const cycleStatusBadge = (c: TestCycle): { label: string; cls: string } => {
     if ((c.mode ?? 'CaseBased') === 'Manual') {
-      const remaining = c.remainingCount ?? 0;
       if (c.status === 'Archived') return { label: 'Archived', cls: STATUS_BADGE.Archived };
-      if (remaining === 0 && (c.issueCount ?? 0) > 0)
-        return { label: 'Done', cls: STATUS_BADGE.Completed };
-      if ((c.issueCount ?? 0) === 0) return { label: c.status, cls: STATUS_BADGE[c.status] };
-      return { label: 'Open-to-do', cls: 'bg-amber-50 text-amber-700 ring-amber-200' };
+      return { label: 'Completed', cls: STATUS_BADGE.Completed };
     }
+    if (c.status === 'Active') return { label: 'Open to do', cls: STATUS_BADGE.Active };
     return { label: c.status, cls: STATUS_BADGE[c.status] };
   };
 
@@ -656,8 +657,9 @@ function ManualCycleSummaryModal({
   const blocked = cycle.blockedCount ?? 0;
   const totalCases = passed + failed + blocked;
 
-  // Status: align with CycleReportModal's "Failed" vs "Passed" semantics.
-  const isFailed = remaining > 0 || failed > 0 || blocked > 0;
+  // Passed only means it: no issues were found at all (not just "found and
+  // since fixed" — issues > 0 counts as Failed even once fully resolved).
+  const isFailed = issues > 0 || failed > 0 || blocked > 0;
   const statusPill = isFailed
     ? { circle: '🔴', label: 'Failed', cls: 'bg-red-50 text-red-700 border border-red-200' }
     : { circle: '🟢', label: 'Passed', cls: 'bg-green-50 text-green-700 border border-green-200' };

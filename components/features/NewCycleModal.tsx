@@ -113,6 +113,15 @@ export function NewCycleModal({
     // Default to today's date for new quick-logs — user can back-date if needed.
     return localDateStr();
   });
+  // Free-text names, independent of the structured picker below. Seeded from
+  // the existing record so a cycle whose module/feature was set as plain text
+  // (e.g. imported data with no matching real Portal/Module row) still shows
+  // and keeps its labels on save, instead of the picker silently blanking
+  // them out because nothing in the dropdowns happens to match scopeId.
+  // Picking from the dropdowns below overwrites these to match the pick.
+  const [portalNameFree, setPortalNameFree] = useState(initial?.portalName ?? '');
+  const [moduleNameFree, setModuleNameFree] = useState(initial?.moduleName ?? '');
+  const [featureNameFree, setFeatureNameFree] = useState(initial?.featureName ?? '');
   const [environment, setEnvironment] = useState(initial?.environment ?? '');
   const [platform, setPlatform] = useState(initial?.platform ?? '');
   const [version, setVersion] = useState(initial?.version ?? '');
@@ -122,8 +131,6 @@ export function NewCycleModal({
   const [criticalCount, setCriticalCount] = useState(initial?.criticalCount ?? 0);
   const [majorCount, setMajorCount] = useState(initial?.majorCount ?? 0);
   const [minorCount, setMinorCount] = useState(initial?.minorCount ?? 0);
-  const [doneCount, setDoneCount] = useState(initial?.doneCount ?? 0);
-  const [remainingCount, setRemainingCount] = useState(initial?.remainingCount ?? 0);
   const [passedCount, setPassedCount] = useState(initial?.passedCount ?? 0);
   const [failedCount, setFailedCount] = useState(initial?.failedCount ?? 0);
   const [blockedCount, setBlockedCount] = useState(initial?.blockedCount ?? 0);
@@ -233,14 +240,6 @@ export function NewCycleModal({
   const severityMismatch =
     mode === 'Manual' && (issueCount > 0 || severitySum > 0) && severitySum !== issueCount;
 
-  // Every issue should end up accounted for as either Done or still Remaining —
-  // otherwise a run can silently read as "Done" (see cycleStatusBadge in
-  // CyclesList.tsx, which infers status from remainingCount) while issues that
-  // were never actually resolved just sit unaccounted for.
-  const resolvedSum = doneCount + remainingCount;
-  const resolvedMismatch =
-    mode === 'Manual' && (issueCount > 0 || resolvedSum > 0) && resolvedSum !== issueCount;
-
   const handleSubmit = async () => {
     setError('');
     if (!name.trim()) {
@@ -251,10 +250,6 @@ export function NewCycleModal({
       setError(
         `Critical + Major + Minor (${severitySum}) must equal Total issues (${issueCount}).`,
       );
-      return;
-    }
-    if (resolvedMismatch) {
-      setError(`Done + Remaining (${resolvedSum}) must equal Total issues (${issueCount}).`);
       return;
     }
     // Scope is OPTIONAL — leaving all three dropdowns blank means "All test cases".
@@ -298,15 +293,13 @@ export function NewCycleModal({
       // module/feature instead of matching on free text.
       payload.scopeType = derivedScope.scopeType;
       payload.scopeId = derivedScope.scopeId;
-      // Free-text names stay in sync automatically (derived from the picked
-      // node's real name) — every existing consumer (Dashboard, cycle list,
-      // cycle detail breadcrumb) keeps working unchanged.
-      const pickedPortal = portals.find(p => p.id === portalIdF);
-      const pickedModule = modules.find(m => m.id === moduleIdF);
-      const pickedSuite = visibleSuites.find(s => s.id === suiteIdF);
-      payload.portalName = pickedPortal?.name || undefined;
-      payload.moduleName = pickedModule?.name || undefined;
-      payload.featureName = pickedSuite?.name || undefined;
+      // Free-text names: kept in sync with the picker when the user actually
+      // picks something (see the selects' onChange above), but otherwise left
+      // as whatever was already saved — so a record whose module/feature was
+      // set as plain text keeps it instead of the picker silently blanking it.
+      payload.portalName = portalNameFree || undefined;
+      payload.moduleName = moduleNameFree || undefined;
+      payload.featureName = featureNameFree || undefined;
       payload.environment = environment || undefined;
       payload.platform = platform || undefined;
       payload.version = version.trim() || undefined;
@@ -316,8 +309,6 @@ export function NewCycleModal({
       payload.criticalCount = criticalCount;
       payload.majorCount = majorCount;
       payload.minorCount = minorCount;
-      payload.doneCount = doneCount;
-      payload.remainingCount = remainingCount;
       payload.passedCount = passedCount;
       payload.failedCount = failedCount;
       payload.blockedCount = blockedCount;
@@ -415,7 +406,10 @@ export function NewCycleModal({
                   <div className="grid grid-cols-3 gap-2">
                     <select
                       value={portalIdF}
-                      onChange={e => setPortalIdF(e.target.value)}
+                      onChange={e => {
+                        setPortalIdF(e.target.value);
+                        setPortalNameFree(portals.find(p => p.id === e.target.value)?.name ?? '');
+                      }}
                       disabled={loadingModules}
                       className="input"
                     >
@@ -428,7 +422,12 @@ export function NewCycleModal({
                     </select>
                     <select
                       value={moduleIdF}
-                      onChange={e => setModuleIdF(e.target.value)}
+                      onChange={e => {
+                        setModuleIdF(e.target.value);
+                        setModuleNameFree(
+                          visibleModules.find(m => m.id === e.target.value)?.name ?? '',
+                        );
+                      }}
                       disabled={loadingModules || visibleModules.length === 0}
                       className="input"
                     >
@@ -441,7 +440,12 @@ export function NewCycleModal({
                     </select>
                     <select
                       value={suiteIdF}
-                      onChange={e => setSuiteIdF(e.target.value)}
+                      onChange={e => {
+                        setSuiteIdF(e.target.value);
+                        setFeatureNameFree(
+                          visibleSuites.find(s => s.id === e.target.value)?.name ?? '',
+                        );
+                      }}
                       disabled={loadingModules || visibleSuites.length === 0}
                       className="input"
                     >
@@ -453,6 +457,20 @@ export function NewCycleModal({
                       ))}
                     </select>
                   </div>
+                  {isEdit &&
+                    !portalIdF &&
+                    !moduleIdF &&
+                    !suiteIdF &&
+                    (portalNameFree || moduleNameFree || featureNameFree) && (
+                      <p className="mt-1.5 text-[11px] text-amber-600">
+                        Currently saved as free text —{' '}
+                        {[portalNameFree, moduleNameFree, featureNameFree]
+                          .filter(Boolean)
+                          .join(' / ')}
+                        . Pick a real location above to link it to the Stability report, or leave
+                        as-is to keep the text.
+                      </p>
+                    )}
                   <p className="mt-1.5 text-[11px] text-slate-400">
                     Picking a module or feature here feeds the Stability report — it counts this log
                     toward that module/feature&apos;s rolling pass rate.
@@ -537,25 +555,6 @@ export function NewCycleModal({
                   {severityMismatch && (
                     <p className="mt-1.5 text-[11px] font-medium text-red-600">
                       Critical + Major + Minor ({severitySum}) must equal Total ({issueCount}).
-                    </p>
-                  )}
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <CountField
-                      label="Done (resolved)"
-                      value={doneCount}
-                      onChange={setDoneCount}
-                      tone="success"
-                    />
-                    <CountField
-                      label="Remaining (open)"
-                      value={remainingCount}
-                      onChange={setRemainingCount}
-                      tone="danger"
-                    />
-                  </div>
-                  {resolvedMismatch && (
-                    <p className="mt-1.5 text-[11px] font-medium text-red-600">
-                      Done + Remaining ({resolvedSum}) must equal Total issues ({issueCount}).
                     </p>
                   )}
                 </div>
@@ -809,12 +808,8 @@ export function NewCycleModal({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting || severityMismatch || resolvedMismatch}
-            title={
-              severityMismatch || resolvedMismatch
-                ? 'Fix the issue count mismatch before saving'
-                : undefined
-            }
+            disabled={submitting || severityMismatch}
+            title={severityMismatch ? 'Fix the issue count mismatch before saving' : undefined}
             className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting && <i className="ti ti-loader-2 animate-spin text-[13px]" />}
