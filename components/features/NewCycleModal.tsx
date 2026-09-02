@@ -223,6 +223,27 @@ export function NewCycleModal({
     else if (!moduleIdF && portalIdF && owner.portalId !== portalIdF) setSuiteIdF('');
   }, [moduleIdF, portalIdF, suiteIdF, modules]);
 
+  // Backfill the parent dropdowns once modules load. The initial state above
+  // only seeds the exact level the cycle is scoped to (e.g. a Suite-scoped
+  // cycle only sets suiteIdF), so without this a Suite- or Module-scoped
+  // cycle shows "No portal" / "No module" on open despite genuinely
+  // belonging to real ones. Runs once modules first arrive — `modules`'s
+  // reference is then stable, so it won't fight a user's own later choice.
+  useEffect(() => {
+    if (modules.length === 0) return;
+    if (suiteIdF && !moduleIdF) {
+      const owner = modules.find(m => m.suites.some(s => s.id === suiteIdF));
+      if (owner) {
+        setModuleIdF(owner.id);
+        if (!portalIdF) setPortalIdF(owner.portalId);
+      }
+    } else if (moduleIdF && !portalIdF) {
+      const m = modules.find(mm => mm.id === moduleIdF);
+      if (m) setPortalIdF(m.portalId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modules]);
+
   // Filtered option lists — feed the dropdowns. Picking a parent narrows the
   // child list; leaving a parent blank leaves the child fully populated.
   const visibleModules = portalIdF ? modules.filter(m => m.portalId === portalIdF) : modules;
