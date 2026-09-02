@@ -233,20 +233,19 @@ export function Members({
                 <Th>Member</Th>
                 <Th width="160px">Role</Th>
                 <Th width="140px">Last active</Th>
-                <Th width="120px">Status</Th>
                 <th className="w-[40px] border-b border-border px-2 py-2.5" />
               </tr>
             </thead>
             <tbody>
               {loading && !data ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-text-3">
+                  <td colSpan={4} className="px-4 py-8 text-center text-text-3">
                     Loading members…
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center text-text-3">
+                  <td colSpan={4} className="px-4 py-12 text-center text-text-3">
                     {search ? 'No members match this search.' : 'No members yet.'}
                   </td>
                 </tr>
@@ -324,7 +323,9 @@ function MemberRow({
   // where the menu opened but was invisible. Portaled to <body> and
   // positioned from the trigger button's own screen coordinates instead, so
   // it can never be clipped by an ancestor.
-  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top?: number; bottom?: number; right: number } | null>(
+    null,
+  );
   const [editingRole, setEditingRole] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -344,7 +345,16 @@ function MemberRow({
   const toggleMenu = () => {
     if (!menuOpen && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
-      setMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+      const right = window.innerWidth - rect.right;
+      // Up to 4 items at ~34px each plus container padding — flip the menu
+      // above the button when there isn't room below (e.g. the last row),
+      // rather than letting it render off the bottom of the viewport.
+      const estimatedHeight = 150;
+      if (window.innerHeight - rect.bottom < estimatedHeight && rect.top > estimatedHeight) {
+        setMenuPos({ bottom: window.innerHeight - rect.top + 4, right });
+      } else {
+        setMenuPos({ top: rect.bottom + 4, right });
+      }
     }
     setMenuOpen(o => !o);
   };
@@ -408,7 +418,9 @@ function MemberRow({
             onBlur={() => setEditingRole(false)}
             className="rounded border border-border bg-surface px-2 py-1 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
           >
-            {ROLES.filter(r => r !== 'SuperAdmin' || currentUserRole === 'SuperAdmin').map(r => (
+            {ROLES.filter(
+              r => r !== 'SuperAdmin' || currentUserRole === 'SuperAdmin' || (isSelf && isCreator),
+            ).map(r => (
               <option key={r} value={r}>
                 {ROLE_LABEL[r]}
               </option>
@@ -448,21 +460,6 @@ function MemberRow({
         )}
       </td>
 
-      {/* Status */}
-      <td className="px-3 py-2.5">
-        {member.status === 'Active' ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wider text-emerald-700 ring-1 ring-emerald-200">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Active
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wider text-amber-700 ring-1 ring-amber-200">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
-            Pending
-          </span>
-        )}
-      </td>
-
       {/* Overflow menu */}
       <td className="relative px-2 py-2.5 text-right">
         <button
@@ -479,7 +476,12 @@ function MemberRow({
           createPortal(
             <div
               ref={dropdownRef}
-              style={{ position: 'fixed', top: menuPos.top, right: menuPos.right }}
+              style={{
+                position: 'fixed',
+                top: menuPos.top,
+                bottom: menuPos.bottom,
+                right: menuPos.right,
+              }}
               className="z-50 w-[180px] rounded-lg border border-border bg-surface py-1 text-left shadow-[0_4px_24px_-4px_rgba(28,25,23,0.12)]"
             >
               <MenuItem

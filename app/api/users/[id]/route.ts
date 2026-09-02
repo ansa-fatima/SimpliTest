@@ -149,10 +149,15 @@ export async function PATCH(req: Request, { params }: Ctx) {
         return bad('Requires QA Manager or higher in this workspace', 403);
       }
 
-      const callerEffectiveRole = isSelf ? targetMembership.role : callerMembership!.role;
+      // The "only a SuperAdmin can touch SuperAdmin" rule protects against a
+      // lower-privileged member promoting/demoting someone else. It doesn't
+      // apply to the creator editing their OWN role (already verified just
+      // above) — otherwise a creator who steps down to QAManager would
+      // permanently lock themselves out of ever reclaiming SuperAdmin over
+      // their own workspace.
       const touchingSuperAdmin =
         targetMembership.role === 'SuperAdmin' || body.role === 'SuperAdmin';
-      if (touchingSuperAdmin && callerEffectiveRole !== 'SuperAdmin') {
+      if (!isSelf && touchingSuperAdmin && callerMembership!.role !== 'SuperAdmin') {
         return bad('Only a SuperAdmin can assign or unassign the SuperAdmin role', 403);
       }
 
