@@ -69,6 +69,7 @@ export async function POST(req: Request) {
       data: {
         name,
         slug,
+        createdById: userOrRes.id,
         memberships: {
           create: { userId: userOrRes.id, role: 'SuperAdmin' },
         },

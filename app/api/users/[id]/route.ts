@@ -14,7 +14,9 @@ const ROLES: UserRole[] = ['SuperAdmin', 'QAManager', 'Tester', 'Developer', 'Vi
 // Permission rules (privileges scale with role rank):
 //   • Caller must be QAManager+
 //   • Only a SuperAdmin can demote / promote a SuperAdmin
-//   • Users cannot change their own role
+//   • Users cannot change their own role — except the person who created the
+//     workspace (pass projectId so we can check), since invited members
+//     (even invited SuperAdmins) shouldn't be able to self-promote.
 export async function PATCH(req: Request, { params }: Ctx) {
   // Two modes:
   //  • Self-edit: a signed-in user updates their own name / email / avatar / password.
@@ -44,6 +46,9 @@ export async function PATCH(req: Request, { params }: Ctx) {
       avatarUrl?: string | null;
       currentPassword?: string;
       newPassword?: string;
+      /** Which workspace this role change is scoped to — required to let the
+       *  workspace creator change their own role (see role-change block below). */
+      projectId?: string;
     }>(req);
     const data: {
       role?: UserRole;
@@ -96,9 +101,21 @@ export async function PATCH(req: Request, { params }: Ctx) {
       data.passwordHash = await hashPassword(body.newPassword);
     }
 
-    // Role change — Manager+ only (and never on yourself).
+    // Role change — Manager+ only. Self-edit is blocked unless the caller is
+    // the creator of the workspace they're acting in (invited members, even
+    // invited SuperAdmins, can never self-edit).
     if (body?.role !== undefined) {
-      if (isSelf) return bad('You cannot change your own role', 403);
+      if (isSelf) {
+        const project = body.projectId
+          ? await prisma.project.findUnique({
+              where: { id: body.projectId },
+              select: { createdById: true },
+            })
+          : null;
+        if (!project || project.createdById !== me.id) {
+          return bad('You cannot change your own role', 403);
+        }
+      }
       if (!ROLES.includes(body.role)) return bad('invalid role');
       const touchingSuperAdmin = target.role === 'SuperAdmin' || body.role === 'SuperAdmin';
       if (touchingSuperAdmin && me.role !== 'SuperAdmin') {

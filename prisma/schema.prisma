@@ -46,6 +46,7 @@ model User {
   ownedCases   TestCase[]   @relation("OwnedTestCases")
   memberships  Membership[]
   sentInvites  Invite[]     @relation("SentInvites")
+  createdProjects Project[] @relation("CreatedProjects")
 
   @@map("users")
 }
@@ -78,6 +79,11 @@ model Project {
   cycles      TestCycle[]
   memberships Membership[]
   invites     Invite[]
+  // The user who created this workspace — distinct from being *a* SuperAdmin,
+  // since a creator can promote others to SuperAdmin too. Nullable so a
+  // deleted creator account doesn't take the workspace down with it.
+  createdById String?
+  createdBy   User?        @relation("CreatedProjects", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 

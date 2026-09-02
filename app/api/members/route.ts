@@ -21,6 +21,11 @@ export async function GET(req: Request) {
     });
     if (!my) return bad('Not a member of this workspace', 403);
 
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { createdById: true },
+    });
+
     const memberships = await prisma.membership.findMany({
       where: { projectId },
       orderBy: [{ role: 'asc' }, { joinedAt: 'asc' }],
@@ -103,7 +108,14 @@ export async function GET(req: Request) {
       pending: inviteRows.length,
     };
 
-    return ok({ items: combined, counts, myRole: my.role });
+    return ok({
+      items: combined,
+      counts,
+      myRole: my.role,
+      // Only the workspace creator may change their own role — every other
+      // member (even an invited SuperAdmin) can't self-edit it.
+      isCreator: !!project?.createdById && project.createdById === userOrRes.id,
+    });
   } catch (e) {
     return serverError(e);
   }

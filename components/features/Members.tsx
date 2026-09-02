@@ -72,7 +72,7 @@ export function Members({
     setLoading(true);
     setError(null);
     try {
-      const r = await api.get<MembersPayload & { myRole: Role }>(
+      const r = await api.get<MembersPayload & { myRole: Role; isCreator: boolean }>(
         `/api/members?projectId=${workspaceId}`,
       );
       setData(r);
@@ -91,6 +91,7 @@ export function Members({
   const myRole = (data as MembersPayload & { myRole?: Role })?.myRole ?? null;
   const canManage = myRole === 'QAManager' || myRole === 'SuperAdmin';
   const canRemove = myRole === 'SuperAdmin';
+  const isCreator = (data as MembersPayload & { isCreator?: boolean })?.isCreator ?? false;
 
   const filtered = useMemo(() => {
     if (!data) return [];
@@ -112,7 +113,7 @@ export function Members({
   // ─── Mutations ───────────────────────────────────────────
   const onChangeRole = async (id: string, role: Role) => {
     try {
-      await api.patch(`/api/users/${id}`, { role });
+      await api.patch(`/api/users/${id}`, { role, projectId: workspaceId });
       await reload();
     } catch (e) {
       alert(`Failed: ${(e as Error).message}`);
@@ -252,6 +253,7 @@ export function Members({
                     currentUserRole={(currentUser?.role as Role) ?? 'Viewer'}
                     canManage={canManage}
                     canRemove={canRemove}
+                    isCreator={isCreator}
                     onChangeRole={role => onChangeRole(m.id, role)}
                     onRemove={() => onRemove(m)}
                     onResetPassword={
@@ -292,6 +294,7 @@ function MemberRow({
   currentUserRole,
   canManage,
   canRemove,
+  isCreator,
   onChangeRole,
   onRemove,
   onResetPassword,
@@ -301,6 +304,8 @@ function MemberRow({
   currentUserRole: Role;
   canManage: boolean;
   canRemove: boolean;
+  /** Whether the signed-in caller created this workspace — only they may edit their own role. */
+  isCreator: boolean;
   onChangeRole: (role: Role) => void;
   onRemove: () => void;
   /** Present only when the caller may reset this member's password (SuperAdmin, Active members only). */
@@ -320,8 +325,11 @@ function MemberRow({
   }, [menuOpen]);
 
   const isSelf = member.id === currentUserId;
-  // SuperAdmin can only be touched by another SuperAdmin.
-  const isProtected = (member.role === 'SuperAdmin' && currentUserRole !== 'SuperAdmin') || isSelf;
+  // SuperAdmin can only be touched by another SuperAdmin. Self-editing is
+  // blocked for everyone except the workspace creator — invited members
+  // (even invited SuperAdmins) can't change their own role.
+  const isProtected =
+    (member.role === 'SuperAdmin' && currentUserRole !== 'SuperAdmin') || (isSelf && !isCreator);
   const canEditRole = canManage && !isProtected;
 
   const labelName = member.name || member.username;
