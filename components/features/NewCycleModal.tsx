@@ -191,8 +191,14 @@ export function NewCycleModal({
   // Cascading invariants — when a parent changes, child must clear if it no
   // longer matches. (Portal change → drop module if module not under new portal;
   // module change → drop suite if suite not under new module.)
+  // `modules` starts empty until the fetch above resolves — without the
+  // `modules.length === 0` guard, this ran on that very first empty render,
+  // found no match for a real pre-selected id, and wiped it out before the
+  // real list ever loaded. That's what made editing a cycle that WAS linked
+  // to a real module/suite look identical to a free-text one: the id was
+  // correct in the data, but this effect cleared it out of the form on open.
   useEffect(() => {
-    if (!moduleIdF) return;
+    if (!moduleIdF || modules.length === 0) return;
     const m = modules.find(mm => mm.id === moduleIdF);
     if (!m) {
       setModuleIdF('');
@@ -202,7 +208,7 @@ export function NewCycleModal({
   }, [portalIdF, moduleIdF, modules]);
 
   useEffect(() => {
-    if (!suiteIdF) return;
+    if (!suiteIdF || modules.length === 0) return;
     const owner = modules.find(m => m.suites.some(s => s.id === suiteIdF));
     if (!owner) {
       setSuiteIdF('');
