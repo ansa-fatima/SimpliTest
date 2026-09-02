@@ -109,6 +109,7 @@ export async function GET(req: Request) {
           scopeType: true,
           scopeId: true,
           issueCount: true,
+          doneCount: true,
           remainingCount: true,
           completedAt: true,
           createdAt: true,
@@ -138,15 +139,26 @@ export async function GET(req: Request) {
     }
     for (const log of quickLogs) {
       if (!log.scopeId) continue;
-      // A retest that resolves every NEW issue it found but still leaves
-      // older ones open (remainingCount > 0) isn't a clean pass — both must
-      // be zero.
+      // Done/Remaining are only meaningful once someone has actually filled
+      // them in (e.g. re-opening this cycle after a retest) — untouched,
+      // both default to 0, which must NOT read as "nothing remains". Once
+      // they ARE tracked, they're the live truth: a cycle that originally
+      // found 8 issues but was edited to 0 remaining is a genuine pass now,
+      // even though issueCount (what was found) still says 8. Untracked
+      // cycles keep the original "found nothing" rule.
+      const done = log.doneCount ?? 0;
       const remaining = log.remainingCount ?? 0;
-      const pass = (log.issueCount ?? 0) === 0 && remaining === 0;
-      const failDetail =
-        (log.issueCount ?? 0) > 0
-          ? `Fail · ${log.issueCount} issue${log.issueCount === 1 ? '' : 's'}`
-          : `Fail · ${remaining} issue${remaining === 1 ? '' : 's'} still open`;
+      const tracked = done > 0 || remaining > 0;
+      const pass = tracked ? remaining === 0 : (log.issueCount ?? 0) === 0;
+      let detail: string;
+      if (pass) {
+        detail = tracked ? `Pass · ${done} issue${done === 1 ? '' : 's'} resolved` : 'Pass';
+      } else if (tracked) {
+        const total = done + remaining;
+        detail = `Fail · ${remaining} of ${total} issue${total === 1 ? '' : 's'} still open`;
+      } else {
+        detail = `Fail · ${log.issueCount} issue${log.issueCount === 1 ? '' : 's'}`;
+      }
       const point: DataPoint = {
         pass,
         ts: log.completedAt ?? log.createdAt,
@@ -154,7 +166,7 @@ export async function GET(req: Request) {
         cycleName: log.name,
         kind: 'quicklog',
         label: log.name,
-        detail: pass ? 'Pass' : failDetail,
+        detail,
       };
       if (log.scopeType === 'Suite') pushTo(suitePoints, log.scopeId, point);
       else if (log.scopeType === 'Module') pushTo(moduleDirectPoints, log.scopeId, point);
