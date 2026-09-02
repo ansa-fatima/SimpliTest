@@ -9,7 +9,7 @@
 | **Date**        | September 2, 2026           |
 | **Audience**    | Engineering & QA management |
 
-This revision expands three areas — **Test Case Management**, **Test Execution (Test Runs)**, and the **Stability Report** — into full problem statements: what was actually broken or missing, and exactly how Simplitest addresses it today. Every other section is carried forward for context.
+This revision expands three areas — **Test Case Management**, **Test Execution (Test Runs)**, and the **Stability Report** — with a full walkthrough of what each feature is and how it works today. Every other section is carried forward for context.
 
 ---
 
@@ -64,16 +64,7 @@ A test cycle then runs against that structure in one of two modes: **Case-based*
 
 ### 7.1 Test case management
 
-#### The problem
-
-Before a structured home for test cases existed, QA content had three compounding failures:
-
-1. **No canonical location.** Cases lived across spreadsheets and docs per portal, so there was no reliable way to answer "does the Academic module have any documented cases at all?" without manually cross-checking multiple files. Duplicate and orphaned cases crept in with no relationship to the real product structure.
-2. **No shared vocabulary.** Priority, severity, and type were free-text or inconsistent per tester, so a manager couldn't ask "show me every High-priority Regression case for a given module" — there was nothing consistent to filter on.
-3. **No bulk tooling.** Reorganizing test content when a product surface changed shape was a one-by-one manual edit. This is not hypothetical — this project itself restructured its "Mobile App" portal into separate Teacher App, Parent App, and Student App folders mid-project, and doing that safely required bulk move/edit support, not hand-editing hundreds of individual cases.
-4. **No migration path.** An existing spreadsheet of cases had to be retyped by hand into any tool that didn't support import, which discourages ever actually migrating.
-
-#### What Simplitest does about it
+Test case management is where every portal's test content lives — one structured, searchable home instead of scattered spreadsheets, with the bulk tooling and import path needed to actually populate and maintain it at scale.
 
 - **Structured hierarchy, unlimited depth.** Every case attaches to exactly one of Portal, Module, or Suite — and Suites can nest arbitrarily, so a team can model "Admin Portal → Academic → Dashboard → Widgets" as deep as it actually needs to go, not just a fixed two levels.
 - **Full case detail, not just a title.** Title, subtitle, description, preconditions, a structured step-by-step checklist (steps are stored as an ordered list, not a single text blob, so each step can be added, reordered, or removed independently), expected result, and an optional owner (a real workspace member, shown as an avatar in the list).
@@ -91,17 +82,7 @@ Before a structured home for test cases existed, QA content had three compoundin
 
 ### 7.2 Test execution (test runs)
 
-#### The problem
-
-Formal regression testing and same-day ad hoc checking are two genuinely different workflows, and forcing both through one path broke both of them:
-
-1. **Lightweight testing was too heavy to log, so it got skipped.** A tester doing a quick 10-minute smoke check on a feature after a small fix had no fast way to record "checked it, found 2 issues" without going through the full case-by-case regression flow — so it frequently just didn't get logged anywhere, silently undermining the "single source of truth" goal.
-2. **No mid-cycle visibility.** A tester running a 200-case regression pass had no way to show a lead "62 done, 138 remaining" without manually counting rows.
-3. **Retesting had no home of its own.** When issues found during a quick check got fixed and needed re-verification, the natural instinct was to create a brand-new cycle for the retest — but that immediately breaks the link back to "what does this retest belong to," and duplicates pollute every report downstream. This happened for real in this project: a batch of 39 duplicate quick-log cycles had to be identified by timestamp and removed from production after being created this way, before the fix below existed.
-
-#### What Simplitest does about it
-
-Every test cycle runs in one of two modes:
+Test execution covers everything to do with actually running tests and recording results, at two different speeds depending on how heavy the testing needs to be. Every test cycle runs in one of two modes:
 
 **Case-based cycles** — full regression execution:
 
@@ -116,7 +97,7 @@ Every test cycle runs in one of two modes:
 
 **Retesting is an edit to the same record, not a new cycle:**
 
-- A quick log carries its own **Done** and **Remaining** issue counts, editable directly on that same cycle as fixes land and get re-verified — there is no separate "retest" object and nothing new gets created. This is the direct fix for the duplicate-cycle problem above: reopening a quick log and updating Done/Remaining _is_ the retest.
+- A quick log carries its own **Done** and **Remaining** issue counts, editable directly on that same cycle as fixes land and get re-verified — there is no separate "retest" object and nothing new gets created. Reopening a quick log and updating Done/Remaining _is_ the retest.
 - These counts are what feed the Stability report's partial-credit scoring (§7.3.4).
 
 **Findability, once logged:**
@@ -127,7 +108,7 @@ Every test cycle runs in one of two modes:
 
 ### 7.3 Reporting & analytics
 
-Simplitest ships four reports (Dashboard KPIs, Execution, Release, and Stability). The first three are summarized briefly; the Stability report — the one that answers "is this module getting better or worse" — is covered in full detail below, since it's had the most iteration and the most real production issues resolved.
+Simplitest ships four reports (Dashboard KPIs, Execution, Release, and Stability). The first three are summarized briefly; the Stability report — the one that answers "is this module getting better or worse" — is covered in full detail below.
 
 #### 7.3.1 Dashboard
 
@@ -143,15 +124,7 @@ Sprint-level pass/fail summary per cycle, built to directly support go/no-go rel
 
 #### 7.3.4 Stability report — full detail
 
-**The problem, precisely.**
-
-A single failing run doesn't tell a manager anything about _trajectory_ — a module that failed once and is actively being fixed looks identical to one that's genuinely deteriorating, unless something tracks the trend over time. Three specific, real issues had to be found and fixed to make this report trustworthy:
-
-- **Click-through opened the wrong screen.** Clicking a quick log from the report used to open it as though it were a full case-based test run — an empty run screen with no case rows, since a quick log has no per-case data to show. Fixed so a quick log click-through opens its own quick-log summary.
-- **A resolved cycle could never show as "Pass" again.** The original pass rule was `issueCount === 0` — but `issueCount` is fixed at "however many issues were originally found," so once a cycle had recorded _any_ issues, it could never satisfy that rule again, even after every one of them was fixed and retested. In production this showed up exactly as **"Academic — UNSTABLE — 0/1 passed — 0%"** on a module that had actually been fully resolved. Fixed by introducing a "tracked" cycle concept: once Done/Remaining have been touched at all, the _live_ Remaining count decides pass/fail (`remaining === 0` → Pass) instead of the frozen original issue count.
-- **Pass/fail was all-or-nothing.** Even after the fix above, a cycle with 6 of 8 issues resolved read identically (0%) to one with 0 of 8 resolved — no partial credit, so the report couldn't show genuine, ongoing improvement before a module crossed the finish line to fully clean.
-
-**How the report actually works today:**
+The Stability report answers "is this module getting better or worse," by blending every recorded result for a module or suite into one rolling pass rate with a trend, rather than showing any single run in isolation.
 
 - **Two data sources, blended per module/suite.** Case-based test runs with a Passed/Failed result, and Manual quick logs, are combined into one rolling data set per Module and per Suite. Blocked/Skipped/Not Run results are excluded — they aren't a verdict on stability either way.
 - **Rollups follow the hierarchy.** A Suite's numbers include every nested child suite underneath it, at any depth. A Module's numbers include its own directly-attached cases/logs _plus_ every suite under it.
