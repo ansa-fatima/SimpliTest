@@ -1797,11 +1797,23 @@ function NodeRow({
           />
         </div>
       ) : (
-        <button
-          type="button"
+        // A plain <button> can't be used here — `chevron` is itself a
+        // <button> for expandable rows, and nesting <button> inside
+        // <button> is invalid HTML that React (correctly) warns about on
+        // hydration. role="button" + a key handler keeps this clickable
+        // and keyboard-accessible without the nesting.
+        <div
+          role="button"
+          tabIndex={0}
           onClick={onLabelClick}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onLabelClick();
+            }
+          }}
           className={cn(
-            'flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1 text-left',
+            'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-2 py-1 text-left',
             textSize,
             bold ? 'font-medium' : '',
             isActive ? 'font-semibold text-primary-text' : baseColor,
@@ -1811,7 +1823,7 @@ function NodeRow({
           {icon}
           <span className="flex-1 truncate">{label}</span>
           {suffix}
-        </button>
+        </div>
       )}
 
       {!isRenaming && (
