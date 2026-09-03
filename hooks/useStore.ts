@@ -929,21 +929,26 @@ export function useStore() {
     [showToast, loadCycles, state.currentCycle],
   );
 
-  // Mark a run as Completed — keeps it visible but read-only for the team.
+  // Mark a run as Completed — stays visible and still retestable, just no
+  // longer "open to do".
   const closeCycle = useCallback(
     async (cycleId: string) => {
       try {
         const updated = await api.patch<TestCycle>(`/api/cycles/${cycleId}`, {
           status: 'Completed',
         });
-        showToast('Test run closed ✓', 'success');
-        await loadCycles();
-        // If user is on this cycle's detail screen, refresh local copy so the badge/buttons update.
+        // Update the detail screen's local copy first — before the list
+        // refetch below, which can take noticeably longer with hundreds of
+        // cycles — so the header badge/button flip the instant the toast
+        // does, instead of the "closed ✓" toast landing on a screen that
+        // still visibly says "Open to do" for a beat.
         setState(s =>
           s.currentCycle?.id === cycleId
             ? { ...s, currentCycle: { ...s.currentCycle, ...updated } }
             : s,
         );
+        showToast('Test run closed ✓', 'success');
+        await loadCycles();
       } catch (e) {
         showToast(`Failed to close: ${(e as Error).message}`, 'error');
       }
