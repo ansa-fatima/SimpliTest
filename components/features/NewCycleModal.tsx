@@ -133,12 +133,26 @@ export function NewCycleModal({
   const [minorCount, setMinorCount] = useState(initial?.minorCount ?? 0);
   // How many of the issues above are resolved vs still open — plain counts
   // the tester fills in directly, most useful when this cycle retests an
-  // earlier one, but available any time.
+  // earlier one, but available any time. Remaining defaults to following
+  // Failed (the common case: one failed case = one open issue) until the
+  // tester types into Remaining themselves — editing an existing cycle
+  // counts as already "touched" so opening it for an unrelated edit never
+  // silently overwrites a Remaining value that was saved on purpose.
   const [doneCount, setDoneCount] = useState(initial?.doneCount ?? 0);
   const [remainingCount, setRemainingCount] = useState(initial?.remainingCount ?? 0);
+  const [remainingTouched, setRemainingTouched] = useState(initial != null);
   const [passedCount, setPassedCount] = useState(initial?.passedCount ?? 0);
   const [failedCount, setFailedCount] = useState(initial?.failedCount ?? 0);
   const [blockedCount, setBlockedCount] = useState(initial?.blockedCount ?? 0);
+
+  const handleRemainingChange = (v: number) => {
+    setRemainingTouched(true);
+    setRemainingCount(v);
+  };
+  const handleFailedChange = (v: number) => {
+    setFailedCount(v);
+    if (!remainingTouched) setRemainingCount(v);
+  };
 
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -621,7 +635,7 @@ export function NewCycleModal({
                     <CountField
                       label="Remaining"
                       value={remainingCount}
-                      onChange={setRemainingCount}
+                      onChange={handleRemainingChange}
                       tone="danger"
                     />
                   </div>
@@ -647,7 +661,7 @@ export function NewCycleModal({
                     <CountField
                       label="Failed"
                       value={failedCount}
-                      onChange={setFailedCount}
+                      onChange={handleFailedChange}
                       tone="danger"
                     />
                     <CountField
