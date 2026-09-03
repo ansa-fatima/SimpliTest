@@ -1768,6 +1768,12 @@ function NodeRow({
         isActive ? 'bg-primary-light' : 'hover:bg-surface-2',
       )}
     >
+      {drag && !isRenaming && (
+        <i
+          className="ti ti-grip-vertical ml-1 flex-shrink-0 cursor-grab text-[13px] text-text-3 opacity-0 transition-opacity active:cursor-grabbing group-hover/node:opacity-100"
+          title="Drag to reorder"
+        />
+      )}
       {isRenaming ? (
         <div className="flex flex-1 items-center gap-1.5 px-2 py-0.5">
           {chevron ?? <span className="inline-block w-3" />}
