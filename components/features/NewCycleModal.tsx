@@ -272,6 +272,18 @@ export function NewCycleModal({
   const severityMismatch =
     mode === 'Manual' && (issueCount > 0 || severitySum > 0) && severitySum !== issueCount;
 
+  // Done/Remaining are optional (untouched = "not tracked yet", the (0, 0)
+  // state every report treats as distinct from "fully resolved") — but once
+  // either one has actually been filled in, every issue found has to be
+  // accounted for as either done or still open, so the two must sum to
+  // exactly Total. Without this check the fields accept any numbers at all
+  // (e.g. Done 21 + Remaining 22 against a Total of 21), which makes no sense
+  // and silently breaks every report that reads them.
+  const doneRemainingSum = doneCount + remainingCount;
+  const doneRemainingTracked = doneCount > 0 || remainingCount > 0;
+  const doneRemainingMismatch =
+    mode === 'Manual' && doneRemainingTracked && doneRemainingSum !== issueCount;
+
   const handleSubmit = async () => {
     setError('');
     if (!name.trim()) {
@@ -282,6 +294,10 @@ export function NewCycleModal({
       setError(
         `Critical + Major + Minor (${severitySum}) must equal Total issues (${issueCount}).`,
       );
+      return;
+    }
+    if (doneRemainingMismatch) {
+      setError(`Done + Remaining (${doneRemainingSum}) must equal Total issues (${issueCount}).`);
       return;
     }
     // Scope is OPTIONAL — leaving all three dropdowns blank means "All test cases".
@@ -609,6 +625,11 @@ export function NewCycleModal({
                       tone="danger"
                     />
                   </div>
+                  {doneRemainingMismatch && (
+                    <p className="mt-1.5 text-[11px] font-medium text-red-600">
+                      Done + Remaining ({doneRemainingSum}) must equal Total ({issueCount}).
+                    </p>
+                  )}
                 </div>
 
                 {/* Test case counts (optional) */}
@@ -860,8 +881,14 @@ export function NewCycleModal({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting || severityMismatch}
-            title={severityMismatch ? 'Fix the issue count mismatch before saving' : undefined}
+            disabled={submitting || severityMismatch || doneRemainingMismatch}
+            title={
+              severityMismatch
+                ? 'Fix the issue count mismatch before saving'
+                : doneRemainingMismatch
+                  ? 'Fix the Done/Remaining mismatch before saving'
+                  : undefined
+            }
             className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting && <i className="ti ti-loader-2 animate-spin text-[13px]" />}
