@@ -19,47 +19,53 @@ interface Filters {
 
 const DEFAULT_FILTERS: Filters = { portalId: '' };
 
-// Report types available as tabs. Execution and Release were removed as
-// report *content* (Stability — module/feature health blended from every
-// quick log and test run — is the one that actually gets used day to day),
-// but the tab structure stays: adding a report type back later is just
-// another entry here plus a case in the switch below, not a page rebuild.
-type ReportTab = 'stability';
-const REPORT_TABS: { key: ReportTab; label: string }[] = [{ key: 'stability', label: 'Stability' }];
+// Report types available as clickable tiles — the pre-cleanup landing page
+// had one tile per report (Execution / Release / Stability); Execution and
+// Release were removed as report *content* since Stability (module/feature
+// health blended from every quick log and test run) is the one that
+// actually gets used day to day, but the tile-grid pattern stays: adding a
+// report type back later is just another entry here, not a page rebuild.
+interface ReportTypeMeta {
+  key: 'stability';
+  label: string;
+  sub: string;
+  icon: string;
+  iconColor: string;
+}
+const REPORT_TYPES: ReportTypeMeta[] = [
+  {
+    key: 'stability',
+    label: 'Stability',
+    sub: 'Module & feature health',
+    icon: 'ti-activity-heartbeat',
+    iconColor: 'bg-rose-100 text-rose-700',
+  },
+];
 
 export function Reports({ projectId, projectName, portals, onOpenCycle }: ReportsProps) {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
-  const [activeTab, setActiveTab] = useState<ReportTab>('stability');
+  const [activeTab, setActiveTab] = useState<ReportTypeMeta['key']>('stability');
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
       <div className="flex-1 overflow-y-auto px-8 py-6">
         {/* Header */}
-        <div className="mb-4">
+        <div className="mb-5">
           <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
             Reports
           </h1>
-          <p className="text-[13px] text-text-2">
-            Track how stable your product is, from quick logs and test runs.
-          </p>
+          <p className="text-[13px] text-text-2">Generate and share QA reports.</p>
         </div>
 
-        {/* Report type tabs */}
-        <div className="mb-5 flex items-center gap-1.5">
-          {REPORT_TABS.map(t => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setActiveTab(t.key)}
-              className={cn(
-                'rounded-[7px] px-2.5 py-1 text-[12.5px] transition-colors',
-                activeTab === t.key
-                  ? 'border border-primary bg-primary-light font-semibold text-primary-text'
-                  : 'border border-border bg-surface text-text-2 hover:bg-surface-2',
-              )}
-            >
-              {t.label}
-            </button>
+        {/* Report type tiles */}
+        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+          {REPORT_TYPES.map(rt => (
+            <ReportTypeCard
+              key={rt.key}
+              meta={rt}
+              active={rt.key === activeTab}
+              onClick={() => setActiveTab(rt.key)}
+            />
           ))}
         </div>
 
@@ -110,6 +116,48 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Report type tile ───────────────────────────────────────
+
+function ReportTypeCard({
+  meta,
+  active,
+  onClick,
+}: {
+  meta: ReportTypeMeta;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'group flex items-start gap-3 rounded-lg border bg-surface p-3 text-left transition-all',
+        active
+          ? 'border-primary shadow-sm ring-2 ring-primary-light'
+          : 'border-border hover:border-border-strong hover:bg-surface-2',
+      )}
+    >
+      <span
+        className={cn(
+          'flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md',
+          meta.iconColor,
+        )}
+      >
+        <i className={cn('ti', meta.icon, 'text-[18px]')} />
+      </span>
+      <div className="min-w-0">
+        <div
+          className={cn('text-[13px] font-semibold', active ? 'text-primary-text' : 'text-text')}
+        >
+          {meta.label}
+        </div>
+        <div className="text-[11px] text-text-3">{meta.sub}</div>
+      </div>
+    </button>
   );
 }
 
