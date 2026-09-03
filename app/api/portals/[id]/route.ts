@@ -12,8 +12,8 @@ export async function GET(_req: Request, { params }: Ctx) {
       where: { id: params.id },
       include: {
         modules: {
-          orderBy: { name: 'asc' },
-          include: { suites: { orderBy: { name: 'asc' } } },
+          orderBy: { order: 'asc' },
+          include: { suites: { orderBy: { order: 'asc' } } },
         },
       },
     });

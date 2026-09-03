@@ -23,13 +23,14 @@ export async function GET(req: Request) {
       where: projectId ? { projectId } : undefined,
       include: {
         modules: {
-          orderBy: { name: 'asc' },
+          orderBy: { order: 'asc' },
           include: {
             suites: {
               select: {
                 id: true,
                 name: true,
                 parentId: true,
+                order: true,
                 _count: { select: { testCases: true } },
               },
             },
@@ -38,7 +39,7 @@ export async function GET(req: Request) {
         },
         _count: { select: { modules: true, testCases: true } },
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { order: 'asc' },
     });
 
     // Recursive nesting helper — turns a flat suite list into a tree by parentId.
@@ -46,6 +47,7 @@ export async function GET(req: Request) {
       id: string;
       name: string;
       parentId: string | null;
+      order: number;
       _count: { testCases: number };
     };
     type NestedSuite = FlatSuite & { children: NestedSuite[] };
@@ -60,9 +62,9 @@ export async function GET(req: Request) {
           roots.push(node);
         }
       });
-      // Sort each level alphabetically.
+      // Sort each level by manual drag-and-drop order.
       const sortTree = (nodes: NestedSuite[]) => {
-        nodes.sort((a, b) => a.name.localeCompare(b.name));
+        nodes.sort((a, b) => a.order - b.order);
         nodes.forEach(n => sortTree(n.children));
       };
       sortTree(roots);
@@ -98,12 +100,19 @@ export async function POST(req: Request) {
     if (!name) return bad('name is required');
     if (!projectId) return bad('projectId is required');
 
+    // New portals land at the end of the list, not the front.
+    const last = await prisma.portal.findFirst({
+      where: { projectId },
+      orderBy: { order: 'desc' },
+      select: { order: true },
+    });
     const portal = await prisma.portal.create({
       data: {
         name,
         projectId,
         icon,
         slug: body?.slug?.trim() || slugify(name),
+        order: (last?.order ?? -1) + 1,
       },
     });
     return ok(portal, 201);

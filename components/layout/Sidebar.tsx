@@ -68,21 +68,19 @@ export function Sidebar({
   const onMembers = page === 'members';
   const onSettings = page === 'settings';
 
-  // Counts shown next to nav items. Refetched when the active project changes.
-  const [counts, setCounts] = useState<{ cases: number; runs: number }>({ cases: 0, runs: 0 });
+  // Count shown next to the Test cases nav item. Refetched when the active project changes.
+  const [counts, setCounts] = useState<{ cases: number }>({ cases: 0 });
   useEffect(() => {
     if (!currentProjectId) {
-      setCounts({ cases: 0, runs: 0 });
+      setCounts({ cases: 0 });
       return;
     }
     (async () => {
       try {
-        const [tc, rc] = await Promise.all([
-          api.get<{ total: number }>(`/api/test-cases?projectId=${currentProjectId}&pageSize=1`),
-          api.get<{ id: string; status: string }[]>(`/api/cycles?projectId=${currentProjectId}`),
-        ]);
-        const activeRuns = Array.isArray(rc) ? rc.filter(c => c.status === 'Active').length : 0;
-        setCounts({ cases: tc.total ?? 0, runs: activeRuns });
+        const tc = await api.get<{ total: number }>(
+          `/api/test-cases?projectId=${currentProjectId}&pageSize=1`,
+        );
+        setCounts({ cases: tc.total ?? 0 });
       } catch (e) {
         console.error('[sidebar counts]', e);
       }
@@ -129,7 +127,6 @@ export function Sidebar({
           onClick={onShowTestRuns}
           icon={<PlayIcon />}
           label="Test runs"
-          badge={counts.runs > 0 ? String(counts.runs) : undefined}
         />
         <NavItem
           active={onPlans}

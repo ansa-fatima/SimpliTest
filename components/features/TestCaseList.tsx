@@ -39,6 +39,26 @@ type ActiveSelection =
   | { kind: 'module'; portal: ApiPortal; module: ApiModule }
   | { kind: 'suite'; portal: ApiPortal; module: ApiModule; suite: ApiSuite };
 
+// ─── Drag-and-drop reordering ──────────────────────────────────
+// One shared drag state serves every reorderable list on the page (portals,
+// each module's suites, each suite's children, the test case table) — a
+// `listKey` scopes drag-over/drop so dragging in one list never affects a
+// different one. Kept as plain state + a plain (non-hook) handler factory so
+// it can be called from `renderSuiteNode`, which isn't itself a component.
+interface DragState {
+  listKey: string;
+  id: string;
+  overId: string | null;
+}
+interface DragHandlers {
+  onDragStart: (e: React.DragEvent) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
+  isDragOver: boolean;
+  isDragging: boolean;
+}
+
 interface TestCaseListProps {
   projectId: string | null;
   projectName: string;
@@ -104,6 +124,106 @@ export function TestCaseList({
   useEffect(() => {
     reloadTree();
   }, [reloadTree]);
+
+  // ─── Drag-and-drop reordering ──────────────────────────────
+  const [drag, setDrag] = useState<DragState | null>(null);
+
+  // Factory (not a hook) — safe to call from renderSuiteNode, which is a
+  // plain recursive function, not its own component.
+  const dragHandlersFor = (
+    listKey: string,
+    id: string,
+    ids: string[],
+    onReorder: (newIds: string[]) => void,
+  ): DragHandlers => ({
+    onDragStart: e => {
+      e.dataTransfer.effectAllowed = 'move';
+      setDrag({ listKey, id, overId: null });
+    },
+    onDragOver: e => {
+      if (!drag || drag.listKey !== listKey || drag.id === id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (drag.overId !== id) setDrag({ ...drag, overId: id });
+    },
+    onDrop: e => {
+      e.preventDefault();
+      if (!drag || drag.listKey !== listKey || drag.id === id) {
+        setDrag(null);
+        return;
+      }
+      const from = ids.indexOf(drag.id);
+      const to = ids.indexOf(id);
+      setDrag(null);
+      if (from === -1 || to === -1 || from === to) return;
+      const next = [...ids];
+      next.splice(from, 1);
+      next.splice(to, 0, drag.id);
+      onReorder(next);
+    },
+    onDragEnd: () => setDrag(null),
+    isDragOver: drag?.listKey === listKey && drag.overId === id && drag.id !== id,
+    isDragging: drag?.listKey === listKey && drag.id === id,
+  });
+
+  const updateSuiteChildrenOrder = (
+    suites: ApiSuite[],
+    parentId: string,
+    newIds: string[],
+  ): ApiSuite[] =>
+    suites.map(s =>
+      s.id === parentId
+        ? { ...s, children: newIds.map(id => s.children.find(c => c.id === id)!) }
+        : { ...s, children: updateSuiteChildrenOrder(s.children, parentId, newIds) },
+    );
+
+  const reorderPortals = (newIds: string[]) => {
+    setTree(prev => newIds.map(id => prev.find(p => p.id === id)!));
+    if (!projectId) return;
+    api.patch('/api/portals/reorder', { projectId, ids: newIds }).catch(() => reloadTree());
+  };
+
+  const reorderModules = (portalId: string, newIds: string[]) => {
+    setTree(prev =>
+      prev.map(p =>
+        p.id !== portalId
+          ? p
+          : { ...p, modules: newIds.map(id => p.modules.find(m => m.id === id)!) },
+      ),
+    );
+    api.patch('/api/modules/reorder', { portalId, ids: newIds }).catch(() => reloadTree());
+  };
+
+  const reorderSuites = (
+    portalId: string,
+    moduleId: string,
+    parentId: string | null,
+    newIds: string[],
+  ) => {
+    setTree(prev =>
+      prev.map(p => {
+        if (p.id !== portalId) return p;
+        return {
+          ...p,
+          modules: p.modules.map(m => {
+            if (m.id !== moduleId) return m;
+            if (parentId === null) {
+              return { ...m, suites: newIds.map(id => m.suites.find(s => s.id === id)!) };
+            }
+            return { ...m, suites: updateSuiteChildrenOrder(m.suites, parentId, newIds) };
+          }),
+        };
+      }),
+    );
+    api
+      .patch('/api/features/reorder', { moduleId, parentId, ids: newIds })
+      .catch(() => reloadTree());
+  };
+
+  const reorderCases = (newIds: string[]) => {
+    setCases(prev => newIds.map(id => prev.find(c => c.id === id)!));
+    api.post('/api/test-cases/bulk', { action: 'reorder', ids: newIds }).catch(() => fetchCases());
+  };
 
   // Elevated selection — used when the user picks a portal or module directly,
   // without drilling into a suite. Resets whenever currentKey changes (a suite
@@ -267,7 +387,9 @@ export function TestCaseList({
       const params = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
-        sort: 'caseNum',
+        // "order" is the manual drag-and-drop position, kept in sync with the
+        // old caseNum-based display order until a user actually drags a row.
+        sort: 'order',
         order: 'asc',
       });
       // Filter by the deepest level the user has selected. Higher levels
@@ -651,6 +773,13 @@ export function TestCaseList({
   };
   const activeFilterCount = priorityF.size + typeF.size + (search.trim() ? 1 : 0);
 
+  // Drag-to-reorder only makes sense against one clean, fully-loaded sibling
+  // group: a suite's own directly-attached cases (a Module/Portal view mixes
+  // in nested-suite cases too, which don't share one order sequence), and
+  // only when every sibling is actually on screen (not split across pages).
+  const canReorderCases =
+    activeNode?.kind === 'suite' && cases.length === total && cases.length > 1;
+
   const toggleSelect = (id: string) =>
     setSelected(s => {
       const n = new Set(s);
@@ -683,6 +812,7 @@ export function TestCaseList({
     modName: string,
     moduleId: string,
     portalId: string,
+    siblings: ApiSuite[],
   ): React.ReactNode => {
     const active = activeNode?.kind === 'suite' && activeNode.suite.id === suite.id;
     const isRenamingSuite = edit?.kind === 'rename-suite' && edit.targetId === suite.id;
@@ -696,6 +826,12 @@ export function TestCaseList({
           indent={2 + depth}
           isActive={active}
           isRenaming={isRenamingSuite}
+          drag={dragHandlersFor(
+            `suites:${moduleId}:${suite.parentId ?? 'root'}`,
+            suite.id,
+            siblings.map(s => s.id),
+            ids => reorderSuites(portalId, moduleId, suite.parentId, ids),
+          )}
           // Suites that have children get a chevron; leaves get a dot.
           chevron={
             hasChildren ? (
@@ -777,7 +913,7 @@ export function TestCaseList({
         {(isOpen || isAddingChildHere) && (
           <div className="ml-4 border-l border-border pl-1">
             {suite.children.map(child =>
-              renderSuiteNode(child, depth + 1, modName, moduleId, portalId),
+              renderSuiteNode(child, depth + 1, modName, moduleId, portalId, suite.children),
             )}
             {isAddingChildHere && (
               <InlineRow
@@ -964,6 +1100,12 @@ export function TestCaseList({
                       indent={0}
                       isActive={activeNode?.kind === 'portal' && activeNode.portal.id === portal.id}
                       isRenaming={isRenamingPortal}
+                      drag={dragHandlersFor(
+                        'portals',
+                        portal.id,
+                        tree.map(p => p.id),
+                        reorderPortals,
+                      )}
                       onLabelClick={() => {
                         // Single click: select the portal (so its cases show on the right).
                         // Chevron click separately toggles expansion.
@@ -1031,6 +1173,12 @@ export function TestCaseList({
                                   activeNode?.kind === 'module' && activeNode.module.id === mod.id
                                 }
                                 isRenaming={isRenamingModule}
+                                drag={dragHandlersFor(
+                                  `modules:${portal.id}`,
+                                  mod.id,
+                                  portal.modules.map(m => m.id),
+                                  ids => reorderModules(portal.id, ids),
+                                )}
                                 onLabelClick={() => {
                                   // Selecting a module shows its direct + nested cases.
                                   setElevated({
@@ -1108,7 +1256,14 @@ export function TestCaseList({
                                     )}
                                   {/* Recursive — each suite renders itself + nested children. */}
                                   {mod.suites.map(suite =>
-                                    renderSuiteNode(suite, 0, mod.name, mod.id, portal.id),
+                                    renderSuiteNode(
+                                      suite,
+                                      0,
+                                      mod.name,
+                                      mod.id,
+                                      portal.id,
+                                      mod.suites,
+                                    ),
                                   )}
 
                                   {/* Inline "add suite" input at the bottom of the module. */}
@@ -1306,17 +1461,40 @@ export function TestCaseList({
                     <tbody>
                       {cases.map(tc => {
                         const isSel = selected.has(tc.id);
+                        const rowDrag = canReorderCases
+                          ? dragHandlersFor(
+                              `cases:${activeNode!.kind === 'suite' ? activeNode!.suite.id : ''}`,
+                              tc.id,
+                              cases.map(c => c.id),
+                              reorderCases,
+                            )
+                          : null;
                         return (
                           <tr
                             key={tc.id}
                             onClick={() => onOpenCase(tc, cases)}
+                            draggable={!!rowDrag}
+                            onDragStart={rowDrag?.onDragStart}
+                            onDragOver={rowDrag?.onDragOver}
+                            onDrop={rowDrag?.onDrop}
+                            onDragEnd={rowDrag?.onDragEnd}
                             className={cn(
-                              'group cursor-pointer border-b border-border transition-colors last:border-b-0',
+                              'group cursor-pointer border-b-2 transition-colors last:border-b-0',
+                              rowDrag?.isDragOver ? 'border-primary' : 'border-border',
+                              rowDrag?.isDragging ? 'opacity-40' : '',
                               isSel ? 'bg-primary-light/60' : 'hover:bg-surface-2',
                             )}
                           >
                             <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                              <CheckBox checked={isSel} onChange={() => toggleSelect(tc.id)} />
+                              <div className="flex items-center gap-1.5">
+                                {canReorderCases && (
+                                  <i
+                                    className="ti ti-grip-vertical cursor-grab text-[13px] text-text-3 active:cursor-grabbing"
+                                    title="Drag to reorder"
+                                  />
+                                )}
+                                <CheckBox checked={isSel} onChange={() => toggleSelect(tc.id)} />
+                              </div>
                             </td>
                             <td className="px-4 py-3 font-mono text-[12px] text-text-3">
                               TC-{String(tc.caseNum).padStart(2, '0')}
@@ -1551,6 +1729,9 @@ interface NodeRowProps {
   onRenameChange: (v: string) => void;
   onRenameSubmit: () => void;
   onRenameCancel: () => void;
+  /** Drag-and-drop reorder handlers — omitted when this row isn't in a
+   *  drag-reorderable list (e.g. while a rename is in progress elsewhere). */
+  drag?: DragHandlers;
 }
 
 function NodeRow({
@@ -1568,13 +1749,22 @@ function NodeRow({
   onRenameChange,
   onRenameSubmit,
   onRenameCancel,
+  drag,
 }: NodeRowProps) {
   const textSize = indent === 2 ? 'text-[12.5px]' : 'text-[13px]';
   const baseColor = indent === 0 ? 'text-text' : indent === 1 ? 'text-text-2' : 'text-text-2';
   return (
     <div
+      draggable={!!drag && !isRenaming}
+      onDragStart={drag?.onDragStart}
+      onDragOver={drag?.onDragOver}
+      onDrop={drag?.onDrop}
+      onDragEnd={drag?.onDragEnd}
       className={cn(
-        'group/node flex items-center rounded-md transition-colors',
+        'group/node flex items-center rounded-md border-t-2 transition-colors',
+        drag?.isDragOver ? 'border-primary' : 'border-transparent',
+        drag && !isRenaming ? 'cursor-grab active:cursor-grabbing' : '',
+        drag?.isDragging ? 'opacity-40' : '',
         isActive ? 'bg-primary-light' : 'hover:bg-surface-2',
       )}
     >

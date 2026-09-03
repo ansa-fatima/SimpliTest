@@ -14,10 +14,10 @@ export async function GET(req: Request) {
     const modules = await prisma.module.findMany({
       where,
       include: {
-        suites: { orderBy: { name: 'asc' } },
+        suites: { orderBy: { order: 'asc' } },
         _count: { select: { suites: true } },
       },
-      orderBy: { name: 'asc' },
+      orderBy: { order: 'asc' },
     });
     return ok(modules);
   } catch (e) {
@@ -34,7 +34,14 @@ export async function POST(req: Request) {
     if (!name) return bad('name is required');
     if (!portalId) return bad('portalId is required');
 
-    const mod = await prisma.module.create({ data: { name, portalId } });
+    const last = await prisma.module.findFirst({
+      where: { portalId },
+      orderBy: { order: 'desc' },
+      select: { order: true },
+    });
+    const mod = await prisma.module.create({
+      data: { name, portalId, order: (last?.order ?? -1) + 1 },
+    });
     return ok(mod, 201);
   } catch (e) {
     return prismaError(e) ?? serverError(e);

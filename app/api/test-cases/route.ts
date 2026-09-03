@@ -73,8 +73,10 @@ export async function GET(req: Request) {
     const page = Math.max(1, parseInt(sp.get('page') || '1', 10) || 1);
     const pageSize = Math.min(5000, Math.max(1, parseInt(sp.get('pageSize') || '50', 10) || 50));
 
-    const sortField = ['caseNum', 'title', 'createdAt', 'updatedAt'].includes(sp.get('sort') || '')
-      ? (sp.get('sort') as 'caseNum' | 'title' | 'createdAt' | 'updatedAt')
+    const sortField = ['caseNum', 'title', 'createdAt', 'updatedAt', 'order'].includes(
+      sp.get('sort') || '',
+    )
+      ? (sp.get('sort') as 'caseNum' | 'title' | 'createdAt' | 'updatedAt' | 'order')
       : 'caseNum';
     const order: 'asc' | 'desc' = sp.get('order') === 'asc' ? 'asc' : 'desc';
 
@@ -175,6 +177,13 @@ export async function POST(req: Request) {
     const status: CaseStatus =
       body?.status && STATUSES.includes(body.status) ? body.status : 'Active';
 
+    // New cases land at the end of their sibling list, not the front.
+    const last = await prisma.testCase.findFirst({
+      where: { portalId, moduleId, suiteId },
+      orderBy: { order: 'desc' },
+      select: { order: true },
+    });
+
     const tc = await prisma.testCase.create({
       data: {
         title,
@@ -192,6 +201,7 @@ export async function POST(req: Request) {
         suiteId,
         author: body.author ?? '',
         ownerId: body.ownerId ?? null,
+        order: (last?.order ?? -1) + 1,
       },
       include: caseInclude,
     });

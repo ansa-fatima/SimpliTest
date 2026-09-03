@@ -140,6 +140,10 @@ model Portal {
   name      String
   slug      String?
   icon      String?    // Tabler icon name, e.g. "ti-presentation"
+  // Manual drag-and-drop position among sibling portals in the same project.
+  // Backfilled from creation order on migration; the API resorts every
+  // portal in a project to a dense 0..N-1 sequence on every reorder.
+  order     Int        @default(0)
   projectId String
   project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   modules   Module[]
@@ -155,6 +159,8 @@ model Portal {
 model Module {
   id        String     @id @default(cuid())
   name      String
+  // Manual drag-and-drop position among sibling modules in the same portal.
+  order     Int        @default(0)
   portalId  String
   portal    Portal     @relation(fields: [portalId], references: [id], onDelete: Cascade)
   suites    Suite[]
@@ -180,6 +186,10 @@ model Module {
 model Suite {
   id        String     @id @default(cuid())
   name      String
+  // Manual drag-and-drop position among sibling suites — either the other
+  // root suites in the same module (parentId null) or the other child
+  // suites under the same parent suite.
+  order     Int        @default(0)
   module    Module     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   moduleId  String
   parentId  String?
@@ -238,6 +248,10 @@ model TestCase {
   severity      Severity
   type          TestType
   status        CaseStatus @default(Active)
+  // Manual drag-and-drop position among sibling cases attached to the same
+  // Portal/Module/Suite node. Only meaningful when sorted by "order" — other
+  // sort modes (title, date, caseNum) ignore it.
+  order         Int        @default(0)
   // A test case attaches to exactly ONE of: Portal, Module, or Suite.
   // App-layer validation enforces "exactly one set" — Postgres can't express
   // an XOR constraint cleanly across three FKs without a CHECK constraint.

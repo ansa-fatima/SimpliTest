@@ -12,7 +12,7 @@ export async function GET(req: Request) {
         module: { select: { id: true, name: true } },
         _count: { select: { testCases: true } },
       },
-      orderBy: [{ moduleId: 'asc' }, { name: 'asc' }],
+      orderBy: [{ moduleId: 'asc' }, { order: 'asc' }],
     });
     return ok(suites);
   } catch (e) {
@@ -68,8 +68,13 @@ export async function POST(req: Request) {
       );
     }
 
+    const last = await prisma.suite.findFirst({
+      where: { moduleId, parentId },
+      orderBy: { order: 'desc' },
+      select: { order: true },
+    });
     const suite = await prisma.suite.create({
-      data: { name, moduleId, parentId },
+      data: { name, moduleId, parentId, order: (last?.order ?? -1) + 1 },
     });
     return ok(suite, 201);
   } catch (e) {

@@ -14,13 +14,16 @@ type BulkBody =
       patch: Partial<Record<'priority' | 'severity' | 'type' | 'author', string>>;
     }
   | { action: 'move'; ids: string[]; targetSuiteId?: string; targetFeatureId?: string }
-  | { action: 'duplicate'; ids: string[] };
+  | { action: 'duplicate'; ids: string[] }
+  | { action: 'reorder'; ids: string[] };
 
 // POST /api/test-cases/bulk
 //   { action:'delete',    ids:[...] }
 //   { action:'update',    ids:[...], patch:{ priority?, severity?, type?, author? } }
 //   { action:'move',      ids:[...], targetSuiteId:'...' (or legacy targetFeatureId) }
 //   { action:'duplicate', ids:[...] }
+//   { action:'reorder',   ids:[...] }  — full sibling list in its new order;
+//                                        all ids must share the same parent
 export async function POST(req: Request) {
   try {
     const body = await parseJson<BulkBody>(req);
@@ -91,6 +94,39 @@ export async function POST(req: Request) {
           ),
         );
         return ok({ created: created.length });
+      }
+
+      case 'reorder': {
+        const cases = await prisma.testCase.findMany({
+          where: { id: { in: body.ids } },
+          select: { id: true, portalId: true, moduleId: true, suiteId: true },
+        });
+        if (cases.length !== body.ids.length) return bad('one or more ids not found', 404);
+        const parentKey = (c: (typeof cases)[number]) => c.portalId ?? c.moduleId ?? c.suiteId;
+        const firstParent = parentKey(cases[0]);
+        if (!cases.every(c => parentKey(c) === firstParent)) {
+          return bad('all ids must share the same parent portal/module/suite');
+        }
+        // Full sibling group must be reordered together, not a subset —
+        // otherwise cases left out would keep stale `order` values that
+        // collide with the newly-assigned ones.
+        const siblingCount = await prisma.testCase.count({
+          where: {
+            portalId: cases[0].portalId,
+            moduleId: cases[0].moduleId,
+            suiteId: cases[0].suiteId,
+          },
+        });
+        if (siblingCount !== body.ids.length) {
+          return bad('ids must be exactly the current set of sibling cases');
+        }
+
+        await prisma.$transaction(
+          body.ids.map((id, index) =>
+            prisma.testCase.update({ where: { id }, data: { order: index } }),
+          ),
+        );
+        return ok({ reordered: body.ids.length });
       }
 
       default:
