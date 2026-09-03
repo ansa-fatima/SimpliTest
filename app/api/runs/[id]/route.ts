@@ -74,6 +74,24 @@ export async function PATCH(req: Request, { params }: Ctx) {
         },
       },
     });
+
+    // Auto-close the run the moment every case in it has a result — saves
+    // an explicit "Close run" click for the common case, since there's
+    // nothing left "to do". Only fires forward (Active -> Completed); a
+    // later "Reset to Not run" doesn't reopen it, since undoing one result
+    // on an otherwise-finished run isn't the same as un-finishing it.
+    if (body.result !== undefined && body.result !== 'NotRun') {
+      const stillNotRun = await prisma.testRun.count({
+        where: { cycleId: run.cycleId, result: 'NotRun' },
+      });
+      if (stillNotRun === 0) {
+        await prisma.testCycle.updateMany({
+          where: { id: run.cycleId, status: 'Active' },
+          data: { status: 'Completed' },
+        });
+      }
+    }
+
     return ok(run);
   } catch (e) {
     return prismaError(e) ?? serverError(e);

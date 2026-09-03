@@ -989,13 +989,24 @@ export function useStore() {
             `/api/cycles/${state.currentCycle.id}/summary`,
           );
           setState(s => ({ ...s, summary }));
+          // The server auto-completes a run the moment its last NotRun case
+          // gets a result — refetch the cycle so the header badge and
+          // "Close run" button pick that up immediately instead of still
+          // showing "Open to do" until the next full page load.
+          if (summary.counts.NotRun === 0 && state.currentCycle.status === 'Active') {
+            const freshCycle = await api.get<TestCycle>(`/api/cycles/${state.currentCycle.id}`);
+            setState(s =>
+              s.currentCycle?.id === freshCycle.id ? { ...s, currentCycle: freshCycle } : s,
+            );
+            loadCycles();
+          }
         }
         showToast('Result saved ✓', 'success');
       } catch (e) {
         showToast(`Failed to save: ${(e as Error).message}`, 'error');
       }
     },
-    [showToast, state.currentCycle, state.user],
+    [showToast, state.currentCycle, state.user, loadCycles],
   );
 
   const currentCases = state.data[state.currentKey] || [];
