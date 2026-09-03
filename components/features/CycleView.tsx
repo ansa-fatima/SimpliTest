@@ -64,24 +64,25 @@ export function CycleView({
   const done = summary?.done ?? total - counts.NotRun;
   const percent = summary?.percent ?? (total === 0 ? 0 : Math.round((done / total) * 100));
 
-  // Retest tracking — "done" means actually retested and fixed, not just
-  // currently Passed, so a case that passed on its very first run (never an
-  // issue at all) doesn't inflate this count. `wasEverIssue` is the sticky
-  // per-run flag that makes that distinction possible; a bare Pass/Fail
-  // count can't. Remaining counts Blocked alongside Failed — a blocked case
-  // still needs attention before the run is clean — otherwise it's neither
-  // "done" nor "remaining" and just vanishes from the tracker. Severity
-  // breakdown follows the same Failed-or-Blocked rule so it always sums to
-  // the Issues count shown elsewhere for this cycle.
+  // Retest tracking, against a fixed baseline — every run ever marked
+  // Failed/Blocked (the sticky wasEverIssue flag), not the live Failed
+  // count, which would otherwise shrink "how many issues were found" every
+  // time one gets fixed. Done = that baseline now Passed; Remaining = the
+  // rest of it (Failed, Blocked, or Skipped-after-once-failing all still
+  // count as open) — so Done + Remaining always equals the baseline, same
+  // invariant a quick log's Done + Remaining = Total issues already has.
   const retestDone = useMemo(
-    () => runs.filter(r => r.result === 'Passed' && r.wasEverIssue).length,
+    () => runs.filter(r => r.wasEverIssue && r.result === 'Passed').length,
     [runs],
   );
-  const retestRemaining = counts.Failed + counts.Blocked;
+  const retestRemaining = useMemo(
+    () => runs.filter(r => r.wasEverIssue && r.result !== 'Passed').length,
+    [runs],
+  );
   const failureSeverity = useMemo(() => {
     const tally = { Critical: 0, Major: 0, Minor: 0 };
     for (const r of runs) {
-      if (r.result !== 'Failed' && r.result !== 'Blocked') continue;
+      if (!r.wasEverIssue || r.result === 'Passed') continue;
       const sev = r.testCase.severity;
       if (sev in tally) tally[sev as keyof typeof tally]++;
     }

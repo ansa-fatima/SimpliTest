@@ -57,8 +57,13 @@ export interface CycleSummary {
   done: number;
   percent: number;
   counts: Record<RunResult, number>;
-  /** Severity breakdown of currently-failed cases (case-based cycles only). */
+  /** Severity breakdown of ever-failed/blocked cases (case-based cycles only). */
   severity?: { Critical: number; Major: number; Minor: number };
+  /** Stable baseline: every case-based run ever marked Failed/Blocked — doesn't
+   *  shrink as retesting fixes things, mirroring a quick log's Total issues. */
+  issuesFound?: number;
+  /** Of `issuesFound`, how many are now Passed. */
+  issuesResolved?: number;
 }
 
 export interface TestCycle {

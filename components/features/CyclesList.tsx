@@ -288,18 +288,19 @@ export function CyclesList({
                   const severity = summary?.severity ?? { Critical: 0, Major: 0, Minor: 0 };
                   const total = summary?.total ?? 0;
 
-                  const issueCount = isManual
-                    ? (c.issueCount ?? 0)
-                    : counts.Failed + counts.Blocked;
-                  const done = isManual ? (c.doneCount ?? 0) : counts.Passed;
-                  // "Remaining" means the same thing everywhere: issues still
-                  // open and needing a retest — for a case-based cycle that's
-                  // the currently-failed OR blocked cases (both still need
-                  // attention), not the ones that just haven't been run yet
-                  // (NotRun is a separate, unrelated state).
+                  // Issues/Done/Remaining read the same way for both modes now:
+                  // Issues is a fixed baseline (found), Done is how many of
+                  // those are fixed, Remaining is the rest — none of them
+                  // move except Done/Remaining as retesting happens. For a
+                  // case-based cycle that baseline comes from the sticky
+                  // wasEverIssue flag (see /api/cycles), not the live
+                  // Failed/Blocked counts, which would otherwise shrink
+                  // "Issues" itself every time a case gets fixed.
+                  const issueCount = isManual ? (c.issueCount ?? 0) : (summary?.issuesFound ?? 0);
+                  const done = isManual ? (c.doneCount ?? 0) : (summary?.issuesResolved ?? 0);
                   const remaining = isManual
                     ? (c.remainingCount ?? 0)
-                    : counts.Failed + counts.Blocked;
+                    : (summary?.issuesFound ?? 0) - (summary?.issuesResolved ?? 0);
 
                   return (
                     <tr
@@ -348,7 +349,7 @@ export function CyclesList({
                                   title={
                                     remaining === 0
                                       ? 'Fully resolved'
-                                      : `${remaining} case(s) still failing or blocked`
+                                      : `${remaining} issue(s) still open`
                                   }
                                 />
                               )}

@@ -26,7 +26,9 @@ export async function GET(req: Request) {
       where,
       orderBy: { createdAt: 'desc' },
       include: {
-        runs: { select: { result: true, testCase: { select: { severity: true } } } },
+        runs: {
+          select: { result: true, wasEverIssue: true, testCase: { select: { severity: true } } },
+        },
       },
     });
 
@@ -71,14 +73,23 @@ export async function GET(req: Request) {
 
     const enriched = cycles.map(c => {
       const counts = { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
-      // Severity breakdown of currently-open cases (Failed or Blocked — both
-      // still need attention). Must match the Issues column below, which is
-      // also Failed + Blocked, or the severity numbers silently undercount it.
+      // Issues found is a stable baseline: every run that was EVER Failed or
+      // Blocked (the sticky wasEverIssue flag), not just the ones still
+      // failing right now — so it doesn't shrink as retesting fixes things,
+      // matching how a quick log's Total issues never changes as you work
+      // through it. Severity is that same baseline's breakdown, so it sums
+      // to Issues exactly like a quick log's Critical+Major+Minor does.
       const severity = { Critical: 0, Major: 0, Minor: 0 };
+      let issuesFound = 0;
+      let issuesResolved = 0;
       for (const r of c.runs) {
         counts[r.result]++;
-        if ((r.result === 'Failed' || r.result === 'Blocked') && r.testCase.severity in severity) {
-          severity[r.testCase.severity as keyof typeof severity]++;
+        if (r.wasEverIssue) {
+          issuesFound++;
+          if (r.result === 'Passed') issuesResolved++;
+          if (r.testCase.severity in severity) {
+            severity[r.testCase.severity as keyof typeof severity]++;
+          }
         }
       }
       const total = c.runs.length;
@@ -121,7 +132,7 @@ export async function GET(req: Request) {
         portalName,
         moduleName,
         scopeName,
-        summary: { total, done, percent, counts, severity },
+        summary: { total, done, percent, counts, severity, issuesFound, issuesResolved },
       };
     });
 
