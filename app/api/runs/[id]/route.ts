@@ -41,12 +41,22 @@ export async function PATCH(req: Request, { params }: Ctx) {
       notes?: string;
       executedBy?: string;
       executedAt?: Date | null;
+      wasEverIssue?: boolean;
     } = {};
 
     if (body.result !== undefined) {
       if (!RESULTS.includes(body.result)) return bad('invalid result');
       data.result = body.result;
       data.executedAt = body.result === 'NotRun' ? null : new Date();
+      // Sticks at true the moment a run is ever marked Failed/Blocked, so a
+      // later Pass can be told apart from one that never had an issue at
+      // all. "Reset to Not run" is the one explicit way to clear it — that
+      // action means starting this case's execution over from scratch.
+      if (body.result === 'Failed' || body.result === 'Blocked') {
+        data.wasEverIssue = true;
+      } else if (body.result === 'NotRun') {
+        data.wasEverIssue = false;
+      }
     }
     if (typeof body.notes === 'string') data.notes = body.notes;
     if (typeof body.executedBy === 'string') data.executedBy = body.executedBy;

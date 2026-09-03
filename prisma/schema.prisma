@@ -369,6 +369,11 @@ model TestRun {
   testCase   TestCase  @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
   testCaseId String
   result     RunResult @default(NotRun)
+  // Sticks at true the first time this run is marked Failed or Blocked, and
+  // stays true even after a later Pass — lets "retested and fixed" be told
+  // apart from "passed on the first try", which the bare `result` field
+  // alone can't do. Reset to false only by an explicit "Reset to Not run".
+  wasEverIssue Boolean @default(false)
   notes      String    @default("")
   executedAt DateTime?
   executedBy String    @default("")

@@ -125,6 +125,9 @@ export interface ApiTestRun {
   cycleId: string;
   testCaseId: string;
   result: RunResult;
+  // True once this run has ever been Failed or Blocked — lets a current
+  // Pass be told apart from one that passed on the first try.
+  wasEverIssue: boolean;
   notes: string;
   executedAt: string | null;
   executedBy: string;

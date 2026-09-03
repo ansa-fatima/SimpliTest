@@ -64,15 +64,19 @@ export function CycleView({
   const done = summary?.done ?? total - counts.NotRun;
   const percent = summary?.percent ?? (total === 0 ? 0 : Math.round((done / total) * 100));
 
-  // Retest tracking — Done/Remaining mirrors the quick-log convention (resolved
-  // vs. still-open), computed live from the current run results rather than a
-  // separate stored counter, so it's always in sync and updates the moment a
-  // failed case is retested to Passed. Remaining counts Blocked alongside
-  // Failed — a blocked case still needs attention before the run is clean —
-  // otherwise it's neither "done" nor "remaining" and just vanishes from the
-  // tracker. Severity breakdown follows the same Failed-or-Blocked rule so it
-  // always sums to the Issues count shown elsewhere for this cycle.
-  const retestDone = counts.Passed;
+  // Retest tracking — "done" means actually retested and fixed, not just
+  // currently Passed, so a case that passed on its very first run (never an
+  // issue at all) doesn't inflate this count. `wasEverIssue` is the sticky
+  // per-run flag that makes that distinction possible; a bare Pass/Fail
+  // count can't. Remaining counts Blocked alongside Failed — a blocked case
+  // still needs attention before the run is clean — otherwise it's neither
+  // "done" nor "remaining" and just vanishes from the tracker. Severity
+  // breakdown follows the same Failed-or-Blocked rule so it always sums to
+  // the Issues count shown elsewhere for this cycle.
+  const retestDone = useMemo(
+    () => runs.filter(r => r.result === 'Passed' && r.wasEverIssue).length,
+    [runs],
+  );
   const retestRemaining = counts.Failed + counts.Blocked;
   const failureSeverity = useMemo(() => {
     const tally = { Critical: 0, Major: 0, Minor: 0 };
