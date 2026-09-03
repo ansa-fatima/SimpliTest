@@ -44,7 +44,10 @@ const REPORT_TYPES: ReportTypeMeta[] = [
 
 export function Reports({ projectId, projectName, portals, onOpenCycle }: ReportsProps) {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
-  const [activeTab, setActiveTab] = useState<ReportTypeMeta['key']>('stability');
+  // Nothing selected on arrival — the tiles are a picker, not a tab bar that
+  // has to always show something, so landing on Reports shows the choice
+  // first and only opens a report once one is actually clicked.
+  const [activeTab, setActiveTab] = useState<ReportTypeMeta['key'] | null>(null);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
@@ -70,50 +73,57 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
         </div>
 
         {/* Filters + Report body */}
-        <div className="flex items-start gap-5">
-          {/* Filters card */}
-          <aside className="w-[240px] flex-shrink-0 rounded-lg border border-border bg-surface p-3">
-            <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-text-3">
-              Filters
-            </div>
+        {activeTab === null ? (
+          <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-surface py-16 text-text-3">
+            <i className="ti ti-click text-[28px] opacity-50" />
+            <p className="text-[13px]">Select a report above to view it.</p>
+          </div>
+        ) : (
+          <div className="flex items-start gap-5">
+            {/* Filters card */}
+            <aside className="w-[240px] flex-shrink-0 rounded-lg border border-border bg-surface p-3">
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-text-3">
+                Filters
+              </div>
 
-            <FilterField label="Portal">
-              <select
-                value={filters.portalId}
-                onChange={e => setFilters(f => ({ ...f, portalId: e.target.value }))}
-                className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+              <FilterField label="Portal">
+                <select
+                  value={filters.portalId}
+                  onChange={e => setFilters(f => ({ ...f, portalId: e.target.value }))}
+                  className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                >
+                  <option value="">All portals</option>
+                  {portals.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </FilterField>
+
+              <button
+                type="button"
+                onClick={() => setFilters(DEFAULT_FILTERS)}
+                className="mt-2 w-full rounded border border-dashed border-border px-2 py-1 text-[11px] text-text-3 hover:bg-surface-2"
               >
-                <option value="">All portals</option>
-                {portals.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </FilterField>
+                Reset filters
+              </button>
+            </aside>
 
-            <button
-              type="button"
-              onClick={() => setFilters(DEFAULT_FILTERS)}
-              className="mt-2 w-full rounded border border-dashed border-border px-2 py-1 text-[11px] text-text-3 hover:bg-surface-2"
-            >
-              Reset filters
-            </button>
-          </aside>
-
-          {/* Report content */}
-          <section className="min-w-0 flex-1">
-            {activeTab === 'stability' && (
-              <StabilityReport
-                projectId={projectId}
-                projectName={projectName}
-                portals={portals}
-                filters={filters}
-                onOpenCycle={onOpenCycle}
-              />
-            )}
-          </section>
-        </div>
+            {/* Report content */}
+            <section className="min-w-0 flex-1">
+              {activeTab === 'stability' && (
+                <StabilityReport
+                  projectId={projectId}
+                  projectName={projectName}
+                  portals={portals}
+                  filters={filters}
+                  onOpenCycle={onOpenCycle}
+                />
+              )}
+            </section>
+          </div>
+        )}
       </div>
     </div>
   );

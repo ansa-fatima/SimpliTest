@@ -289,7 +289,11 @@ export async function GET(req: Request) {
         for (const r of c.runs) counts[r.result]++;
         total = c.runs.length;
         done = total - counts.NotRun;
-        passRate = total === 0 ? 0 : Math.round((counts.Passed / total) * 100);
+        // Against `done`, not `total` — a cycle that's 6/14 executed with
+        // all 6 passing should read 100%, not 43% diluted by the 8 cases
+        // nobody has touched yet. Matches moduleStability's rule above,
+        // which already excludes NotRun for the same reason.
+        passRate = done === 0 ? 0 : Math.round((counts.Passed / done) * 100);
       }
 
       let scopeName: string | null = null;
