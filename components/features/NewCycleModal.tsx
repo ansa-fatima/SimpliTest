@@ -153,6 +153,14 @@ export function NewCycleModal({
     setFailedCount(v);
     if (!remainingTouched) setRemainingCount(v);
   };
+  // Total issues follows the same default: freshly-reported issues start
+  // out unresolved, so Remaining defaults to matching whichever of Total or
+  // Failed was typed most recently — either is a reasonable "nothing's
+  // fixed yet" starting point.
+  const handleIssueCountChange = (v: number) => {
+    setIssueCount(v);
+    if (!remainingTouched) setRemainingCount(v);
+  };
 
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -596,7 +604,11 @@ export function NewCycleModal({
                     Issues found
                   </p>
                   <div className="grid grid-cols-4 gap-2">
-                    <CountField label="Total" value={issueCount} onChange={setIssueCount} />
+                    <CountField
+                      label="Total"
+                      value={issueCount}
+                      onChange={handleIssueCountChange}
+                    />
                     <CountField
                       label="Critical"
                       value={criticalCount}
