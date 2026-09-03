@@ -19,23 +19,48 @@ interface Filters {
 
 const DEFAULT_FILTERS: Filters = { portalId: '' };
 
-// Reports is just the Stability report today — Execution and Release were
-// removed since Stability (module/feature health, blended from every quick
-// log and test run) is the one report that actually gets used day to day.
+// Report types available as tabs. Execution and Release were removed as
+// report *content* (Stability — module/feature health blended from every
+// quick log and test run — is the one that actually gets used day to day),
+// but the tab structure stays: adding a report type back later is just
+// another entry here plus a case in the switch below, not a page rebuild.
+type ReportTab = 'stability';
+const REPORT_TABS: { key: ReportTab; label: string }[] = [{ key: 'stability', label: 'Stability' }];
+
 export function Reports({ projectId, projectName, portals, onOpenCycle }: ReportsProps) {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [activeTab, setActiveTab] = useState<ReportTab>('stability');
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
       <div className="flex-1 overflow-y-auto px-8 py-6">
         {/* Header */}
-        <div className="mb-6">
+        <div className="mb-4">
           <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
-            Stability report
+            Reports
           </h1>
           <p className="text-[13px] text-text-2">
-            How stable each module &amp; feature is, from quick logs and test runs.
+            Track how stable your product is, from quick logs and test runs.
           </p>
+        </div>
+
+        {/* Report type tabs */}
+        <div className="mb-5 flex items-center gap-1.5">
+          {REPORT_TABS.map(t => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setActiveTab(t.key)}
+              className={cn(
+                'rounded-[7px] px-2.5 py-1 text-[12.5px] transition-colors',
+                activeTab === t.key
+                  ? 'border border-primary bg-primary-light font-semibold text-primary-text'
+                  : 'border border-border bg-surface text-text-2 hover:bg-surface-2',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
 
         {/* Filters + Report body */}
@@ -72,13 +97,15 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
 
           {/* Report content */}
           <section className="min-w-0 flex-1">
-            <StabilityReport
-              projectId={projectId}
-              projectName={projectName}
-              portals={portals}
-              filters={filters}
-              onOpenCycle={onOpenCycle}
-            />
+            {activeTab === 'stability' && (
+              <StabilityReport
+                projectId={projectId}
+                projectName={projectName}
+                portals={portals}
+                filters={filters}
+                onOpenCycle={onOpenCycle}
+              />
+            )}
           </section>
         </div>
       </div>
