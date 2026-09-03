@@ -114,6 +114,8 @@ export async function GET(req: Request) {
           issueCount: true,
           doneCount: true,
           remainingCount: true,
+          failedCount: true,
+          blockedCount: true,
           scopeType: true,
           scopeId: true,
         },
@@ -164,19 +166,28 @@ export async function GET(req: Request) {
 
     const logTs = (l: { completedAt: Date | null; createdAt: Date }) =>
       l.completedAt ?? l.createdAt;
-    // Same rule as the Stability report: once a log's Done/Remaining counts
-    // have actually been touched, the live Remaining count decides pass/fail
-    // — not the frozen original issueCount — so a fully-resolved cycle reads
-    // as a pass here too instead of staying stuck as a fail forever.
+    // Same rule as the Stability report and the Quick Log Summary modal:
+    // once a log's Done/Remaining counts have actually been touched, the
+    // live Remaining count decides pass/fail — not the frozen original
+    // issueCount — so a fully-resolved cycle reads as a pass here too
+    // instead of staying stuck as a fail forever. A log can also separately
+    // record real Failed/Blocked test-case results even once its issues are
+    // marked resolved — those still count as a fail, or a log with 3 failed
+    // cases but "issues: done" would inflate this pass rate while its own
+    // summary modal calls the same log Failed.
     const logPass = (l: {
       issueCount: number | null;
       doneCount?: number | null;
       remainingCount?: number | null;
+      failedCount?: number | null;
+      blockedCount?: number | null;
     }) => {
       const done = l.doneCount ?? 0;
       const remaining = l.remainingCount ?? 0;
       const tracked = done > 0 || remaining > 0;
-      return tracked ? remaining === 0 : (l.issueCount ?? 0) === 0;
+      const issuesOpen = tracked ? remaining > 0 : (l.issueCount ?? 0) > 0;
+      const hasCaseFailure = (l.failedCount ?? 0) > 0 || (l.blockedCount ?? 0) > 0;
+      return !issuesOpen && !hasCaseFailure;
     };
     const manualCurrent = manualLogs.filter(l => logTs(l) >= thirtyDaysAgo);
     const manualPrev = manualLogs.filter(l => logTs(l) >= sixtyDaysAgo && logTs(l) < thirtyDaysAgo);

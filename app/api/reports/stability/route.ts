@@ -125,6 +125,8 @@ export async function GET(req: Request) {
           issueCount: true,
           doneCount: true,
           remainingCount: true,
+          failedCount: true,
+          blockedCount: true,
           completedAt: true,
           createdAt: true,
         },
@@ -164,14 +166,24 @@ export async function GET(req: Request) {
       const done = log.doneCount ?? 0;
       const remaining = log.remainingCount ?? 0;
       const tracked = done > 0 || remaining > 0;
-      const pass = tracked ? remaining === 0 : (log.issueCount ?? 0) === 0;
-      // A tracked log gets partial credit for partial resolution (6 of 8
-      // done = 0.75) instead of an all-or-nothing 0/1 — that's the whole
-      // point of tracking Done/Remaining rather than just Pass/Fail.
-      const score = tracked ? done / (done + remaining) : pass ? 1 : 0;
+      const issuesOpen = tracked ? remaining > 0 : (log.issueCount ?? 0) > 0;
+      // A log can separately record real Failed/Blocked test-case results
+      // even once its own issue tracking says fully resolved — those still
+      // count as a fail here, same rule the Quick Log Summary modal already
+      // uses. Without this, a log with 3 failed cases but "issues: done"
+      // read as a Pass here while its own summary called it Failed.
+      const hasCaseFailure = (log.failedCount ?? 0) > 0 || (log.blockedCount ?? 0) > 0;
+      const pass = !issuesOpen && !hasCaseFailure;
+      // A tracked log (and no case failure) gets partial credit for partial
+      // resolution (6 of 8 done = 0.75) instead of an all-or-nothing 0/1 —
+      // that's the whole point of tracking Done/Remaining rather than just
+      // Pass/Fail.
+      const score = tracked && !hasCaseFailure ? done / (done + remaining) : pass ? 1 : 0;
       let detail: string;
       if (pass) {
         detail = tracked ? `Pass · ${done} issue${done === 1 ? '' : 's'} resolved` : 'Pass';
+      } else if (hasCaseFailure) {
+        detail = `Fail · ${log.failedCount ?? 0} failed, ${log.blockedCount ?? 0} blocked`;
       } else if (tracked) {
         const total = done + remaining;
         detail = `Fail · ${remaining} of ${total} issue${total === 1 ? '' : 's'} still open`;
