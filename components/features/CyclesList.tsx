@@ -286,6 +286,7 @@ export function CyclesList({
                   };
 
                   const severity = summary?.severity ?? { Critical: 0, Major: 0, Minor: 0 };
+                  const total = summary?.total ?? 0;
 
                   const issueCount = isManual
                     ? (c.issueCount ?? 0)
@@ -293,9 +294,12 @@ export function CyclesList({
                   const done = isManual ? (c.doneCount ?? 0) : counts.Passed;
                   // "Remaining" means the same thing everywhere: issues still
                   // open and needing a retest — for a case-based cycle that's
-                  // the currently-failed cases, not the ones that just haven't
-                  // been run yet (NotRun is a separate, unrelated state).
-                  const remaining = isManual ? (c.remainingCount ?? 0) : counts.Failed;
+                  // the currently-failed OR blocked cases (both still need
+                  // attention), not the ones that just haven't been run yet
+                  // (NotRun is a separate, unrelated state).
+                  const remaining = isManual
+                    ? (c.remainingCount ?? 0)
+                    : counts.Failed + counts.Blocked;
 
                   return (
                     <tr
@@ -330,7 +334,12 @@ export function CyclesList({
                                   }
                                 />
                               )
-                            : done > 0 && (
+                            : // Only claim "resolved" once every case has actually
+                              // been executed — otherwise a run that's 30% done
+                              // with zero failures so far would show the same
+                              // green dot as one that's actually finished clean.
+                              total > 0 &&
+                              counts.NotRun === 0 && (
                                 <span
                                   className={cn(
                                     'h-[7px] w-[7px] flex-shrink-0 rounded-full',
@@ -339,7 +348,7 @@ export function CyclesList({
                                   title={
                                     remaining === 0
                                       ? 'Fully resolved'
-                                      : `${remaining} case(s) still failing`
+                                      : `${remaining} case(s) still failing or blocked`
                                   }
                                 />
                               )}

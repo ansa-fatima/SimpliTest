@@ -71,14 +71,13 @@ export async function GET(req: Request) {
 
     const enriched = cycles.map(c => {
       const counts = { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
-      // Severity breakdown of currently-failed cases — same rule the cycle
-      // detail view uses, so a case-based row here always matches what
-      // retesting shows there, instead of the severity columns staying
-      // permanently blank for anything but a Manual quick log.
+      // Severity breakdown of currently-open cases (Failed or Blocked — both
+      // still need attention). Must match the Issues column below, which is
+      // also Failed + Blocked, or the severity numbers silently undercount it.
       const severity = { Critical: 0, Major: 0, Minor: 0 };
       for (const r of c.runs) {
         counts[r.result]++;
-        if (r.result === 'Failed' && r.testCase.severity in severity) {
+        if ((r.result === 'Failed' || r.result === 'Blocked') && r.testCase.severity in severity) {
           severity[r.testCase.severity as keyof typeof severity]++;
         }
       }

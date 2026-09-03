@@ -67,14 +67,17 @@ export function CycleView({
   // Retest tracking — Done/Remaining mirrors the quick-log convention (resolved
   // vs. still-open), computed live from the current run results rather than a
   // separate stored counter, so it's always in sync and updates the moment a
-  // failed case is retested to Passed. Severity breakdown is derived the same
-  // way, straight from each currently-failed case's own severity field.
+  // failed case is retested to Passed. Remaining counts Blocked alongside
+  // Failed — a blocked case still needs attention before the run is clean —
+  // otherwise it's neither "done" nor "remaining" and just vanishes from the
+  // tracker. Severity breakdown follows the same Failed-or-Blocked rule so it
+  // always sums to the Issues count shown elsewhere for this cycle.
   const retestDone = counts.Passed;
-  const retestRemaining = counts.Failed;
+  const retestRemaining = counts.Failed + counts.Blocked;
   const failureSeverity = useMemo(() => {
     const tally = { Critical: 0, Major: 0, Minor: 0 };
     for (const r of runs) {
-      if (r.result !== 'Failed') continue;
+      if (r.result !== 'Failed' && r.result !== 'Blocked') continue;
       const sev = r.testCase.severity;
       if (sev in tally) tally[sev as keyof typeof tally]++;
     }
