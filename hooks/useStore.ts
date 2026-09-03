@@ -272,25 +272,27 @@ export function useStore() {
     }
   }, []);
 
-  // Check session on mount
+  // Check session on mount. `authChecked` only flips to true once projects
+  // (and the active one's portals) have ALSO loaded for a signed-in user —
+  // setting it right after the auth check alone left a one-frame window
+  // where `user` was set but `projects` was still its empty initial value,
+  // which app/page.tsx reads as "no workspaces yet" and flashes the
+  // onboarding screen before the real project list arrives a moment later.
   useEffect(() => {
     (async () => {
       try {
         const { user } = await api.get<{ user: SessionUser | null }>('/api/auth/me');
-        setState(s => ({
-          ...s,
-          user,
-          authChecked: true,
-          page: user ? 'dashboard' : 'login',
-        }));
-        if (user) {
-          const projects = await reloadProjects();
-          const stored =
-            typeof window !== 'undefined' ? localStorage.getItem('simplitest_project') : null;
-          const activeId =
-            (stored && projects.some(p => p.id === stored) ? stored : projects[0]?.id) ?? null;
-          if (activeId) await reloadPortals(activeId);
+        if (!user) {
+          setState(s => ({ ...s, user: null, authChecked: true, page: 'login' }));
+          return;
         }
+        const projects = await reloadProjects();
+        const stored =
+          typeof window !== 'undefined' ? localStorage.getItem('simplitest_project') : null;
+        const activeId =
+          (stored && projects.some(p => p.id === stored) ? stored : projects[0]?.id) ?? null;
+        if (activeId) await reloadPortals(activeId);
+        setState(s => ({ ...s, user, authChecked: true, page: 'dashboard' }));
       } catch {
         setState(s => ({ ...s, authChecked: true, page: 'login' }));
       }
