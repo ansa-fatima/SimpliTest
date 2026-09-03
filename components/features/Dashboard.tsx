@@ -398,13 +398,15 @@ function DonutChart({
 function ActivityRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: string) => void }) {
   const isManual = c.mode === 'Manual';
   // Quick-log entries don't have per-case runs — express the outcome as a
-  // single Pass/Fail based on whether any issues were logged.
-  const manualVerdict =
-    isManual && (c.issueCount ?? 0) === 0
+  // single Pass/Fail. Read the verdict the API already computed into
+  // `counts` (tracked/untracked Done-Remaining rule) instead of
+  // re-deriving it from issueCount here, which would silently disagree
+  // with the API the moment a quick log gets retested and resolved.
+  const manualVerdict = isManual
+    ? c.counts.Passed > 0
       ? { label: 'Pass', tone: 'text-emerald-700 bg-emerald-50' }
-      : isManual
-        ? { label: 'Fail', tone: 'text-red-700 bg-red-50' }
-        : null;
+      : { label: 'Fail', tone: 'text-red-700 bg-red-50' }
+    : null;
   // Manual cycles store their scope as free text instead of an id — fall
   // back to that when scopeName isn't set.
   const subText = isManual

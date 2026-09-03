@@ -5,6 +5,10 @@ import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 const SCOPE_TYPES: CycleScopeType[] = ['All', 'Portal', 'Module', 'Suite', 'Custom'];
 const MODES: CycleMode[] = ['CaseBased', 'Manual'];
 
+// Never statically cache — the whole Test runs list exists to show the
+// latest cycle state (including retests) the moment it changes.
+export const dynamic = 'force-dynamic';
+
 // GET /api/cycles
 //   ?status=Active|Completed|Archived
 //   ?projectId=...   scope to a project

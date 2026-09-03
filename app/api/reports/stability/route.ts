@@ -82,6 +82,9 @@ function riskRank(s: ReturnType<typeof stats>) {
   return s.total === 0 ? 1000 : s.passRate;
 }
 
+// Never statically cache — see the same note in /api/dashboard.
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: Request) {
   try {
     const sp = new URL(req.url).searchParams;

@@ -7,6 +7,9 @@ import { ok, serverError } from '@/lib/api';
 //   ?status=Active|Completed|Archived
 //   ?days=30|90|365|all   default 90  (filters by createdAt)
 //
+// Never statically cache — see the same note in /api/dashboard.
+export const dynamic = 'force-dynamic';
+
 // Per-cycle ("release") rollup — pass / fail / blocked counts + completion %.
 export async function GET(req: Request) {
   try {
@@ -36,9 +39,14 @@ export async function GET(req: Request) {
       let done: number;
       if (c.mode === 'Manual') {
         // Quick logs have no per-case runs — represent the log itself as one
-        // pass/fail data point (its own issueCount === 0 verdict) instead of
-        // leaving it at a misleading 0/0/0%.
-        const isPass = (c.issueCount ?? 0) === 0;
+        // pass/fail data point instead of leaving it at a misleading 0/0/0%.
+        // Same tracked/untracked rule as the Dashboard and Stability report:
+        // once Done/Remaining are filled in, the live Remaining count decides
+        // pass/fail rather than the frozen original issueCount.
+        const resolvedCount = c.doneCount ?? 0;
+        const openCount = c.remainingCount ?? 0;
+        const tracked = resolvedCount > 0 || openCount > 0;
+        const isPass = tracked ? openCount === 0 : (c.issueCount ?? 0) === 0;
         counts.Passed = isPass ? 1 : 0;
         counts.Failed = isPass ? 0 : 1;
         total = 1;

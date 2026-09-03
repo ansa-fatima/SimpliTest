@@ -10,10 +10,15 @@ import { ok, serverError } from '@/lib/api';
 //   ?days=7|30|90|365|all   window size (default 30)
 //
 // Powers the "Execution" report shown in the design — KPI tiles + daily bar chart.
-// Blends CaseBased TestRuns with Manual quick logs (their own issueCount === 0 →
-// Pass verdict) — same convention as the Dashboard and Stability report — so a
-// workspace that's mostly quick-logged doesn't show 0% here. Quick logs have no
-// per-run tester, so they're left out entirely when a `tester` filter is active.
+// Blends CaseBased TestRuns with Manual quick logs, using the same
+// tracked/untracked Done-Remaining rule as the Dashboard and Stability report
+// (see manualPass below) — so a workspace that's mostly quick-logged doesn't
+// show 0% here. Quick logs have no per-run tester, so they're left out
+// entirely when a `tester` filter is active.
+//
+// Never statically cache — see the same note in /api/dashboard.
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: Request) {
   try {
     const sp = new URL(req.url).searchParams;
@@ -74,6 +79,8 @@ export async function GET(req: Request) {
               completedAt: true,
               createdAt: true,
               issueCount: true,
+              doneCount: true,
+              remainingCount: true,
               scopeType: true,
               scopeId: true,
             },
@@ -91,7 +98,15 @@ export async function GET(req: Request) {
       }
       return true;
     });
-    const manualPass = (l: (typeof manualLogs)[number]) => (l.issueCount ?? 0) === 0;
+    // Same tracked/untracked rule as the Stability report and Dashboard: once
+    // Done/Remaining have actually been filled in, the live Remaining count
+    // decides pass/fail, not the frozen original issueCount.
+    const manualPass = (l: (typeof manualLogs)[number]) => {
+      const done = l.doneCount ?? 0;
+      const remaining = l.remainingCount ?? 0;
+      const tracked = done > 0 || remaining > 0;
+      return tracked ? remaining === 0 : (l.issueCount ?? 0) === 0;
+    };
 
     const executed = runs.length + manualLogs.length;
     const passed =

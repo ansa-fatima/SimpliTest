@@ -1,13 +1,21 @@
 import { prisma } from '@/lib/db';
 import { ok, serverError } from '@/lib/api';
 
+// Always compute fresh from the database. Without this, Next.js can decide
+// this GET handler has no per-request dependencies (it only reads a
+// same-value-every-time `projectId` query param) and cache the whole route,
+// which is exactly wrong for a dashboard whose entire point is showing the
+// latest test activity the instant it happens.
+export const dynamic = 'force-dynamic';
+
 // GET /api/dashboard?projectId=...
 // Returns stats + chart data for the home dashboard, optionally scoped to a project.
 //
 // Every metric here blends two signals, same convention as the Stability
-// report: CaseBased TestRuns (Passed/Failed) AND Manual quick logs (their own
-// issueCount === 0 → Pass verdict). A workspace that's mostly quick-logged
-// would otherwise show 0% everywhere despite plenty of real activity.
+// report: CaseBased TestRuns (Passed/Failed) AND Manual quick logs, using the
+// same tracked/untracked Done-Remaining rule (see logPass below) — a
+// workspace that's mostly quick-logged would otherwise show 0% everywhere
+// despite plenty of real activity.
 export async function GET(req: Request) {
   try {
     const projectId = new URL(req.url).searchParams.get('projectId') || undefined;
