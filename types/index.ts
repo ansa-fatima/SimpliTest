@@ -57,6 +57,8 @@ export interface CycleSummary {
   done: number;
   percent: number;
   counts: Record<RunResult, number>;
+  /** Severity breakdown of currently-failed cases (case-based cycles only). */
+  severity?: { Critical: number; Major: number; Minor: number };
 }
 
 export interface TestCycle {

@@ -285,11 +285,17 @@ export function CyclesList({
                     Skipped: 0,
                   };
 
+                  const severity = summary?.severity ?? { Critical: 0, Major: 0, Minor: 0 };
+
                   const issueCount = isManual
                     ? (c.issueCount ?? 0)
                     : counts.Failed + counts.Blocked;
                   const done = isManual ? (c.doneCount ?? 0) : counts.Passed;
-                  const remaining = isManual ? (c.remainingCount ?? 0) : counts.NotRun;
+                  // "Remaining" means the same thing everywhere: issues still
+                  // open and needing a retest — for a case-based cycle that's
+                  // the currently-failed cases, not the ones that just haven't
+                  // been run yet (NotRun is a separate, unrelated state).
+                  const remaining = isManual ? (c.remainingCount ?? 0) : counts.Failed;
 
                   return (
                     <tr
@@ -305,23 +311,38 @@ export function CyclesList({
                           <span className="truncate" title={c.name}>
                             {c.name}
                           </span>
-                          {/* Resolution status — only shown once Done/Remaining
-                              have actually been filled in (e.g. after editing
-                              this cycle following a retest), not for every
-                              quick log by default. */}
-                          {isManual && ((c.doneCount ?? 0) > 0 || (c.remainingCount ?? 0) > 0) && (
-                            <span
-                              className={cn(
-                                'h-[7px] w-[7px] flex-shrink-0 rounded-full',
-                                (c.remainingCount ?? 0) === 0 ? 'bg-emerald-500' : 'bg-red-500',
+                          {/* Resolution status — for a quick log, only shown
+                              once Done/Remaining have actually been filled in
+                              (e.g. after editing following a retest), not for
+                              every quick log by default. For a case-based
+                              cycle, shown once anything has actually run. */}
+                          {isManual
+                            ? ((c.doneCount ?? 0) > 0 || (c.remainingCount ?? 0) > 0) && (
+                                <span
+                                  className={cn(
+                                    'h-[7px] w-[7px] flex-shrink-0 rounded-full',
+                                    (c.remainingCount ?? 0) === 0 ? 'bg-emerald-500' : 'bg-red-500',
+                                  )}
+                                  title={
+                                    (c.remainingCount ?? 0) === 0
+                                      ? 'Fully resolved'
+                                      : `${c.remainingCount} issue(s) still open`
+                                  }
+                                />
+                              )
+                            : done > 0 && (
+                                <span
+                                  className={cn(
+                                    'h-[7px] w-[7px] flex-shrink-0 rounded-full',
+                                    remaining === 0 ? 'bg-emerald-500' : 'bg-red-500',
+                                  )}
+                                  title={
+                                    remaining === 0
+                                      ? 'Fully resolved'
+                                      : `${remaining} case(s) still failing`
+                                  }
+                                />
                               )}
-                              title={
-                                (c.remainingCount ?? 0) === 0
-                                  ? 'Fully resolved'
-                                  : `${c.remainingCount} issue(s) still open`
-                              }
-                            />
-                          )}
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-text-2">
@@ -399,23 +420,17 @@ export function CyclesList({
                         {issueCount || <span className="text-text-3">—</span>}
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-red-700">
-                        {isManual ? (
-                          (c.criticalCount ?? 0) || <span className="text-text-3">—</span>
-                        ) : (
+                        {(isManual ? (c.criticalCount ?? 0) : severity.Critical) || (
                           <span className="text-text-3">—</span>
                         )}
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-amber-700">
-                        {isManual ? (
-                          (c.majorCount ?? 0) || <span className="text-text-3">—</span>
-                        ) : (
+                        {(isManual ? (c.majorCount ?? 0) : severity.Major) || (
                           <span className="text-text-3">—</span>
                         )}
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-slate-500">
-                        {isManual ? (
-                          (c.minorCount ?? 0) || <span className="text-text-3">—</span>
-                        ) : (
+                        {(isManual ? (c.minorCount ?? 0) : severity.Minor) || (
                           <span className="text-text-3">—</span>
                         )}
                       </td>

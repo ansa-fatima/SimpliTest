@@ -22,7 +22,7 @@ export async function GET(req: Request) {
       where,
       orderBy: { createdAt: 'desc' },
       include: {
-        runs: { select: { result: true } },
+        runs: { select: { result: true, testCase: { select: { severity: true } } } },
       },
     });
 
@@ -67,7 +67,17 @@ export async function GET(req: Request) {
 
     const enriched = cycles.map(c => {
       const counts = { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
-      for (const r of c.runs) counts[r.result]++;
+      // Severity breakdown of currently-failed cases — same rule the cycle
+      // detail view uses, so a case-based row here always matches what
+      // retesting shows there, instead of the severity columns staying
+      // permanently blank for anything but a Manual quick log.
+      const severity = { Critical: 0, Major: 0, Minor: 0 };
+      for (const r of c.runs) {
+        counts[r.result]++;
+        if (r.result === 'Failed' && r.testCase.severity in severity) {
+          severity[r.testCase.severity as keyof typeof severity]++;
+        }
+      }
       const total = c.runs.length;
       const done = total - counts.NotRun;
       const percent = total === 0 ? 0 : Math.round((done / total) * 100);
@@ -108,7 +118,7 @@ export async function GET(req: Request) {
         portalName,
         moduleName,
         scopeName,
-        summary: { total, done, percent, counts },
+        summary: { total, done, percent, counts, severity },
       };
     });
 
