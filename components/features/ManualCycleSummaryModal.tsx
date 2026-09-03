@@ -38,9 +38,15 @@ export function ManualCycleSummaryModal({
   const blocked = cycle.blockedCount ?? 0;
   const totalCases = passed + failed + blocked;
 
-  // Passed only means it: no issues were found at all (not just "found and
-  // since fixed" — issues > 0 counts as Failed even once fully resolved).
-  const isFailed = issues > 0 || failed > 0 || blocked > 0;
+  // Same tracked/untracked rule as everywhere else (Dashboard, Stability,
+  // Execution, Release): once Done/Remaining have actually been filled in,
+  // the live Remaining count decides pass/fail, not the frozen issue count
+  // — otherwise a fully-resolved cycle (e.g. issues: 21, done: 21,
+  // remaining: 0) shows "Failed" here while its own Issue resolution stat
+  // right below says 100% resolved.
+  const tracked = done > 0 || remaining > 0;
+  const issuesOpen = tracked ? remaining > 0 : issues > 0;
+  const isFailed = issuesOpen || failed > 0 || blocked > 0;
   const statusPill = isFailed
     ? { circle: '🔴', label: 'Failed', cls: 'bg-red-50 text-red-700 border border-red-200' }
     : { circle: '🟢', label: 'Passed', cls: 'bg-green-50 text-green-700 border border-green-200' };
@@ -354,6 +360,7 @@ export function formatManualCycleSummary(c: TestCycle): string {
   const major = c.majorCount ?? 0;
   const minor = c.minorCount ?? 0;
   const issues = c.issueCount ?? critical + major + minor;
+  const done = c.doneCount ?? 0;
   const remaining = c.remainingCount ?? 0;
   const failed = c.failedCount ?? 0;
   const blocked = c.blockedCount ?? 0;
@@ -378,7 +385,10 @@ export function formatManualCycleSummary(c: TestCycle): string {
   const headline = `${headlineParts.join(' - ')} (${statusSuffix})`;
 
   // ── Body status (independent of lifecycle status) ──
-  const isFailed = issues > 0 || remaining > 0 || failed > 0 || blocked > 0;
+  // Same tracked/untracked rule as the on-screen modal above.
+  const tracked = done > 0 || remaining > 0;
+  const issuesOpen = tracked ? remaining > 0 : issues > 0;
+  const isFailed = issuesOpen || failed > 0 || blocked > 0;
   const slack = isFailed ? ':red_circle:' : ':large_green_circle:';
   const label = isFailed ? 'Failed' : 'Passed';
 
