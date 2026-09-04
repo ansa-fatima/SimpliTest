@@ -402,11 +402,21 @@ function ActivityRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: s
   // `counts` (tracked/untracked Done-Remaining rule) instead of
   // re-deriving it from issueCount here, which would silently disagree
   // with the API the moment a quick log gets retested and resolved.
-  const manualVerdict = isManual
+  //
+  // A case-based run gets the same Pass/Fail badge once it's no longer
+  // Active — auto-complete guarantees a Completed run has NotRun === 0, so
+  // "any case still Failed or Blocked" is always a fully-informed verdict,
+  // not one diluted by cases nobody's run yet. Still-Active runs show no
+  // verdict at all (there isn't one yet), same as before.
+  const verdict = isManual
     ? c.counts.Passed > 0
       ? { label: 'Pass', tone: 'text-emerald-700 bg-emerald-50' }
       : { label: 'Fail', tone: 'text-red-700 bg-red-50' }
-    : null;
+    : c.status !== 'Active'
+      ? c.counts.Failed + c.counts.Blocked === 0
+        ? { label: 'Pass', tone: 'text-emerald-700 bg-emerald-50' }
+        : { label: 'Fail', tone: 'text-red-700 bg-red-50' }
+      : null;
   // Manual cycles store their scope as free text instead of an id — fall
   // back to that when scopeName isn't set.
   const subText = isManual
@@ -418,15 +428,11 @@ function ActivityRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: s
   // correctly; CaseBased keep the createdAt.
   const dateIso = (isManual && c.completedAt) || c.createdAt;
 
-  const status = manualVerdict
-    ? manualVerdict.label === 'Pass'
+  const status = verdict
+    ? verdict.label === 'Pass'
       ? { icon: 'ti-check', tone: 'bg-emerald-50 text-emerald-600' }
       : { icon: 'ti-x', tone: 'bg-red-50 text-red-600' }
-    : c.status === 'Active'
-      ? { icon: 'ti-player-play', tone: 'bg-indigo-50 text-indigo-600' }
-      : c.passRate >= 90
-        ? { icon: 'ti-check', tone: 'bg-emerald-50 text-emerald-600' }
-        : { icon: 'ti-alert-triangle', tone: 'bg-amber-50 text-amber-600' };
+    : { icon: 'ti-player-play', tone: 'bg-indigo-50 text-indigo-600' };
 
   return (
     <button
@@ -448,18 +454,20 @@ function ActivityRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: s
         </div>
         <div className="mt-1 flex items-center gap-1.5 text-[12px] text-text-3">
           <span className="truncate">{subText}</span>
-          {manualVerdict ? (
+          {verdict && (
             <span
               className={cn(
                 'inline-flex flex-shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold',
-                manualVerdict.tone,
+                verdict.tone,
               )}
             >
-              {manualVerdict.label}
-              {(c.issueCount ?? 0) > 0 &&
+              {verdict.label}
+              {isManual &&
+                (c.issueCount ?? 0) > 0 &&
                 ` · ${c.issueCount} issue${c.issueCount === 1 ? '' : 's'}`}
             </span>
-          ) : (
+          )}
+          {!isManual && (
             <span className="flex-shrink-0">
               · {c.done}/{c.total} · {c.passRate}%
             </span>
