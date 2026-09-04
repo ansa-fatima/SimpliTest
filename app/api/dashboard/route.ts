@@ -125,7 +125,7 @@ export async function GET(req: Request) {
         orderBy: { createdAt: 'desc' },
         take: 8,
         include: {
-          runs: { select: { result: true } },
+          runs: { select: { result: true, wasEverIssue: true } },
         },
       }),
     ]);
@@ -287,6 +287,11 @@ export async function GET(req: Request) {
       let total: number;
       let done: number;
       let passRate: number;
+      // Stable baseline (every case ever Failed/Blocked, per the sticky
+      // wasEverIssue flag) — same "Issues" figure shown in the Test runs
+      // list and cycle detail, so this row's issue count doesn't disagree
+      // with the one you'd see after clicking into the run.
+      let issuesFound = 0;
       if (c.mode === 'Manual') {
         // Quick logs have no per-case runs — represent the log itself as one
         // pass/fail data point so summaries that reduce over `counts` (the
@@ -296,8 +301,12 @@ export async function GET(req: Request) {
         total = 1;
         done = 1;
         passRate = isPass ? 100 : 0;
+        issuesFound = c.issueCount ?? 0;
       } else {
-        for (const r of c.runs) counts[r.result]++;
+        for (const r of c.runs) {
+          counts[r.result]++;
+          if (r.wasEverIssue) issuesFound++;
+        }
         total = c.runs.length;
         done = total - counts.NotRun;
         // Against `done`, not `total` — a cycle that's 6/14 executed with
@@ -335,7 +344,7 @@ export async function GET(req: Request) {
         moduleName: c.moduleName,
         featureName: c.featureName,
         portalName: c.portalName,
-        issueCount: c.issueCount ?? 0,
+        issueCount: issuesFound,
       };
     });
 

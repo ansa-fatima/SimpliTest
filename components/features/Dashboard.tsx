@@ -462,8 +462,7 @@ function ActivityRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: s
               )}
             >
               {verdict.label}
-              {isManual &&
-                (c.issueCount ?? 0) > 0 &&
+              {(c.issueCount ?? 0) > 0 &&
                 ` · ${c.issueCount} issue${c.issueCount === 1 ? '' : 's'}`}
             </span>
           )}
