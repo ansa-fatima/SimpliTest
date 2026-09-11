@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
-import { cn, relativeTime } from '@/lib/utils';
-import { useTheme } from '@/lib/theme';
+import { avatarColour, cn, initials, relativeTime } from '@/lib/utils';
 
 interface RecentCycle {
   id: string;
@@ -18,6 +17,9 @@ interface RecentCycle {
   done: number;
   passRate: number;
   counts: { NotRun: number; Passed: number; Failed: number; Blocked: number; Skipped: number };
+  // Who ran it — executedBy (case-based) or loggedBy (quick log), same
+  // "name" or "N testers" convention as the Cycle History report.
+  tester: string;
   // Manual-cycle metadata
   portalName?: string | null;
   moduleName?: string | null;
@@ -25,27 +27,72 @@ interface RecentCycle {
   issueCount?: number;
 }
 
+interface ModuleStabilityRow {
+  name: string;
+  passRate: number | null;
+  totalRuns: number;
+  issues: number;
+  label: 'Stable' | 'At Risk' | 'Unstable' | 'No data';
+  trend: 'up' | 'down' | 'flat';
+}
+
+interface RecurringIssue {
+  id: string;
+  title: string;
+  caseNum: number;
+  severity: string;
+  scopeName: string;
+  occurrences: number;
+  cycleCount: number;
+  lastSeen: string;
+}
+
+type ActivityEvent =
+  | {
+      kind: 'run';
+      actor: string;
+      verb: string;
+      caseLabel: string;
+      result: string;
+      cycleName: string;
+      ts: string;
+    }
+  | { kind: 'quicklog'; actor: string; scopeName: string; ts: string };
+
 interface DashboardData {
   totalCases: number;
   runs30d: { total: number; prev: number };
   passRate: { current: number; prev: number; delta: number };
   openFailures: { total: number; newToday: number };
+  criticalIssues: number;
+  passed30d: { total: number; pctChange: number };
+  failed30d: { total: number; pctChange: number };
+  blocked30d: { total: number; pctChange: number };
   weeklyRuns: { label: string; pass: number; fail: number; blocked: number; skipped: number }[];
-  moduleStability: { name: string; passRate: number | null; totalRuns: number }[];
+  moduleStability: ModuleStabilityRow[];
+  recurringIssues: { total: number; items: RecurringIssue[] };
+  recentActivity: ActivityEvent[];
   recentCycles: RecentCycle[];
 }
 
 interface DashboardProps {
   onShowTestRuns: () => void;
   onOpenCycle?: (id: string) => void;
+  onShowReports?: () => void;
   projectId: string | null;
+  userName?: string | null;
 }
 
-export function Dashboard({ onShowTestRuns, onOpenCycle, projectId }: DashboardProps) {
+export function Dashboard({
+  onShowTestRuns,
+  onOpenCycle,
+  onShowReports,
+  projectId,
+  userName,
+}: DashboardProps) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const { theme, toggle: toggleTheme } = useTheme();
 
   useEffect(() => {
     setLoading(true);
@@ -85,142 +132,175 @@ export function Dashboard({ onShowTestRuns, onOpenCycle, projectId }: DashboardP
         ? 'Good afternoon'
         : 'Good evening';
   const activeRunsCount = data.recentCycles.filter(c => c.status === 'Active').length;
+  // Most-recent Active cycle, if any — recentCycles is already newest-first.
+  // Quick logs are never Active (they're Completed the instant they're
+  // logged), so this only ever surfaces a CaseBased run.
+  const activeCycle = data.recentCycles.find(c => c.status === 'Active') ?? null;
 
-  // Donut totals from the last-30d window
-  const totalRecent = data.runs30d.total || 1;
-  const passed = data.recentCycles.reduce((s, c) => s + c.counts.Passed, 0);
-  const failed = data.recentCycles.reduce((s, c) => s + c.counts.Failed, 0);
-  const blocked = data.recentCycles.reduce((s, c) => s + c.counts.Blocked, 0);
-  const untested = data.recentCycles.reduce((s, c) => s + c.counts.NotRun + c.counts.Skipped, 0);
-  const allRuns = passed + failed + blocked + untested;
-  const pctPass = allRuns > 0 ? Math.round((passed / allRuns) * 100) : 0;
-  const pctFail = allRuns > 0 ? Math.round((failed / allRuns) * 100) : 0;
-  const pctBlock = allRuns > 0 ? Math.round((blocked / allRuns) * 100) : 0;
-  const pctUntested = allRuns > 0 ? 100 - pctPass - pctFail - pctBlock : 0;
+  const failRate30d =
+    data.runs30d.total > 0 ? Math.round((data.failed30d.total / data.runs30d.total) * 100) : 0;
+  const blockRate30d =
+    data.runs30d.total > 0 ? Math.round((data.blocked30d.total / data.runs30d.total) * 100) : 0;
+
+  // Sparkline series for the stat cards -- the same 8-week buckets that
+  // feed Execution trend below, so a card's mini chart can never disagree
+  // with the full chart it's a preview of.
+  const failedSeries = data.weeklyRuns.map(w => w.fail);
+  const passRateSeries = data.weeklyRuns.map(w => {
+    const total = w.pass + w.fail + w.blocked;
+    return total === 0 ? 0 : Math.round((w.pass / total) * 100);
+  });
+
+  // Case-based cycles only -- a quick log has no per-case runs to
+  // distribute, so it can't feed a Pass/Fail/Blocked/Not-run breakdown.
+  const distributionCycles = data.recentCycles.filter(c => c.mode !== 'Manual');
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      {/* Topbar */}
-      <div className="flex items-center justify-end gap-3 border-b border-border bg-surface px-6 py-3">
-        <button
-          type="button"
-          onClick={toggleTheme}
-          aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-[7px] border border-border bg-surface text-text-2 transition-all hover:bg-surface-2 hover:text-text"
-        >
-          <i className={cn('text-[17px]', theme === 'dark' ? 'ti ti-moon' : 'ti ti-sun')} />
-        </button>
-        <button
-          onClick={onShowTestRuns}
-          className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-[7px] text-[13px] font-medium text-white transition-colors hover:bg-primary-hover"
-        >
-          <i className="ti ti-plus text-[16px]" />
-          New test run
-        </button>
-      </div>
-
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-8 py-6">
-        {/* Page header */}
-        <div className="mb-6">
+        <div className="mb-5">
           <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
-            {greeting} 👋
+            Dashboard
           </h1>
-          <div className="text-[13px] text-text-2">
-            Here&apos;s what&apos;s happening across QA today.
-          </div>
+          <p className="text-[13px] text-text-2">
+            Simplitest — Test Management Platform · what&apos;s going on right now.
+          </p>
         </div>
 
-        {/* KPI grid */}
-        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <GreetingBanner
+          greeting={greeting}
+          userName={userName}
+          activeCount={activeRunsCount}
+          openFailuresTotal={data.openFailures.total}
+          onShowTestRuns={onShowTestRuns}
+        />
+
+        {/* KPI row — total cases, 30d failed, pass rate, critical issues,
+            recurring issues. */}
+        <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <KpiCard label="Total Test Cases" value={data.totalCases.toLocaleString()} />
           <KpiCard
-            icon="ti-checklist"
-            label="Total cases"
-            value={data.totalCases.toLocaleString()}
-            delta={`${data.totalCases > 0 ? '↗' : '—'} ${data.totalCases} total`}
-            deltaTone="neutral"
+            label="Failed (30d)"
+            value={data.failed30d.total.toLocaleString()}
+            trendPct={data.failed30d.pctChange}
+            spark={failedSeries}
+            sparkColor="#DC2626"
           />
           <KpiCard
-            icon="ti-check"
-            label="Pass rate"
+            label="Pass Rate"
             value={`${data.passRate.current}%`}
-            delta={
-              data.runs30d.prev === 0
-                ? 'no prev data'
-                : `${data.passRate.delta >= 0 ? '↑' : '↓'} ${Math.abs(data.passRate.delta)}% vs prev`
-            }
-            deltaTone={data.passRate.delta >= 0 ? 'up' : 'down'}
+            trendPct={data.passRate.delta}
+            spark={passRateSeries}
+            sparkColor="#16A34A"
           />
           <KpiCard
-            icon="ti-bug"
-            label="Open failures"
-            value={data.openFailures.total.toLocaleString()}
-            delta={
-              data.openFailures.newToday > 0
-                ? `↑ ${data.openFailures.newToday} new today`
-                : 'No new today'
-            }
-            deltaTone={data.openFailures.total > 0 ? 'down' : 'up'}
+            label="Critical Issues"
+            value={data.criticalIssues.toLocaleString()}
+            meta="open · Critical severity"
+            tone={data.criticalIssues > 0 ? 'danger' : undefined}
           />
           <KpiCard
-            icon="ti-player-play"
-            label="Active runs"
-            value={activeRunsCount.toLocaleString()}
-            delta={
-              data.recentCycles.length > 0 ? `${data.recentCycles.length} total recent` : 'none yet'
-            }
-            deltaTone="neutral"
+            label="Recurring Issues"
+            value={data.recurringIssues.total.toLocaleString()}
+            meta="failed in 2+ cycles"
+            tone={data.recurringIssues.total > 0 ? 'warning' : undefined}
           />
         </div>
 
-        {/* Trend + Summary row */}
+        {activeCycle && <ActiveRunHero cycle={activeCycle} onOpen={onOpenCycle} />}
+
+        {/* Execution trend + Cycle-wise test distribution */}
         <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
-          <Panel title="Execution trend" secondary="Last 8 weeks">
+          <Panel
+            title="Execution Trend"
+            secondary="Last 8 weeks — executed, passed, failed and blocked"
+          >
             <TrendChart weekly={data.weeklyRuns} />
-            <div className="mt-2 flex gap-4 text-[12px] text-text-2">
-              <LegendDot color="#16A34A" label="Pass" />
-              <LegendDot color="#DC2626" label="Fail" />
-              <LegendDot color="#EA580C" label="Blocked" />
-            </div>
           </Panel>
 
-          <Panel title="Execution summary" secondary="Recent runs">
-            <div className="flex items-center gap-5">
-              <DonutChart pass={pctPass} fail={pctFail} block={pctBlock} value={`${pctPass}%`} />
-              <div className="flex flex-1 flex-col gap-2 text-[13px]">
-                <SummaryRow color="#16A34A" label="Pass" value={`${pctPass}%`} />
-                <SummaryRow color="#DC2626" label="Fail" value={`${pctFail}%`} />
-                <SummaryRow color="#EA580C" label="Blocked" value={`${pctBlock}%`} />
-                <SummaryRow color="#E7E5E4" label="Untested" value={`${pctUntested}%`} />
-              </div>
-            </div>
+          <CycleDistributionPanel cycles={distributionCycles} />
+        </div>
+
+        {/* Coverage by module — full-width table, worst-covered first */}
+        <div className="mb-4">
+          <Panel
+            title="Coverage by Module"
+            secondary="Worst-covered first"
+            action={
+              onShowReports && (
+                <button
+                  type="button"
+                  onClick={onShowReports}
+                  className="text-[12px] font-medium text-primary-text hover:underline"
+                >
+                  Full stability report →
+                </button>
+              )
+            }
+          >
+            {data.moduleStability.length === 0 ? (
+              <p className="text-[12.5px] text-text-3">No module activity yet.</p>
+            ) : (
+              <CoverageTable modules={data.moduleStability} />
+            )}
           </Panel>
         </div>
 
-        {/* Recent activity */}
-        <Panel
-          title="Recent activity"
-          secondary={
-            data.recentCycles.length > 0 ? `${data.recentCycles.length} recent` : undefined
-          }
-        >
-          {data.recentCycles.length === 0 ? (
-            <p className="text-[13px] text-text-3">
-              Nothing yet.{' '}
-              <button onClick={onShowTestRuns} className="text-primary hover:underline">
-                Create a test run
-              </button>{' '}
-              to get started.
-            </p>
-          ) : (
-            <div className="divide-y divide-border">
-              {data.recentCycles.slice(0, 8).map(c => (
-                <ActivityRow key={c.id} cycle={c} onOpen={onOpenCycle} />
-              ))}
-            </div>
-          )}
-        </Panel>
+        {/* Recent test runs */}
+        <div className="mb-4">
+          <Panel
+            title="Recent test runs"
+            secondary={
+              data.recentCycles.length > 0 ? `${data.recentCycles.length} recent` : undefined
+            }
+          >
+            {data.recentCycles.length === 0 ? (
+              <p className="text-[13px] text-text-3">
+                Nothing yet.{' '}
+                <button onClick={onShowTestRuns} className="text-primary hover:underline">
+                  Create a test run
+                </button>{' '}
+                to get started.
+              </p>
+            ) : (
+              <RecentRunsTable cycles={data.recentCycles} onOpen={onOpenCycle} />
+            )}
+          </Panel>
+        </div>
+
+        {/* Recurring issues + Recent activity */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Panel
+            title="Recurring Issues"
+            secondary="Failed in 2+ separate test runs"
+            action={
+              onShowReports && (
+                <button
+                  type="button"
+                  onClick={onShowReports}
+                  className="text-[12px] font-medium text-primary-text hover:underline"
+                >
+                  Full report →
+                </button>
+              )
+            }
+          >
+            {data.recurringIssues.items.length === 0 ? (
+              <p className="text-[12.5px] text-text-3">No recurring issues right now.</p>
+            ) : (
+              <RecurringIssuesList items={data.recurringIssues.items} />
+            )}
+          </Panel>
+
+          <Panel title="Recent Activity" secondary="Live from the QA team">
+            {data.recentActivity.length === 0 ? (
+              <p className="text-[12.5px] text-text-3">No activity yet.</p>
+            ) : (
+              <ActivityFeed events={data.recentActivity} />
+            )}
+          </Panel>
+        </div>
       </div>
     </div>
   );
@@ -229,28 +309,511 @@ export function Dashboard({ onShowTestRuns, onOpenCycle, projectId }: DashboardP
 // ─── helper components ───────────────────────────────────
 
 function KpiCard({
-  icon,
   label,
   value,
-  delta,
-  deltaTone,
+  trendPct,
+  meta,
+  spark,
+  sparkColor,
+  tone,
 }: {
-  icon: string;
   label: string;
   value: string;
-  delta: string;
-  deltaTone: 'up' | 'down' | 'neutral';
+  // Signed % change vs. the prior period. Sign alone decides the arrow/colour
+  // -- a falling Failed count is still a numeric "down", shown the same way
+  // a rising one would be, not recoloured for being good news.
+  trendPct?: number;
+  meta?: string;
+  spark?: number[];
+  sparkColor?: string;
+  // For cards with no prior-period figure to trend against (a live snapshot
+  // like Critical/Recurring issues) -- colours the value itself instead.
+  tone?: 'danger' | 'warning';
 }) {
-  const tone =
-    deltaTone === 'up' ? 'text-success' : deltaTone === 'down' ? 'text-danger' : 'text-text-3';
   return (
     <div className="rounded-lg border border-border bg-surface p-[16px_18px]">
-      <div className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-text-2">
-        <i className={`ti ${icon} text-[14px]`} />
-        {label}
+      <div className="mb-2 text-[12px] font-medium text-text-3">{label}</div>
+      <div
+        className={cn(
+          'mb-2 text-[26px] font-semibold tracking-[-0.02em]',
+          tone === 'danger' ? 'text-danger' : tone === 'warning' ? 'text-warning' : 'text-text',
+        )}
+      >
+        {value}
       </div>
-      <div className="mb-1 text-[28px] font-semibold tracking-[-0.02em] text-text">{value}</div>
-      <div className={`flex items-center gap-1 text-[12px] ${tone}`}>{delta}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1 text-[11.5px] font-medium">
+          {trendPct !== undefined && (
+            <span className={trendPct >= 0 ? 'text-success' : 'text-danger'}>
+              {trendPct >= 0 ? '↗' : '↘'} {trendPct >= 0 ? '+' : ''}
+              {trendPct}%{meta ? '' : ' vs prior 30d'}
+            </span>
+          )}
+          {meta && <span className={trendPct !== undefined ? 'text-text-3' : ''}>{meta}</span>}
+        </div>
+        {spark && spark.length > 1 && <Sparkline values={spark} color={sparkColor ?? '#6B7280'} />}
+      </div>
+    </div>
+  );
+}
+
+function Sparkline({ values, color }: { values: number[]; color: string }) {
+  const w = 80;
+  const h = 24;
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const range = max - min || 1;
+  const pts = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * w;
+      const y = h - ((v - min) / range) * h;
+      return `${x},${y}`;
+    })
+    .join(' ');
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="h-[24px] w-[80px] flex-shrink-0">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.75" />
+    </svg>
+  );
+}
+
+// ─── Greeting banner ──────────────────────────────────────
+
+function GreetingBanner({
+  greeting,
+  userName,
+  activeCount,
+  openFailuresTotal,
+  onShowTestRuns,
+}: {
+  greeting: string;
+  userName?: string | null;
+  activeCount: number;
+  openFailuresTotal: number;
+  onShowTestRuns: () => void;
+}) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  return (
+    <div className="mb-6 flex items-start gap-4 rounded-lg border border-primary/20 bg-primary-light px-5 py-4">
+      <div className="flex-1">
+        <div className="text-[13.5px] text-primary-text">
+          <b className="font-semibold">{activeCount}</b> test run{activeCount === 1 ? '' : 's'}{' '}
+          currently in progress, and <b className="font-semibold">{openFailuresTotal}</b> failure
+          {openFailuresTotal === 1 ? '' : 's'} open right now.
+          <span className="ml-1 text-text-3">
+            ({greeting}
+            {userName ? `, ${userName}` : ''} 👋)
+          </span>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onShowTestRuns}
+        className="flex-shrink-0 text-[12.5px] font-semibold text-primary-text hover:underline"
+      >
+        Go to Test Runs →
+      </button>
+      <button
+        type="button"
+        onClick={() => setDismissed(true)}
+        aria-label="Dismiss"
+        className="flex-shrink-0 text-primary-text/50 transition-colors hover:text-primary-text"
+      >
+        <i className="ti ti-x text-[16px]" />
+      </button>
+    </div>
+  );
+}
+
+// ─── Active test run hero ─────────────────────────────────
+
+function ActiveRunHero({ cycle, onOpen }: { cycle: RecentCycle; onOpen?: (id: string) => void }) {
+  const executedPct = cycle.total > 0 ? Math.round((cycle.done / cycle.total) * 100) : 0;
+  return (
+    <div className="mb-4 rounded-lg border-2 border-primary bg-surface p-[18px_20px]">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-light px-2.5 py-1 text-[11px] font-semibold text-primary-text">
+          <span className="h-[6px] w-[6px] rounded-full bg-primary" />
+          Active Test Run
+        </span>
+        <button
+          type="button"
+          onClick={() => onOpen?.(cycle.id)}
+          className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-1.5 text-[12.5px] font-medium text-white transition-all hover:bg-primary-hover"
+        >
+          <i className="ti ti-player-play text-[13px]" />
+          Continue
+        </button>
+      </div>
+      <div className="mb-1 truncate text-[17px] font-semibold text-text">{cycle.name}</div>
+      <div className="mb-3 text-[12.5px] text-text-3">
+        Scope: {cycle.scopeName ?? (cycle.scopeType === 'All' ? 'All cases' : cycle.scopeType)}
+      </div>
+      <div className="mb-1.5 h-[8px] overflow-hidden rounded-full bg-surface-3">
+        <div className="h-full rounded-full bg-primary" style={{ width: `${executedPct}%` }} />
+      </div>
+      <div className="flex items-center justify-between text-[12px] text-text-3">
+        <span>
+          {cycle.done} / {cycle.total} executed
+        </span>
+        <span>
+          Pass rate <b className="font-semibold text-text">{cycle.passRate}%</b>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Execution trend (line chart) ─────────────────────────
+
+function TrendChart({ weekly }: { weekly: DashboardData['weeklyRuns'] }) {
+  const W = 600;
+  const H = 190;
+  const padL = 34;
+  const padB = 18;
+  const executed = weekly.map(w => w.pass + w.fail + w.blocked);
+  const max = Math.max(...executed, 1);
+  // Round the axis ceiling up to a tidy number so the gridline labels read
+  // like real values, not an arbitrary max-of-the-data.
+  const niceMax = Math.ceil(max / 50) * 50 || 50;
+  const ySteps = 4;
+
+  const x = (i: number) => padL + (i / Math.max(weekly.length - 1, 1)) * (W - padL);
+  const y = (n: number) => H - padB - (n / niceMax) * (H - padB);
+
+  const line = (vals: number[]) => vals.map((v, i) => `${x(i)},${y(v)}`).join(' ');
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-[200px] w-full">
+        <g stroke="#E7E5E4" strokeWidth="1">
+          {Array.from({ length: ySteps + 1 }, (_, i) => {
+            const val = (niceMax / ySteps) * i;
+            return <line key={i} x1={padL} y1={y(val)} x2={W} y2={y(val)} />;
+          })}
+        </g>
+        <g fontSize="10" fill="#A8A29E" fontFamily="ui-monospace, monospace">
+          {Array.from({ length: ySteps + 1 }, (_, i) => {
+            const val = Math.round((niceMax / ySteps) * i);
+            return (
+              <text key={i} x={0} y={y(val) + 3}>
+                {val}
+              </text>
+            );
+          })}
+        </g>
+        <polyline fill="none" stroke="#6366F1" strokeWidth="2" points={line(executed)} />
+        <polyline
+          fill="none"
+          stroke="#16A34A"
+          strokeWidth="2"
+          points={line(weekly.map(w => w.pass))}
+        />
+        <polyline
+          fill="none"
+          stroke="#DC2626"
+          strokeWidth="2"
+          points={line(weekly.map(w => w.fail))}
+        />
+        <polyline
+          fill="none"
+          stroke="#D97706"
+          strokeWidth="2"
+          points={line(weekly.map(w => w.blocked))}
+        />
+      </svg>
+      <div className="mt-1 flex flex-wrap gap-4 text-[12px] text-text-2">
+        <LegendDot color="#6366F1" label="Executed" />
+        <LegendDot color="#16A34A" label="Passed" />
+        <LegendDot color="#DC2626" label="Failed" />
+        <LegendDot color="#D97706" label="Blocked" />
+      </div>
+    </div>
+  );
+}
+
+export function DonutChart({
+  pass,
+  fail,
+  block,
+  value,
+  sublabel = 'pass rate',
+}: {
+  pass: number;
+  fail: number;
+  block: number;
+  value: string;
+  sublabel?: string;
+}) {
+  const r = 15.9;
+  const circumference = 100;
+  let offset = 25; // start at 12 o'clock
+  const seg = (pct: number, color: string) => {
+    const dash = `${pct} ${circumference - pct}`;
+    const el = (
+      <circle
+        key={color}
+        cx="18"
+        cy="18"
+        r={r}
+        fill="none"
+        stroke={color}
+        strokeWidth="3.5"
+        strokeDasharray={dash}
+        strokeDashoffset={-offset + 25}
+        transform="rotate(-90 18 18)"
+      />
+    );
+    offset += pct;
+    return el;
+  };
+  return (
+    <svg viewBox="0 0 36 36" className="h-[150px] w-[150px]">
+      <circle cx="18" cy="18" r={r} fill="none" stroke="#EEEDEB" strokeWidth="3.5" />
+      {seg(pass, '#16A34A')}
+      {seg(fail, '#DC2626')}
+      {seg(block, '#D97706')}
+      <text x="18" y="17.5" textAnchor="middle" fontSize="7" fontWeight="700" fill="#1C1917">
+        {value}
+      </text>
+      <text x="18" y="22.5" textAnchor="middle" fontSize="2.4" fill="#A8A29E">
+        {sublabel}
+      </text>
+    </svg>
+  );
+}
+
+function SummaryRow({ color, label, value }: { color: string; label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="flex items-center gap-1.5 text-text-2">
+        <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} />
+        {label}
+      </span>
+      <span className="font-mono tabular-nums text-text">{value.toLocaleString()}</span>
+    </div>
+  );
+}
+
+// ─── Cycle-wise test distribution ─────────────────────────
+
+function CycleDistributionPanel({ cycles }: { cycles: RecentCycle[] }) {
+  const [selectedId, setSelectedId] = useState('');
+  const selected = cycles.find(c => c.id === selectedId) ?? cycles[0] ?? null;
+
+  if (cycles.length === 0) {
+    return (
+      <Panel title="Cycle-wise Test Distribution">
+        <p className="text-[12.5px] text-text-3">No test runs yet.</p>
+      </Panel>
+    );
+  }
+
+  const { counts } = selected!;
+  const total = counts.Passed + counts.Failed + counts.Blocked + counts.NotRun + counts.Skipped;
+  const pctOf = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
+
+  return (
+    <Panel
+      title="Cycle-wise Test Distribution"
+      secondary={
+        <select
+          value={selected!.id}
+          onChange={e => setSelectedId(e.target.value)}
+          className="rounded border border-border bg-surface px-2 py-1 text-[11.5px] text-text outline-none focus:border-primary"
+        >
+          {cycles.map(c => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      }
+    >
+      <div className="flex flex-col items-center gap-4">
+        <DonutChart
+          pass={pctOf(counts.Passed)}
+          fail={pctOf(counts.Failed)}
+          block={pctOf(counts.Blocked)}
+          value={`${pctOf(counts.Passed)}%`}
+        />
+        <div className="flex w-full flex-col gap-2 text-[13px]">
+          <SummaryRow color="#16A34A" label="Passed" value={counts.Passed} />
+          <SummaryRow color="#DC2626" label="Failed" value={counts.Failed} />
+          <SummaryRow color="#D97706" label="Blocked" value={counts.Blocked} />
+          <SummaryRow color="#A8A29E" label="Not run" value={counts.NotRun} />
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+// ─── Recurring issues ──────────────────────────────────────
+
+function RecurringIssuesList({ items }: { items: RecurringIssue[] }) {
+  return (
+    <div className="flex flex-col gap-2.5">
+      {items.map(i => (
+        <div
+          key={i.id}
+          className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2"
+        >
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="font-mono text-[11px] text-text-3">
+                TC-{String(i.caseNum).padStart(3, '0')}
+              </span>
+              <span
+                className={cn(
+                  'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+                  i.severity === 'Critical'
+                    ? 'bg-danger-bg text-danger-text'
+                    : i.severity === 'Major'
+                      ? 'bg-warning-bg text-warning-text'
+                      : 'bg-surface-3 text-text-3',
+                )}
+              >
+                {i.severity}
+              </span>
+            </div>
+            <div className="truncate text-[12.5px] font-medium text-text">{i.title}</div>
+            <div className="truncate text-[11px] text-text-3">{i.scopeName}</div>
+          </div>
+          <div className="flex-shrink-0 text-right">
+            <div className="text-[12.5px] font-semibold text-danger">{i.cycleCount}× cycles</div>
+            <div className="text-[10.5px] text-text-3">{relativeTime(i.lastSeen)}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Recent activity ───────────────────────────────────────
+
+function ActivityFeed({ events }: { events: ActivityEvent[] }) {
+  return (
+    <div className="flex flex-col divide-y divide-border">
+      {events.map((e, i) => (
+        <div key={i} className="flex items-start gap-2.5 py-2 first:pt-0 last:pb-0">
+          <span
+            className={cn(
+              'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[9.5px] font-bold',
+              avatarColour(e.actor),
+            )}
+          >
+            {initials(e.actor)}
+          </span>
+          <div className="min-w-0 flex-1 text-[12.5px] text-text-2">
+            <b className="font-semibold text-text">{e.actor}</b>{' '}
+            {e.kind === 'run' ? (
+              <>
+                marked <span className="font-mono text-[11.5px]">{e.caseLabel}</span> as{' '}
+                <span
+                  className={
+                    e.result === 'Passed'
+                      ? 'font-semibold text-success'
+                      : e.result === 'Failed'
+                        ? 'font-semibold text-danger'
+                        : 'font-semibold text-warning'
+                  }
+                >
+                  {e.result}
+                </span>{' '}
+                in {e.cycleName}
+              </>
+            ) : (
+              <>
+                logged a quick log against{' '}
+                <span className="font-medium text-text">{e.scopeName}</span>
+              </>
+            )}
+          </div>
+          <span className="flex-shrink-0 text-[11px] text-text-3">{relativeTime(e.ts)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Coverage by module (full table) ──────────────────────
+
+function CoverageTable({ modules }: { modules: ModuleStabilityRow[] }) {
+  const rows = [...modules]
+    .filter(m => m.passRate !== null)
+    .sort((a, b) => (a.passRate ?? 0) - (b.passRate ?? 0));
+  const labelTone: Record<ModuleStabilityRow['label'], string> = {
+    Stable: 'text-success',
+    'At Risk': 'text-warning',
+    Unstable: 'text-danger',
+    'No data': 'text-text-3',
+  };
+  const barTone: Record<ModuleStabilityRow['label'], string> = {
+    Stable: 'bg-success',
+    'At Risk': 'bg-warning',
+    Unstable: 'bg-danger',
+    'No data': 'bg-surface-3',
+  };
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-[12.5px]">
+        <thead>
+          <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-text-3">
+            <th className="border-b border-border pb-2 pr-3">Module</th>
+            <th className="border-b border-border pb-2 pr-3">Pass rate</th>
+            <th className="border-b border-border pb-2 pr-3 text-right">Issues</th>
+            <th className="border-b border-border pb-2 pr-3">Stability</th>
+            <th className="border-b border-border pb-2">Trend</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(m => (
+            <tr key={m.name} className="border-b border-border last:border-b-0">
+              <td className="py-2.5 pr-3 font-medium text-text">{m.name}</td>
+              <td className="py-2.5 pr-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-9 flex-shrink-0 font-mono text-[11.5px] text-text-2">
+                    {m.passRate}%
+                  </span>
+                  <div className="h-[6px] w-[90px] overflow-hidden rounded-full bg-surface-3">
+                    <div
+                      className={cn('h-full rounded-full', barTone[m.label])}
+                      style={{ width: `${Math.max(m.passRate ?? 0, 2)}%` }}
+                    />
+                  </div>
+                </div>
+              </td>
+              <td className="py-2.5 pr-3 text-right font-mono tabular-nums text-text-2">
+                {m.issues}
+              </td>
+              <td className="py-2.5 pr-3">
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1.5 font-semibold',
+                    labelTone[m.label],
+                  )}
+                >
+                  <span className={cn('h-[6px] w-[6px] rounded-full', barTone[m.label])} />
+                  {m.label}
+                </span>
+              </td>
+              <td className="py-2.5">
+                <i
+                  className={cn(
+                    'ti text-[15px]',
+                    m.trend === 'up'
+                      ? 'ti-trending-up text-success'
+                      : m.trend === 'down'
+                        ? 'ti-trending-down text-danger'
+                        : 'ti-minus text-text-3',
+                  )}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -258,17 +821,22 @@ function KpiCard({
 function Panel({
   title,
   secondary,
+  action,
   children,
 }: {
   title: string;
-  secondary?: string;
+  secondary?: React.ReactNode;
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="rounded-lg border border-border bg-surface p-[18px_20px]">
-      <div className="mb-3.5 flex items-center justify-between text-[14px] font-semibold text-text">
-        <span>{title}</span>
-        {secondary && <span className="text-[12px] font-normal text-text-3">{secondary}</span>}
+      <div className="mb-3.5 flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[14px] font-semibold text-text">{title}</div>
+          {secondary && <div className="mt-0.5 text-[12px] text-text-3">{secondary}</div>}
+        </div>
+        {action}
       </div>
       {children}
     </div>
@@ -284,118 +852,35 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-function SummaryRow({ color, label, value }: { color: string; label: string; value: string }) {
+function RecentRunsTable({
+  cycles,
+  onOpen,
+}: {
+  cycles: RecentCycle[];
+  onOpen?: (id: string) => void;
+}) {
   return (
-    <div className="flex justify-between">
-      <span className="flex items-center gap-1.5">
-        <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} />
-        {label}
-      </span>
-      <span className="font-mono tabular-nums text-text-2">{value}</span>
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-[12.5px]">
+        <thead>
+          <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-text-3">
+            <th className="border-b border-border pb-2 pr-3">Run</th>
+            <th className="border-b border-border pb-2 pr-3">Progress</th>
+            <th className="border-b border-border pb-2 pr-3">Result</th>
+            <th className="border-b border-border pb-2">Tester</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cycles.slice(0, 8).map(c => (
+            <RecentRunRow key={c.id} cycle={c} onOpen={onOpen} />
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-function TrendChart({ weekly }: { weekly: DashboardData['weeklyRuns'] }) {
-  const W = 600;
-  const H = 160;
-  const max = Math.max(...weekly.map(w => w.pass + w.fail + w.blocked), 1);
-
-  const x = (i: number) => (i / Math.max(weekly.length - 1, 1)) * W;
-  const y = (n: number) => H - (n / max) * (H - 20) - 10;
-
-  const passPts = weekly.map((w, i) => `${x(i)},${y(w.pass)}`).join(' ');
-  const failPts = weekly.map((w, i) => `${x(i)},${y(w.fail)}`).join(' ');
-  const blockedPts = weekly.map((w, i) => `${x(i)},${y(w.blocked)}`).join(' ');
-  const passAreaPath =
-    `M ${x(0)},${H} ` +
-    weekly.map((w, i) => `L ${x(i)},${y(w.pass)}`).join(' ') +
-    ` L ${x(weekly.length - 1)},${H} Z`;
-
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-[160px] w-full">
-      <defs>
-        <linearGradient id="passGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#16A34A" stopOpacity="0.2" />
-          <stop offset="100%" stopColor="#16A34A" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <g stroke="#E7E5E4" strokeWidth="1">
-        <line x1="0" y1="40" x2={W} y2="40" />
-        <line x1="0" y1="80" x2={W} y2="80" />
-        <line x1="0" y1="120" x2={W} y2="120" />
-      </g>
-      <path d={passAreaPath} fill="url(#passGrad)" />
-      <polyline fill="none" stroke="#16A34A" strokeWidth="2" points={passPts} />
-      <polyline fill="none" stroke="#DC2626" strokeWidth="2" points={failPts} />
-      <polyline fill="none" stroke="#EA580C" strokeWidth="2" points={blockedPts} />
-      {weekly.map((w, i) => (
-        <text key={i} x={x(i)} y={H - 2} textAnchor="middle" fontSize="9" fill="#A8A29E">
-          {w.label}
-        </text>
-      ))}
-    </svg>
-  );
-}
-
-function DonutChart({
-  pass,
-  fail,
-  block,
-  value,
-}: {
-  pass: number;
-  fail: number;
-  block: number;
-  value: string;
-}) {
-  return (
-    <svg width="120" height="120" viewBox="0 0 36 36">
-      <circle cx="18" cy="18" r="15.9" fill="none" stroke="#F5F5F4" strokeWidth="3.5" />
-      <circle
-        cx="18"
-        cy="18"
-        r="15.9"
-        fill="none"
-        stroke="#16A34A"
-        strokeWidth="3.5"
-        strokeDasharray={`${pass} 100`}
-        strokeDashoffset="25"
-        transform="rotate(-90 18 18)"
-        strokeLinecap="round"
-      />
-      <circle
-        cx="18"
-        cy="18"
-        r="15.9"
-        fill="none"
-        stroke="#DC2626"
-        strokeWidth="3.5"
-        strokeDasharray={`${fail} 100`}
-        strokeDashoffset={-(pass - 25)}
-        transform="rotate(-90 18 18)"
-        strokeLinecap="round"
-      />
-      <circle
-        cx="18"
-        cy="18"
-        r="15.9"
-        fill="none"
-        stroke="#EA580C"
-        strokeWidth="3.5"
-        strokeDasharray={`${block} 100`}
-        strokeDashoffset={-(pass + fail - 25)}
-        transform="rotate(-90 18 18)"
-        strokeLinecap="round"
-      />
-      <text x="18" y="20" textAnchor="middle" fontSize="6" fill="#1C1917" fontWeight="600">
-        {value}
-      </text>
-    </svg>
-  );
-}
-
-function ActivityRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: string) => void }) {
+function RecentRunRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: string) => void }) {
   const isManual = c.mode === 'Manual';
   // Quick-log entries don't have per-case runs — express the outcome as a
   // single Pass/Fail. Read the verdict the API already computed into
@@ -427,52 +912,83 @@ function ActivityRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: s
   // Manual rows want their completed-on date so back-dated entries read
   // correctly; CaseBased keep the createdAt.
   const dateIso = (isManual && c.completedAt) || c.createdAt;
-
-  const status = verdict
-    ? verdict.label === 'Pass'
-      ? { icon: 'ti-check', tone: 'bg-emerald-50 text-emerald-600' }
-      : { icon: 'ti-x', tone: 'bg-red-50 text-red-600' }
-    : { icon: 'ti-player-play', tone: 'bg-indigo-50 text-indigo-600' };
+  // A cycle attributed to more than one tester reads as "N testers" (see
+  // /api/dashboard) rather than a real name -- shown with a group icon
+  // instead of misleading two-letter initials taken from that phrase.
+  const isGroup = /\d+ testers$/.test(c.tester);
 
   return (
-    <button
+    <tr
       onClick={() => onOpen?.(c.id)}
-      className="flex w-full items-start gap-3 py-2.5 text-left transition-colors hover:bg-surface-2"
+      className="cursor-pointer border-b border-border last:border-b-0 hover:bg-surface-2"
     >
-      <span
-        className={cn(
-          'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full',
-          status.tone,
-        )}
-      >
-        <i className={cn('ti', status.icon, 'text-[15px]')} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-[13px] font-medium text-text">{c.name}</span>
-          <span className="flex-shrink-0 text-[11.5px] text-text-3">{relativeTime(dateIso)}</span>
-        </div>
-        <div className="mt-1 flex items-center gap-1.5 text-[12px] text-text-3">
+      <td className="max-w-[240px] py-2.5 pr-3">
+        <div className="truncate font-medium text-text">{c.name}</div>
+        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-text-3">
           <span className="truncate">{subText}</span>
-          {verdict && (
+          <span>·</span>
+          <span className="flex-shrink-0">{relativeTime(dateIso)}</span>
+        </div>
+      </td>
+      <td className="py-2.5 pr-3">
+        {isManual ? (
+          <span className="text-[11px] text-text-3">quick log</span>
+        ) : (
+          <div className="flex items-center gap-2">
+            <div className="h-[6px] w-[70px] overflow-hidden rounded-full bg-surface-3">
+              <div
+                className="h-full rounded-full bg-primary"
+                style={{ width: `${c.total > 0 ? Math.round((c.done / c.total) * 100) : 0}%` }}
+              />
+            </div>
+            <span className="flex-shrink-0 text-[11px] text-text-3">
+              {c.done}/{c.total} · {c.passRate}%
+            </span>
+          </div>
+        )}
+      </td>
+      <td className="py-2.5 pr-3">
+        {verdict ? (
+          <span
+            className={cn(
+              'inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold',
+              verdict.tone,
+            )}
+          >
+            {verdict.label}
+            {(c.issueCount ?? 0) > 0 && ` · ${c.issueCount} issue${c.issueCount === 1 ? '' : 's'}`}
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded-full bg-primary-light px-2 py-0.5 text-[10.5px] font-semibold text-primary-text">
+            <span className="h-[6px] w-[6px] rounded-full bg-primary" />
+            Active
+          </span>
+        )}
+      </td>
+      <td className="py-2.5">
+        {!c.tester ? (
+          <span className="text-[11.5px] text-text-3">Unattributed</span>
+        ) : isGroup ? (
+          <span className="inline-flex items-center gap-1.5 text-[11.5px] text-text-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-surface-3 text-text-3">
+              <i className="ti ti-users text-[11px]" />
+            </span>
+            {c.tester}
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-[11.5px] text-text-2">
             <span
               className={cn(
-                'inline-flex flex-shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold',
-                verdict.tone,
+                'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[9px] font-bold',
+                avatarColour(c.tester),
               )}
             >
-              {verdict.label}
-              {(c.issueCount ?? 0) > 0 &&
-                ` · ${c.issueCount} issue${c.issueCount === 1 ? '' : 's'}`}
+              {initials(c.tester)}
             </span>
-          )}
-          {!isManual && (
-            <span className="flex-shrink-0">
-              · {c.done}/{c.total} · {c.passRate}%
-            </span>
-          )}
-        </div>
-      </div>
-    </button>
+            <span className="truncate">{c.tester}</span>
+          </span>
+        )}
+      </td>
+    </tr>
   );
 }

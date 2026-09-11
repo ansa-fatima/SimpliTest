@@ -179,7 +179,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             <button
               onClick={handleSubmit}
               disabled={!canSubmit}
-              className="group relative inline-flex w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-br from-[#6366F1] via-[#6D5BEA] to-[#7C3AED] px-4 py-3 text-[14px] font-semibold text-white shadow-[0_4px_14px_-2px_rgba(99,102,241,0.45)] ring-1 ring-white/15 transition-all hover:shadow-[0_8px_22px_-3px_rgba(99,102,241,0.55)] hover:brightness-[1.05] active:translate-y-px active:brightness-95 disabled:cursor-not-allowed disabled:from-text-3 disabled:via-text-3 disabled:to-text-3 disabled:shadow-none disabled:ring-0"
+              className="group relative inline-flex w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-br from-[#3F2DAA] via-[#5544C5] to-[#6B5BD8] px-4 py-3 text-[14px] font-semibold text-white shadow-[0_4px_14px_-2px_rgba(63,45,170,0.45)] ring-1 ring-white/15 transition-all hover:shadow-[0_8px_22px_-3px_rgba(63,45,170,0.55)] hover:brightness-[1.05] active:translate-y-px active:brightness-95 disabled:cursor-not-allowed disabled:from-text-3 disabled:via-text-3 disabled:to-text-3 disabled:shadow-none disabled:ring-0"
             >
               {/* Subtle moving shine on hover */}
               <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/25 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
@@ -223,7 +223,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       </div>
 
       {/* RIGHT — brand panel */}
-      <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#4F46E5] via-[#6D5BEA] to-[#7C3AED] p-10 text-white lg:flex">
+      <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#3526A0] via-[#5544C5] to-[#6B5BD8] p-10 text-white lg:flex">
         {/* Decorative blobs */}
         <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-32 -left-16 h-80 w-80 rounded-full bg-fuchsia-400/20 blur-3xl" />

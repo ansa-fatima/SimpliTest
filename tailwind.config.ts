@@ -31,18 +31,19 @@ const config: Config = {
         // Text — theme-aware
         text: { DEFAULT: v('text'), 2: v('text-2'), 3: v('text-3') },
 
-        // Brand
+        // Brand — explicit hex.
         primary: {
-          DEFAULT: '#6366F1',
-          hover: '#4F46E5',
-          light: '#EEF2FF',
-          text: '#3730A3',
+          DEFAULT: '#4B0082',
+          hover: '#380062',
+          light: '#EEE0F7',
+          text: '#380062',
         },
 
-        // Semantic
+        // Semantic — success/danger already matched the reference almost
+        // exactly; warning realigned to its amber (was a more orange-red).
         success: { DEFAULT: '#16A34A', bg: '#F0FDF4', text: '#166534' },
         danger: { DEFAULT: '#DC2626', bg: '#FEF2F2', text: '#991B1B' },
-        warning: { DEFAULT: '#EA580C', bg: '#FFF7ED', text: '#9A3412' },
+        warning: { DEFAULT: '#D97706', bg: '#FEF3C7', text: '#92400E' },
 
         // Pills (used in tables for priority/severity/run-result)
         pill: {

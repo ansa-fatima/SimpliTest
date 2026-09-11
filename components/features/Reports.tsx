@@ -13,11 +13,68 @@ interface ReportsProps {
   onOpenCycle?: (cycleId: string) => void;
 }
 
-interface Filters {
-  portalId: string; // '' = all
+type Period = 'today' | '7d' | '30d' | 'sprint' | 'all';
+const PERIOD_OPTIONS: { value: Period; label: string }[] = [
+  { value: 'today', label: 'Today' },
+  { value: '7d', label: 'Last 7 days' },
+  { value: '30d', label: 'Last 30 days' },
+  { value: 'sprint', label: 'Sprint' },
+  { value: 'all', label: 'All time' },
+];
+
+// Mirrors getPeriodRange('sprint', ...) on the server (app/api/reports/stability/route.ts)
+// — kept in sync here purely so the stepper can show/step through a sprint's
+// dates instantly, without waiting on a fetch. The server is still the
+// actual source of truth for which data points get counted.
+const SPRINT_EPOCH_MS = Date.UTC(2026, 8, 3); // confirmed current-sprint start: 2026-09-03
+const SPRINT_LENGTH_MS = 14 * 24 * 60 * 60 * 1000;
+
+function sprintRange(offset: number, now: Date): { start: Date; end: Date } {
+  const currentIndex = Math.floor((now.getTime() - SPRINT_EPOCH_MS) / SPRINT_LENGTH_MS);
+  const start = new Date(SPRINT_EPOCH_MS + (currentIndex + offset) * SPRINT_LENGTH_MS);
+  const end = new Date(start.getTime() + SPRINT_LENGTH_MS);
+  return { start, end };
 }
 
-const DEFAULT_FILTERS: Filters = { portalId: '' };
+function formatSprintRange(offset: number): string {
+  const { start, end } = sprintRange(offset, new Date());
+  const endInclusive = new Date(end.getTime() - 1);
+  // Every sprint boundary here is a UTC midnight (see SPRINT_EPOCH_MS) --
+  // pin the formatter to UTC too, or a viewer in a timezone ahead of UTC
+  // sees Sep 16 23:59:59 UTC rendered as "17 Sep" in their local time,
+  // making a sprint that ends Wed 16th look like it ends Thu 17th instead.
+  const fmt = (d: Date) =>
+    d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  return `${fmt(start)} – ${fmt(endInclusive)}`;
+}
+
+interface Filters {
+  portalId: string; // '' = all
+  moduleId: string; // '' = all (within the selected portal, if any)
+  suiteId: string; // '' = all (within the selected module, if any) — "Feature" in the UI
+  tester: string; // '' = all — matches TestRun.executedBy; quick logs aren't attributed yet
+  period: Period;
+  // Only meaningful when period === 'sprint'. 0 = current sprint, -1 =
+  // previous, -2 = the one before that, etc. — lets you page backward
+  // through past sprints instead of only ever seeing the current one.
+  sprintOffset: number;
+}
+
+const DEFAULT_FILTERS: Filters = {
+  portalId: '',
+  moduleId: '',
+  suiteId: '',
+  tester: '',
+  period: 'all',
+  sprintOffset: 0,
+};
+
+interface ScopeModule {
+  id: string;
+  name: string;
+  portalId: string;
+  suites: { id: string; name: string }[];
+}
 
 // Report types available as clickable tiles — the pre-cleanup landing page
 // had one tile per report (Execution / Release / Stability); Execution and
@@ -26,7 +83,7 @@ const DEFAULT_FILTERS: Filters = { portalId: '' };
 // actually gets used day to day, but the tile-grid pattern stays: adding a
 // report type back later is just another entry here, not a page rebuild.
 interface ReportTypeMeta {
-  key: 'stability';
+  key: 'stability' | 'cycleHistory';
   label: string;
   sub: string;
   icon: string;
@@ -40,6 +97,13 @@ const REPORT_TYPES: ReportTypeMeta[] = [
     icon: 'ti-activity-heartbeat',
     iconColor: 'bg-rose-100 text-rose-700',
   },
+  {
+    key: 'cycleHistory',
+    label: 'Cycle History',
+    sub: 'Every cycle, filterable',
+    icon: 'ti-list-details',
+    iconColor: 'bg-indigo-100 text-indigo-700',
+  },
 ];
 
 export function Reports({ projectId, projectName, portals, onOpenCycle }: ReportsProps) {
@@ -48,6 +112,29 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
   // has to always show something, so landing on Reports shows the choice
   // first and only opens a report once one is actually clicked.
   const [activeTab, setActiveTab] = useState<ReportTypeMeta['key'] | null>(null);
+
+  // Feeds the Module/Feature cascade and the Tester dropdown — fetched once
+  // per project, independent of the Stability report's own data fetch.
+  const [modules, setModules] = useState<ScopeModule[]>([]);
+  const [testers, setTesters] = useState<string[]>([]);
+  useEffect(() => {
+    if (!projectId) return;
+    api
+      .get<ScopeModule[]>(`/api/modules?projectId=${projectId}`)
+      .then(setModules)
+      .catch(e => console.error('[reports modules]', e));
+    api
+      .get<{ items: { name: string; username: string }[] }>(`/api/members?projectId=${projectId}`)
+      .then(({ items }) => setTesters(items.map(m => m.name || m.username).filter(Boolean)))
+      .catch(e => console.error('[reports members]', e));
+  }, [projectId]);
+
+  const visibleModules = filters.portalId
+    ? modules.filter(m => m.portalId === filters.portalId)
+    : modules;
+  const visibleSuites = filters.moduleId
+    ? (modules.find(m => m.id === filters.moduleId)?.suites ?? [])
+    : [];
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
@@ -86,10 +173,68 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
                 Filters
               </div>
 
+              <FilterField label="Period">
+                <select
+                  value={filters.period}
+                  onChange={e =>
+                    setFilters(f => ({
+                      ...f,
+                      period: e.target.value as Period,
+                      sprintOffset: 0,
+                    }))
+                  }
+                  className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                >
+                  {PERIOD_OPTIONS.map(o => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                {filters.period === 'sprint' && (
+                  <div className="mt-1.5 flex items-center justify-between gap-1 rounded border border-border bg-surface-2 px-1.5 py-1">
+                    <button
+                      type="button"
+                      title="Previous sprint"
+                      onClick={() => setFilters(f => ({ ...f, sprintOffset: f.sprintOffset - 1 }))}
+                      className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-2 hover:bg-surface-3"
+                    >
+                      <i className="ti ti-chevron-left text-[13px]" />
+                    </button>
+                    <span
+                      className="truncate text-[11.5px] font-medium text-text"
+                      title={formatSprintRange(filters.sprintOffset)}
+                    >
+                      {formatSprintRange(filters.sprintOffset)}
+                      {filters.sprintOffset === 0 && (
+                        <span className="ml-1 font-normal text-text-3">(current)</span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      title="Next sprint"
+                      disabled={filters.sprintOffset >= 0}
+                      onClick={() =>
+                        setFilters(f => ({ ...f, sprintOffset: Math.min(0, f.sprintOffset + 1) }))
+                      }
+                      className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-2 hover:bg-surface-3 disabled:opacity-30 disabled:hover:bg-transparent"
+                    >
+                      <i className="ti ti-chevron-right text-[13px]" />
+                    </button>
+                  </div>
+                )}
+              </FilterField>
+
               <FilterField label="Portal">
                 <select
                   value={filters.portalId}
-                  onChange={e => setFilters(f => ({ ...f, portalId: e.target.value }))}
+                  onChange={e =>
+                    // Changing Portal drops Module/Feature — they're only
+                    // ever options *within* a portal, so keeping a stale
+                    // selection from a different one would silently scope
+                    // the report to a module that isn't even shown as picked.
+                    setFilters(f => ({ ...f, portalId: e.target.value, moduleId: '', suiteId: '' }))
+                  }
                   className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
                 >
                   <option value="">All portals</option>
@@ -100,6 +245,63 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
                   ))}
                 </select>
               </FilterField>
+
+              <FilterField label="Module">
+                <select
+                  value={filters.moduleId}
+                  onChange={e => setFilters(f => ({ ...f, moduleId: e.target.value, suiteId: '' }))}
+                  className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                >
+                  <option value="">All modules</option>
+                  {visibleModules.map(m => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </FilterField>
+
+              <FilterField label="Feature">
+                <select
+                  value={filters.suiteId}
+                  onChange={e => setFilters(f => ({ ...f, suiteId: e.target.value }))}
+                  disabled={!filters.moduleId}
+                  className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light disabled:bg-surface-2 disabled:text-text-3"
+                >
+                  <option value="">
+                    {filters.moduleId ? 'All features' : 'Pick a module first'}
+                  </option>
+                  {visibleSuites.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </FilterField>
+
+              {/* Tester only applies to Cycle History — module/feature
+                  health is meant to read the same no matter who's looking,
+                  but "who logged this" is the whole point of a history log. */}
+              {activeTab === 'cycleHistory' && (
+                <FilterField label="Tester">
+                  <select
+                    value={filters.tester}
+                    onChange={e => setFilters(f => ({ ...f, tester: e.target.value }))}
+                    className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                  >
+                    <option value="">All testers</option>
+                    {testers.map(t => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="mt-1 text-[10.5px] text-text-3">
+                    Quick logs from before this filter existed aren&apos;t attributed to anyone, so
+                    they won&apos;t match a specific tester.
+                  </div>
+                </FilterField>
+              )}
 
               <button
                 type="button"
@@ -116,6 +318,14 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
                 <StabilityReport
                   projectId={projectId}
                   projectName={projectName}
+                  portals={portals}
+                  filters={filters}
+                  onOpenCycle={onOpenCycle}
+                />
+              )}
+              {activeTab === 'cycleHistory' && (
+                <CycleHistoryReport
+                  projectId={projectId}
                   portals={portals}
                   filters={filters}
                   onOpenCycle={onOpenCycle}
@@ -277,6 +487,9 @@ interface StabilityPayload {
     overallPassRate: number;
     modules: { stable: number; atRisk: number; unstable: number; noData: number };
   };
+  period: Period;
+  periodStart: string | null;
+  periodEnd: string | null;
 }
 
 function StabilityReport({
@@ -302,19 +515,65 @@ function StabilityReport({
   useEffect(() => {
     const params = new URLSearchParams();
     if (projectId) params.set('projectId', projectId);
+    params.set('period', filters.period);
+    if (filters.period === 'sprint') params.set('sprintOffset', String(filters.sprintOffset));
+    if (filters.portalId) params.set('portalId', filters.portalId);
+    if (filters.moduleId) params.set('moduleId', filters.moduleId);
+    if (filters.suiteId) params.set('suiteId', filters.suiteId);
+    if (filters.tester) params.set('tester', filters.tester);
     setLoading(true);
     api
       .get<StabilityPayload>(`/api/reports/stability?${params.toString()}`)
       .then(setData)
       .catch(e => console.error('[stability report]', e))
       .finally(() => setLoading(false));
-  }, [projectId]);
+  }, [
+    projectId,
+    filters.period,
+    filters.sprintOffset,
+    filters.portalId,
+    filters.moduleId,
+    filters.suiteId,
+    filters.tester,
+  ]);
 
-  const portalsToShow = useMemo(() => {
-    if (!data) return [];
-    if (filters.portalId) return data.portals.filter(p => p.id === filters.portalId);
-    return data.portals;
-  }, [data, filters.portalId]);
+  // The server now does the real scoping (Portal/Module/Feature/Tester are
+  // all sent as query params above), so `data.portals` already reflects
+  // exactly what's selected — no client-side re-filtering needed, and none
+  // of the KPI cards below can silently disagree with the row list again.
+  const portalsToShow = data?.portals ?? [];
+
+  // Overview panel numbers -- derived from the same scoped `data.portals`
+  // the tree below renders, so the donut/coverage list can never disagree
+  // with what the drill-down shows for the current filters.
+  let totalPassed = 0;
+  let totalFailed = 0;
+  const coverageModules: {
+    name: string;
+    portalName: string;
+    total: number;
+    passed: number;
+    passRate: number;
+    label: StabilityNode['label'];
+  }[] = [];
+  for (const p of portalsToShow) {
+    for (const m of p.modules) {
+      totalPassed += m.passed;
+      totalFailed += m.failed;
+      if (m.total > 0) {
+        coverageModules.push({
+          name: m.name,
+          portalName: p.name,
+          total: m.total,
+          passed: m.passed,
+          passRate: m.passRate,
+          label: m.label,
+        });
+      }
+    }
+  }
+  coverageModules.sort((a, b) => b.total - a.total);
+  const topCoverageModules = coverageModules.slice(0, 8);
 
   const toggle = (id: string) =>
     setExpanded(prev => {
@@ -363,31 +622,84 @@ function StabilityReport({
   const portalName = filters.portalId
     ? (portals.find(p => p.id === filters.portalId)?.name ?? 'Selected portal')
     : 'All portals';
+  // Module/Feature names come from the already-scoped response rather than
+  // a separate lookup list, since the server only ever returns the modules
+  // and suites that survive the filter — whatever's in `data` IS the scope.
+  const moduleName = filters.moduleId
+    ? (data?.portals.flatMap(p => p.modules).find(m => m.id === filters.moduleId)?.name ?? null)
+    : null;
+  const suiteName = filters.suiteId
+    ? (data?.portals
+        .flatMap(p => p.modules)
+        .flatMap(m => m.suites)
+        .find(s => s.id === filters.suiteId)?.name ?? null)
+    : null;
+  const scopeLabel = [portalName, moduleName, suiteName].filter(Boolean).join(' › ');
+  const testerLabel = filters.tester ? ` · Tester: ${filters.tester}` : '';
+  const periodLabel =
+    filters.period === 'sprint'
+      ? `Sprint: ${formatSprintRange(filters.sprintOffset)}${filters.sprintOffset === 0 ? ' (current)' : ''}`
+      : (PERIOD_OPTIONS.find(o => o.value === filters.period)?.label ?? 'All time');
 
   return (
     <div>
       <ReportHeader
         title="Stability report"
-        subtitle={`${portalName} · how stable each module & feature is, from quick logs and test runs`}
+        subtitle={`${scopeLabel}${testerLabel} · ${periodLabel} · how stable each module & feature is, from quick logs and test runs`}
         onCsv={onCsv}
         onPdf={() => window.print()}
         onShare={() => navigator.clipboard?.writeText(window.location.href)}
       />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiCard label="Data points" value={data?.totals.totalDataPoints ?? 0} tone="neutral" />
+        <KpiCard
+          label="Data points"
+          value={data?.totals.totalDataPoints ?? 0}
+          tone="neutral"
+          meta="quick logs + test runs"
+        />
         <KpiCard
           label="Overall pass rate"
           value={`${data?.totals.overallPassRate ?? 0}%`}
           tone={(data?.totals.overallPassRate ?? 0) >= 80 ? 'success' : 'warning'}
+          meta={`${totalPassed} passed of ${totalPassed + totalFailed}`}
         />
-        <KpiCard label="At risk modules" value={data?.totals.modules.atRisk ?? 0} tone="warning" />
+        <KpiCard
+          label="At risk modules"
+          value={data?.totals.modules.atRisk ?? 0}
+          tone="warning"
+          meta="70–89% pass rate"
+        />
         <KpiCard
           label="Unstable modules"
           value={data?.totals.modules.unstable ?? 0}
           tone="danger"
+          meta="below 70% pass rate"
         />
       </div>
+
+      {!loading && totalPassed + totalFailed > 0 && (
+        <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1.15fr_1fr]">
+          <div className="rounded-lg border border-border bg-surface p-4">
+            <h3 className="text-[13.5px] font-semibold text-text">Coverage by module</h3>
+            <p className="mb-3.5 mt-0.5 text-[11.5px] text-text-3">
+              Pass rate per module · widest first
+            </p>
+            <div className="flex flex-col gap-3">
+              {topCoverageModules.map((row, i) => (
+                <ModuleCoverageRow key={`${row.portalName}-${row.name}-${i}`} row={row} />
+              ))}
+            </div>
+          </div>
+          <div className="rounded-lg border border-border bg-surface p-4">
+            <h3 className="text-[13.5px] font-semibold text-text">Pass / fail split</h3>
+            <p className="mb-3.5 mt-0.5 text-[11.5px] text-text-3">
+              {(totalPassed + totalFailed).toLocaleString()} data points
+            </p>
+            <PassFailDonut passed={totalPassed} failed={totalFailed} />
+          </div>
+        </div>
+      )}
 
       {loading && !data ? (
         <div className="mt-4 rounded-lg border border-border bg-surface p-8 text-center text-text-3">
@@ -753,7 +1065,7 @@ function StabilityDrilldownPanel({
                       className={cn(
                         'flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider',
                         g.kind === 'caserun'
-                          ? 'bg-indigo-50 text-indigo-600'
+                          ? 'bg-primary-light text-primary'
                           : 'bg-slate-100 text-slate-500',
                       )}
                     >
@@ -850,16 +1162,258 @@ function StabilityStats({ node, compact }: { node: StabilityNode; compact?: bool
   );
 }
 
+// ─── Cycle History report ────────────────────────────────────
+
+interface CycleHistoryRow {
+  id: string;
+  name: string;
+  mode: 'CaseBased' | 'Manual';
+  portalName: string | null;
+  moduleName: string | null;
+  scopeName: string | null;
+  tester: string;
+  date: string;
+  issueCount: number;
+  status: 'Active' | 'Pass' | 'Fail';
+}
+interface CycleHistoryPayload {
+  cycles: CycleHistoryRow[];
+  totals: {
+    totalCycles: number;
+    totalIssues: number;
+    quickLogCount: number;
+    testRunCount: number;
+  };
+  cyclesPerModule: { name: string; count: number }[];
+}
+
+function CycleHistoryReport({
+  projectId,
+  portals,
+  filters,
+  onOpenCycle,
+}: {
+  projectId: string | null;
+  portals: Portal[];
+  filters: Filters;
+  onOpenCycle?: (cycleId: string) => void;
+}) {
+  const [data, setData] = useState<CycleHistoryPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (projectId) params.set('projectId', projectId);
+    params.set('period', filters.period);
+    if (filters.period === 'sprint') params.set('sprintOffset', String(filters.sprintOffset));
+    if (filters.portalId) params.set('portalId', filters.portalId);
+    if (filters.moduleId) params.set('moduleId', filters.moduleId);
+    if (filters.suiteId) params.set('suiteId', filters.suiteId);
+    if (filters.tester) params.set('tester', filters.tester);
+    setLoading(true);
+    api
+      .get<CycleHistoryPayload>(`/api/reports/cycle-history?${params.toString()}`)
+      .then(setData)
+      .catch(e => console.error('[cycle history report]', e))
+      .finally(() => setLoading(false));
+  }, [
+    projectId,
+    filters.period,
+    filters.sprintOffset,
+    filters.portalId,
+    filters.moduleId,
+    filters.suiteId,
+    filters.tester,
+  ]);
+
+  const portalName = filters.portalId
+    ? (portals.find(p => p.id === filters.portalId)?.name ?? 'Selected portal')
+    : 'All portals';
+  const periodLabel =
+    filters.period === 'sprint'
+      ? `Sprint: ${formatSprintRange(filters.sprintOffset)}${filters.sprintOffset === 0 ? ' (current)' : ''}`
+      : (PERIOD_OPTIONS.find(o => o.value === filters.period)?.label ?? 'All time');
+  const testerLabel = filters.tester ? ` · Tester: ${filters.tester}` : '';
+
+  const onCsv = () => {
+    if (!data) return;
+    const rows: (string | number)[][] = [
+      ['Cycle', 'Type', 'Portal', 'Module', 'Feature', 'Tester', 'Date', 'Issues', 'Status'],
+    ];
+    for (const c of data.cycles) {
+      rows.push([
+        c.name,
+        c.mode === 'Manual' ? 'Quick log' : 'Test run',
+        c.portalName ?? '',
+        c.moduleName ?? '',
+        c.scopeName ?? '',
+        c.tester || 'Unattributed',
+        new Date(c.date).toLocaleDateString('en-GB'),
+        c.issueCount,
+        c.status,
+      ]);
+    }
+    downloadCsv('cycle-history.csv', rows);
+  };
+
+  const maxModuleCount = data?.cyclesPerModule[0]?.count ?? 1;
+
+  return (
+    <div>
+      <ReportHeader
+        title="Cycle History"
+        subtitle={`${portalName}${testerLabel} · ${periodLabel} · every quick log and test run, filterable`}
+        onCsv={onCsv}
+        onPdf={() => window.print()}
+        onShare={() => navigator.clipboard?.writeText(window.location.href)}
+      />
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KpiCard label="Cycles" value={data?.totals.totalCycles ?? 0} tone="neutral" />
+        <KpiCard label="Issues logged" value={data?.totals.totalIssues ?? 0} tone="danger" />
+        <KpiCard label="Quick logs" value={data?.totals.quickLogCount ?? 0} tone="neutral" />
+        <KpiCard label="Test runs" value={data?.totals.testRunCount ?? 0} tone="neutral" />
+      </div>
+
+      {loading && !data ? (
+        <div className="mt-4 rounded-lg border border-border bg-surface p-8 text-center text-text-3">
+          Loading…
+        </div>
+      ) : !data || data.cycles.length === 0 ? (
+        <div className="mt-4 rounded-lg border border-dashed border-border bg-surface p-8 text-center text-text-3">
+          No cycles match these filters.
+        </div>
+      ) : (
+        <div className="mt-4 grid grid-cols-[220px_1fr] gap-3">
+          <div className="rounded-lg border border-border bg-surface p-3">
+            <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-text-3">
+              Cycles per module
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {data.cyclesPerModule.slice(0, 10).map(m => (
+                <div
+                  key={m.name}
+                  className="grid grid-cols-[1fr_auto] items-center gap-2 text-[11px]"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-text-2" title={m.name}>
+                      {m.name}
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
+                      <div
+                        className="h-full rounded-full bg-primary"
+                        style={{ width: `${Math.round((m.count / maxModuleCount) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                  <span className="tabular-nums text-text-3">{m.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+            <table className="w-full border-collapse text-[12px]">
+              <thead className="bg-surface-2">
+                <tr>
+                  <Th>Cycle</Th>
+                  <Th>Type</Th>
+                  <Th>Module</Th>
+                  <Th>Tester</Th>
+                  <Th align="right">Issues</Th>
+                  <Th>Result</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.cycles.map(c => (
+                  <tr
+                    key={c.id}
+                    onClick={() => c.mode === 'CaseBased' && onOpenCycle?.(c.id)}
+                    className={cn(
+                      'border-b border-border last:border-b-0',
+                      c.mode === 'CaseBased' && 'cursor-pointer hover:bg-surface-2',
+                    )}
+                  >
+                    <td
+                      className="max-w-[220px] truncate px-3 py-2 font-medium text-text"
+                      title={c.name}
+                    >
+                      {c.name}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={cn(
+                          'inline-flex rounded-full px-2 py-0.5 text-[10.5px] font-medium',
+                          c.mode === 'Manual'
+                            ? 'bg-surface-3 text-text-2'
+                            : 'bg-primary-light text-primary-text',
+                        )}
+                      >
+                        {c.mode === 'Manual' ? 'Quick log' : 'Test run'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-text-2">
+                      {[c.moduleName, c.scopeName].filter(Boolean).join(' › ') || (
+                        <span className="text-text-3">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-text-2">
+                      {c.tester || <span className="text-text-3">Unattributed</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-text">
+                      {c.issueCount || <span className="text-text-3">—</span>}
+                    </td>
+                    <td className="px-3 py-2">
+                      {c.status === 'Active' ? (
+                        <span className="inline-flex rounded-full bg-primary-light px-2 py-0.5 text-[10.5px] font-semibold text-primary-text">
+                          Active
+                        </span>
+                      ) : c.status === 'Pass' ? (
+                        <span className="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-700">
+                          Pass
+                        </span>
+                      ) : (
+                        <span className="inline-flex rounded-full bg-red-50 px-2 py-0.5 text-[10.5px] font-semibold text-red-700">
+                          Fail
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Th({ children, align }: { children: React.ReactNode; align?: 'right' | 'left' }) {
+  return (
+    <th
+      className={cn(
+        'border-b border-border px-3 py-2 text-[10px] font-medium uppercase tracking-[0.05em] text-text-3',
+        align === 'right' ? 'text-right' : 'text-left',
+      )}
+    >
+      {children}
+    </th>
+  );
+}
+
 // ─── Reusable bits ───────────────────────────────────────────
 
 function KpiCard({
   label,
   value,
   tone,
+  meta,
 }: {
   label: string;
   value: number | string;
   tone: 'neutral' | 'success' | 'danger' | 'warning';
+  meta?: string;
 }) {
   const cls =
     tone === 'success'
@@ -869,10 +1423,140 @@ function KpiCard({
         : tone === 'warning'
           ? 'text-amber-700'
           : 'text-text';
+  const accentBg =
+    tone === 'success'
+      ? 'bg-emerald-500'
+      : tone === 'danger'
+        ? 'bg-red-500'
+        : tone === 'warning'
+          ? 'bg-amber-500'
+          : 'bg-border-strong';
   return (
-    <div className="rounded-lg border border-border bg-surface px-4 py-3">
+    <div className="relative overflow-hidden rounded-lg border border-border bg-surface px-4 py-3">
+      <div className={cn('absolute inset-x-0 top-0 h-[3px]', accentBg)} />
       <p className="text-[10px] font-semibold uppercase tracking-wider text-text-3">{label}</p>
       <p className={cn('mt-0.5 text-[22px] font-semibold leading-tight', cls)}>{value}</p>
+      {meta && <p className="mt-0.5 text-[11px] text-text-3">{meta}</p>}
+    </div>
+  );
+}
+
+// ─── Overview panel: coverage-by-module bars + pass/fail donut ─────────────
+
+function ModuleCoverageRow({
+  row,
+}: {
+  row: {
+    name: string;
+    portalName: string;
+    total: number;
+    passed: number;
+    passRate: number;
+    label: StabilityNode['label'];
+  };
+}) {
+  const barColor =
+    row.label === 'Stable'
+      ? 'bg-emerald-500'
+      : row.label === 'At Risk'
+        ? 'bg-amber-500'
+        : 'bg-red-500';
+  return (
+    <div>
+      <div className="mb-1.5 flex items-baseline justify-between gap-2 text-[12.5px]">
+        <span className="min-w-0 truncate font-medium text-text">
+          {row.name} <span className="font-normal text-text-3">· {row.portalName}</span>
+        </span>
+        <span className="flex-shrink-0 font-mono text-[11.5px] text-text-3">
+          <b className="font-semibold text-text">{row.passRate}%</b> · {row.passed}/{row.total}
+        </span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
+        <div
+          className={cn('h-full rounded-full', barColor)}
+          style={{ width: `${Math.max(row.passRate, 2)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PassFailDonut({ passed, failed }: { passed: number; failed: number }) {
+  const total = passed + failed;
+  const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
+  const circumference = 2 * Math.PI * 15;
+  const passLen = total > 0 ? (passed / total) * circumference : 0;
+  const failLen = total > 0 ? (failed / total) * circumference : 0;
+  return (
+    <div className="flex items-center gap-6">
+      <svg viewBox="0 0 36 36" className="h-[130px] w-[130px] flex-shrink-0">
+        <circle
+          cx="18"
+          cy="18"
+          r="15"
+          fill="none"
+          strokeWidth="5"
+          style={{ stroke: 'rgb(var(--surface-3))' }}
+        />
+        {total > 0 && (
+          <>
+            <circle
+              cx="18"
+              cy="18"
+              r="15"
+              fill="none"
+              strokeWidth="5"
+              strokeLinecap="round"
+              stroke="#16A34A"
+              strokeDasharray={`${passLen} ${circumference}`}
+              transform="rotate(-90 18 18)"
+            />
+            <circle
+              cx="18"
+              cy="18"
+              r="15"
+              fill="none"
+              strokeWidth="5"
+              stroke="#DC2626"
+              strokeDasharray={`${failLen} ${circumference}`}
+              strokeDashoffset={-passLen}
+              transform="rotate(-90 18 18)"
+            />
+          </>
+        )}
+        <text
+          x="18"
+          y="17.5"
+          textAnchor="middle"
+          fontSize="7"
+          fontWeight="700"
+          style={{ fill: 'rgb(var(--text))' }}
+        >
+          {passRate}%
+        </text>
+        <text
+          x="18"
+          y="23.5"
+          textAnchor="middle"
+          fontSize="2.6"
+          letterSpacing="0.05"
+          style={{ fill: 'rgb(var(--text-3))' }}
+        >
+          PASS RATE
+        </text>
+      </svg>
+      <div className="flex flex-1 flex-col gap-2.5">
+        <div className="flex items-center gap-2 text-[12.5px]">
+          <span className="h-[9px] w-[9px] flex-shrink-0 rounded-[2px] bg-emerald-500" />
+          <span className="flex-1 text-text-2">Passed</span>
+          <span className="font-mono font-semibold tabular-nums">{passed}</span>
+        </div>
+        <div className="flex items-center gap-2 text-[12.5px]">
+          <span className="h-[9px] w-[9px] flex-shrink-0 rounded-[2px] bg-red-500" />
+          <span className="flex-1 text-text-2">Failed / blocked</span>
+          <span className="font-mono font-semibold tabular-nums">{failed}</span>
+        </div>
+      </div>
     </div>
   );
 }

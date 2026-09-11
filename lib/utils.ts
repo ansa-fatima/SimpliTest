@@ -1,9 +1,21 @@
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { CaseStatus, Priority, Severity, TestType } from '@/types';
+import { CaseStatus, Priority, RunResult, Severity, TestType } from '@/types';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+// Reads any file as a base64 data URL — same underlying trick as the
+// avatar-upload's canvas resize, just without the image-only resize step,
+// since an attachment can be any file type.
+export function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
 }
 
 export function priorityBadge(priority: Priority): string {
@@ -41,6 +53,35 @@ export function statusBadge(status: CaseStatus): string {
   }[status];
 }
 
+// Dot + text tone -- used where a colored dot beside plain text reads
+// better than a filled pill (Priority and Last Result table columns).
+export function priorityTone(priority: Priority): { dot: string; text: string } {
+  return {
+    High: { dot: 'bg-danger', text: 'text-danger' },
+    Medium: { dot: 'bg-warning', text: 'text-warning' },
+    Low: { dot: 'bg-success', text: 'text-success' },
+  }[priority];
+}
+
+export function resultTone(result: RunResult | null | undefined): {
+  dot: string;
+  text: string;
+  label: string;
+} {
+  switch (result) {
+    case 'Passed':
+      return { dot: 'bg-success', text: 'text-success', label: 'Passed' };
+    case 'Failed':
+      return { dot: 'bg-danger', text: 'text-danger', label: 'Failed' };
+    case 'Blocked':
+      return { dot: 'bg-warning', text: 'text-warning', label: 'Blocked' };
+    case 'Skipped':
+      return { dot: 'bg-text-3', text: 'text-text-3', label: 'Skipped' };
+    default:
+      return { dot: 'bg-text-3', text: 'text-text-3', label: 'Not Run' };
+  }
+}
+
 // Deterministic pastel avatar colour for users without an uploaded picture.
 const AVATAR_COLOURS = [
   'bg-rose-100 text-rose-700',
@@ -57,6 +98,12 @@ export function avatarColour(seed: string): string {
   let hash = 0;
   for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0;
   return AVATAR_COLOURS[Math.abs(hash) % AVATAR_COLOURS.length];
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function initials(name: string): string {

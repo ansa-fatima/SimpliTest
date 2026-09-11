@@ -176,13 +176,19 @@ export function Members({
 
         {/* KPI cards — real counts only, no invented plan/seat limit. */}
         <div className="mb-5 grid grid-cols-3 gap-3">
-          <KpiCard icon="ti-users" label="Members" value={data?.counts.total ?? 0} />
-          <KpiCard icon="ti-user-check" label="Active" value={data?.counts.active ?? 0} />
+          <KpiCard icon="ti-users" label="Members" value={data?.counts.total ?? 0} tone="primary" />
+          <KpiCard
+            icon="ti-user-check"
+            label="Active"
+            value={data?.counts.active ?? 0}
+            tone="success"
+          />
           <KpiCard
             icon="ti-clock"
             label="Pending"
             value={data?.counts.pending ?? 0}
             valueClass={(data?.counts.pending ?? 0) > 0 ? 'text-amber-700' : 'text-text'}
+            tone={(data?.counts.pending ?? 0) > 0 ? 'warning' : 'neutral'}
           />
         </div>
 
@@ -777,16 +783,31 @@ function KpiCard({
   value,
   valueClass,
   small,
+  tone = 'neutral',
 }: {
   icon: string;
   label: string;
   value: number | string;
   valueClass?: string;
   small?: boolean;
+  tone?: 'neutral' | 'primary' | 'success' | 'warning';
 }) {
+  const iconTone =
+    tone === 'primary'
+      ? 'bg-primary-light text-primary'
+      : tone === 'success'
+        ? 'bg-success-bg text-success-text'
+        : tone === 'warning'
+          ? 'bg-warning-bg text-warning-text'
+          : 'bg-surface-2 text-text-3';
   return (
     <div className="flex items-start gap-3 rounded-lg border border-border bg-surface px-4 py-3">
-      <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-surface-2 text-text-3">
+      <span
+        className={cn(
+          'mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md',
+          iconTone,
+        )}
+      >
         <i className={cn('ti', icon, 'text-[16px]')} />
       </span>
       <div className="min-w-0 flex-1">

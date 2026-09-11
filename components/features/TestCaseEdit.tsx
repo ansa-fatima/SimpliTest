@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { TestCase, Priority, Severity, TestType } from '@/types';
+import { TestCase, Priority, Severity, TestType, CaseAttachment } from '@/types';
 import { api } from '@/lib/client';
+import { cn } from '@/lib/utils';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { StepEditor } from '@/components/ui/StepEditor';
+import { AttachmentsField } from '@/components/ui/AttachmentsField';
 import { Button } from '@/components/ui/Button';
 
 // Structurally matches the tree shape /api/portals returns — same duck-typed
@@ -57,6 +59,7 @@ export function TestCaseEdit({ tc, projectId, onBack, onSave }: TestCaseEditProp
   const [priority, setPriority] = useState<Priority>(tc.priority);
   const [severity, setSeverity] = useState<Severity>(tc.severity);
   const [type, setType] = useState<TestType>(tc.type);
+  const [attachments, setAttachments] = useState<CaseAttachment[]>(tc.attachments ?? []);
   const [error, setError] = useState('');
 
   // Location — Portal → Module → Suite, fetched fresh from the API. The
@@ -149,24 +152,26 @@ export function TestCaseEdit({ tc, projectId, onBack, onSave }: TestCaseEditProp
       priority,
       severity,
       type,
+      attachments,
       ...(suiteId ? { suiteId } : moduleId ? { moduleId } : { portalId }),
     });
   };
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex flex-1 flex-col overflow-hidden bg-bg">
       {/* Topbar */}
-      <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-4 py-2">
+      <div className="flex items-center gap-2 border-b border-border bg-surface px-4 py-2">
         <button
           onClick={onBack}
-          className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-slate-500 transition-colors hover:bg-slate-100"
+          className="flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-2 transition-colors hover:bg-surface-2"
         >
-          ← Back
+          <i className="ti ti-arrow-left text-[13px]" />
+          Back
         </button>
-        <div className="flex flex-1 items-center gap-1 text-xs text-slate-400">
-          {breadcrumb} / <span className="font-mono font-semibold text-slate-800">{tc.id}</span>
+        <div className="flex flex-1 items-center gap-1 text-xs text-text-3">
+          {breadcrumb} / <span className="font-mono font-semibold text-text">{tc.id}</span>
           <span
-            className="ml-1 inline-block h-2 w-2 rounded-full bg-amber-400"
+            className="ml-1 inline-block h-2 w-2 rounded-full bg-warning"
             title="Unsaved changes"
           />
         </div>
@@ -174,44 +179,153 @@ export function TestCaseEdit({ tc, projectId, onBack, onSave }: TestCaseEditProp
           Cancel
         </Button>
         <Button variant="primary" onClick={handleSave}>
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-          >
-            <path d="M2 8l5 5 7-9" />
-          </svg>
+          <i className="ti ti-check text-[13px]" />
           Save
         </Button>
       </div>
 
-      {/* Form */}
-      <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-6 py-5">
-        {/* Properties section */}
-        <div>
-          <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-            Properties
-          </p>
-          <div className="flex flex-wrap items-end gap-3">
-            {/* Case ID (readonly) */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-slate-500">Case ID</label>
+      {/* Form — same grouped-sections + rail layout as "New test case". */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-[1fr_240px]">
+        <div className="overflow-y-auto border-b border-border px-6 py-5 md:border-b-0 md:border-r">
+          <div className="flex flex-col gap-4">
+            <Field label="Title" required>
               <input
                 type="text"
-                value={tc.id}
-                readOnly
-                className="w-[90px] cursor-default rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 font-mono text-xs text-slate-400 outline-none"
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                className="w-full rounded-lg border border-border bg-surface px-3.5 py-2.5 text-[15px] font-medium text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
               />
+            </Field>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <Field label="Priority" required>
+                <SegmentedControl
+                  value={priority}
+                  onChange={v => setPriority(v as Priority)}
+                  options={[
+                    {
+                      value: 'High',
+                      label: 'High',
+                      activeClass: 'bg-pill-high-bg text-pill-high-text',
+                    },
+                    {
+                      value: 'Medium',
+                      label: 'Med',
+                      activeClass: 'bg-pill-medium-bg text-pill-medium-text',
+                    },
+                    {
+                      value: 'Low',
+                      label: 'Low',
+                      activeClass: 'bg-pill-low-bg text-pill-low-text',
+                    },
+                  ]}
+                />
+              </Field>
+              <Field label="Severity" required>
+                <SegmentedControl
+                  value={severity}
+                  onChange={v => setSeverity(v as Severity)}
+                  options={[
+                    {
+                      value: 'Critical',
+                      label: 'Critical',
+                      activeClass: 'bg-pill-high-bg text-pill-high-text',
+                    },
+                    {
+                      value: 'Major',
+                      label: 'Major',
+                      activeClass: 'bg-pill-medium-bg text-pill-medium-text',
+                    },
+                    {
+                      value: 'Minor',
+                      label: 'Minor',
+                      activeClass: 'bg-pill-low-bg text-pill-low-text',
+                    },
+                  ]}
+                />
+              </Field>
+              <Field label="Type" required>
+                <div className="flex flex-wrap gap-1">
+                  {TYPES.map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setType(t)}
+                      className={cn(
+                        'cursor-pointer rounded border px-2 py-1 text-xs transition-all',
+                        type === t
+                          ? 'border-primary bg-primary-light font-semibold text-primary-text'
+                          : 'border-border bg-surface text-text-3 hover:bg-surface-2',
+                      )}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </Field>
             </div>
 
-            {/* Portal */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-slate-500">
-                Portal <span className="text-red-500">*</span>
-              </label>
+            <div className="mt-1 rounded-xl border border-border bg-surface p-4">
+              <div className="mb-3.5 flex items-center gap-2 text-[13px] font-semibold text-text">
+                <i className="ti ti-file-text text-[15px] text-primary" />
+                Test details
+              </div>
+              <div className="flex flex-col gap-4">
+                <Field label="Description">
+                  <textarea
+                    value={desc}
+                    onChange={e => setDesc(e.target.value)}
+                    rows={2}
+                    className="w-full resize-y rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                  />
+                </Field>
+
+                <Field label="Preconditions" hint="Lines starting with - or * render as bullets">
+                  <textarea
+                    value={preconditions}
+                    onChange={e => setPreconditions(e.target.value)}
+                    rows={3}
+                    placeholder={'- User is signed in\n- Test data is loaded'}
+                    className="w-full resize-y rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                  />
+                </Field>
+
+                <Field label="Steps" required>
+                  <StepEditor steps={steps} onChange={setSteps} />
+                </Field>
+
+                <Field label="Expected result">
+                  <textarea
+                    value={expected}
+                    onChange={e => setExpected(e.target.value)}
+                    rows={2}
+                    className="w-full resize-y rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                  />
+                </Field>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-surface p-4">
+              <div className="mb-3.5 flex items-center gap-2 text-[13px] font-semibold text-text">
+                <i className="ti ti-paperclip text-[15px] text-primary" />
+                Attachments
+              </div>
+              <AttachmentsField attachments={attachments} onChange={setAttachments} />
+            </div>
+
+            {error && <p className="text-xs text-danger">{error}</p>}
+          </div>
+        </div>
+
+        {/* Right rail — Location cascade + at-a-glance facts, same split as
+            "New test case". */}
+        <div className="overflow-y-auto bg-surface-2 px-5 py-5">
+          <div className="mb-5">
+            <div className="mb-2.5 flex items-center gap-2 text-[12px] font-semibold text-text">
+              <i className="ti ti-map-pin text-[14px] text-primary" />
+              Location
+            </div>
+            <div className="flex flex-col gap-2">
               <select
                 value={portalId}
                 disabled={loadingLocation}
@@ -220,7 +334,7 @@ export function TestCaseEdit({ tc, projectId, onBack, onSave }: TestCaseEditProp
                   setModuleId('');
                   setSuiteId('');
                 }}
-                className="w-[130px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-sans text-xs text-slate-900 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs text-text outline-none focus:border-primary disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-text-3"
               >
                 <option value="">{loadingLocation ? 'Loading…' : 'Select a portal…'}</option>
                 {tree.map(p => (
@@ -229,11 +343,6 @@ export function TestCaseEdit({ tc, projectId, onBack, onSave }: TestCaseEditProp
                   </option>
                 ))}
               </select>
-            </div>
-
-            {/* Module */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-slate-500">Module</label>
               <select
                 value={moduleId}
                 disabled={loadingLocation || modules.length === 0}
@@ -241,7 +350,7 @@ export function TestCaseEdit({ tc, projectId, onBack, onSave }: TestCaseEditProp
                   setModuleId(e.target.value);
                   setSuiteId('');
                 }}
-                className="w-[130px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-sans text-xs text-slate-900 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs text-text outline-none focus:border-primary disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-text-3"
               >
                 <option value="">Attach to portal directly</option>
                 {modules.map(m => (
@@ -250,16 +359,11 @@ export function TestCaseEdit({ tc, projectId, onBack, onSave }: TestCaseEditProp
                   </option>
                 ))}
               </select>
-            </div>
-
-            {/* Suite / feature */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-slate-500">Feature</label>
               <select
                 value={suiteId}
                 disabled={loadingLocation || !mod || suiteOptions.length === 0}
                 onChange={e => setSuiteId(e.target.value)}
-                className="w-[130px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-sans text-xs text-slate-900 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs text-text outline-none focus:border-primary disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-text-3"
               >
                 <option value="">Attach to module directly</option>
                 {suiteOptions.map(s => (
@@ -269,162 +373,56 @@ export function TestCaseEdit({ tc, projectId, onBack, onSave }: TestCaseEditProp
                 ))}
               </select>
             </div>
+          </div>
 
-            {/* Priority */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-slate-500">
-                Priority <span className="text-red-500">*</span>
-              </label>
-              <SegmentedControl
-                value={priority}
-                onChange={v => setPriority(v as Priority)}
-                options={[
-                  {
-                    value: 'High',
-                    label: 'High',
-                    activeClass: 'bg-red-100 text-red-800 font-semibold',
-                  },
-                  {
-                    value: 'Medium',
-                    label: 'Med',
-                    activeClass: 'bg-amber-100 text-amber-800 font-semibold',
-                  },
-                  {
-                    value: 'Low',
-                    label: 'Low',
-                    activeClass: 'bg-green-100 text-green-800 font-semibold',
-                  },
-                ]}
-              />
+          <div>
+            <div className="mb-2.5 flex items-center gap-2 text-[12px] font-semibold text-text">
+              <i className="ti ti-info-circle text-[14px] text-primary" />
+              Details
             </div>
-
-            {/* Severity */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-slate-500">
-                Severity <span className="text-red-500">*</span>
-              </label>
-              <SegmentedControl
-                value={severity}
-                onChange={v => setSeverity(v as Severity)}
-                options={[
-                  {
-                    value: 'Critical',
-                    label: 'Critical',
-                    activeClass: 'bg-red-100 text-red-800 font-semibold',
-                  },
-                  {
-                    value: 'Major',
-                    label: 'Major',
-                    activeClass: 'bg-amber-100 text-amber-800 font-semibold',
-                  },
-                  {
-                    value: 'Minor',
-                    label: 'Minor',
-                    activeClass: 'bg-green-100 text-green-800 font-semibold',
-                  },
-                ]}
-              />
-            </div>
-
-            {/* Type */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold text-slate-500">
-                Type <span className="text-red-500">*</span>
-              </label>
-              <div className="flex flex-wrap gap-1">
-                {TYPES.map(t => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setType(t)}
-                    className={`cursor-pointer rounded border px-2 py-1 text-xs transition-all ${type === t ? 'border-blue-500 bg-indigo-50 font-semibold text-blue-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}
-                  >
-                    {t}
-                  </button>
-                ))}
+            <div className="flex flex-col text-[12px] text-text-2">
+              <div className="flex items-center justify-between border-b border-border py-2">
+                <span>Case ID</span>
+                <span className="font-mono text-[11px] text-text-3">{tc.id}</span>
+              </div>
+              <div className="flex items-center justify-between border-b border-border py-2">
+                <span>Created by</span>
+                <span className="font-medium text-text">{tc.author || '—'}</span>
+              </div>
+              <div className="flex items-center justify-between border-b border-border py-2">
+                <span>Created</span>
+                <span className="text-text-3">{tc.created}</span>
+              </div>
+              <div className="flex items-center justify-between py-2">
+                <span>Updated</span>
+                <span className="text-text-3">{tc.updatedFull}</span>
               </div>
             </div>
           </div>
         </div>
-
-        <hr className="border-slate-100" />
-
-        {/* Title */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-slate-600">
-            Title <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-sans text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-          />
-        </div>
-
-        {/* Description */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-slate-600">Description</label>
-          <textarea
-            value={desc}
-            onChange={e => setDesc(e.target.value)}
-            rows={2}
-            className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-sans text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-          />
-        </div>
-
-        {/* Preconditions — what must already be true before running this case. */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-slate-600">
-            Preconditions <span className="font-normal text-slate-400">(optional)</span>
-          </label>
-          <textarea
-            value={preconditions}
-            onChange={e => setPreconditions(e.target.value)}
-            rows={3}
-            placeholder={'- User is signed in\n- Test data is loaded\n- Feature flag X is enabled'}
-            className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-sans text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-          />
-          <p className="text-[10.5px] text-slate-400">
-            Lines starting with <code className="rounded bg-slate-100 px-1">- </code> or{' '}
-            <code className="rounded bg-slate-100 px-1">* </code> render as bullets in the view.
-          </p>
-        </div>
-
-        {/* Steps */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-slate-600">
-            Steps <span className="text-red-500">*</span>
-          </label>
-          <StepEditor steps={steps} onChange={setSteps} />
-        </div>
-
-        {/* Expected */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-slate-600">Expected result</label>
-          <textarea
-            value={expected}
-            onChange={e => setExpected(e.target.value)}
-            rows={2}
-            className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 font-sans text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-          />
-        </div>
-
-        {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
-            {error}
-          </div>
-        )}
-
-        <hr className="border-slate-100" />
-
-        {/* Meta */}
-        <div className="flex items-center gap-5">
-          <span className="text-xs text-slate-400">📅 Created {tc.created}</span>
-          <span className="text-xs text-slate-400">👤 {tc.author}</span>
-          <span className="text-xs text-slate-400">✏️ Updated {tc.updatedFull}</span>
-        </div>
       </div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  required,
+  hint,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 flex-1 flex-col gap-1">
+      <label className="text-[11px] font-semibold text-text-2">
+        {label} {required && <span className="text-danger">*</span>}
+        {hint && <span className="ml-1.5 font-normal normal-case text-text-3">{hint}</span>}
+      </label>
+      {children}
     </div>
   );
 }

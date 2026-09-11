@@ -1,27 +1,16 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { Page, Project } from '@/types';
+import { Page } from '@/types';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/Logo';
-import { SessionUser } from '@/hooks/useStore';
-import { api } from '@/lib/client';
-import { useTheme } from '@/lib/theme';
 
 interface SidebarProps {
   page: Page;
-  user: SessionUser | null;
-
-  // Workspace switcher (kept as "project" in the DB).
-  projects: Project[];
-  currentProjectId: string | null;
-  onSwitchProject: (id: string) => void;
-  onCreateProject: (name: string) => void;
-  onDeleteProject: (id: string) => void;
 
   // QA Workspace nav
   onShowDashboard: () => void;
   onShowTestCases: () => void;
+  onShowTestRunsBoard: () => void;
   onShowTestRuns: () => void;
   onShowPlans: () => void;
   onShowReports: () => void;
@@ -30,37 +19,31 @@ interface SidebarProps {
   onShowPlatforms: () => void;
   onShowMembers: () => void;
   onShowSettings: () => void;
-  /** Opens the per-user profile page (avatar / name / password). */
-  onShowProfile: () => void;
-
-  onLogout: () => void;
 }
 
 // Page-buckets used to decide which top-level nav item is "active".
 const TESTCASE_PAGES: Page[] = ['list', 'view', 'edit'];
-const TESTRUN_PAGES: Page[] = ['cycles', 'cycle'];
+const TESTRUNS_BOARD_PAGES: Page[] = ['testRuns'];
+const TESTRUN_PAGES: Page[] = ['cycles', 'cycleOverview', 'cycle'];
 
+// Slim icon-only rail -- everything workspace-identity-related (which
+// project, who's signed in, theme) now lives in the Topbar above; this rail
+// is purely "which page", same split as the reference layout.
 export function Sidebar({
   page,
-  user,
-  projects,
-  currentProjectId,
-  onSwitchProject,
-  onCreateProject,
-  onDeleteProject,
   onShowDashboard,
   onShowTestCases,
+  onShowTestRunsBoard,
   onShowTestRuns,
   onShowPlans,
   onShowReports,
   onShowPlatforms,
   onShowMembers,
   onShowSettings,
-  onShowProfile,
-  onLogout,
 }: SidebarProps) {
   const onDashboard = page === 'dashboard';
   const onTestCases = TESTCASE_PAGES.includes(page);
+  const onTestRunsBoard = TESTRUNS_BOARD_PAGES.includes(page);
   const onTestRuns = TESTRUN_PAGES.includes(page);
   const onPlans = page === 'plans';
   const onReports = page === 'reports';
@@ -68,560 +51,109 @@ export function Sidebar({
   const onMembers = page === 'members';
   const onSettings = page === 'settings';
 
-  // Count shown next to the Test cases nav item. Refetched when the active project changes.
-  const [counts, setCounts] = useState<{ cases: number }>({ cases: 0 });
-  useEffect(() => {
-    if (!currentProjectId) {
-      setCounts({ cases: 0 });
-      return;
-    }
-    (async () => {
-      try {
-        const tc = await api.get<{ total: number }>(
-          `/api/test-cases?projectId=${currentProjectId}&pageSize=1`,
-        );
-        setCounts({ cases: tc.total ?? 0 });
-      } catch (e) {
-        console.error('[sidebar counts]', e);
-      }
-    })();
-  }, [currentProjectId, page]);
-
   return (
-    <aside className="flex w-[224px] min-w-[224px] flex-col border-r border-slate-200 bg-white">
-      {/* Brand */}
-      <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
-        <Logo size={28} />
-        <span className="text-[15px] font-semibold tracking-tight text-slate-900">Simplitest</span>
-      </div>
+    <aside className="flex w-[72px] min-w-[72px] flex-col items-center gap-1 border-r border-border bg-surface py-3">
+      <button
+        type="button"
+        onClick={onShowDashboard}
+        title="Simplitest"
+        aria-label="Simplitest — go to Dashboard"
+        className="mb-2 flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-[10px] bg-primary-light transition-colors hover:bg-primary/20"
+      >
+        <Logo size={24} />
+      </button>
+      <div className="mb-1.5 h-px w-8 flex-shrink-0 bg-border" />
 
-      {/* Workspace switcher */}
-      <div className="px-3 pb-2">
-        <ProjectSwitcher
-          projects={projects}
-          current={projects.find(p => p.id === currentProjectId) ?? null}
-          onSwitch={onSwitchProject}
-          onCreate={onCreateProject}
-          onDelete={onDeleteProject}
-        />
-      </div>
+      <IconNavItem
+        active={onDashboard}
+        onClick={onShowDashboard}
+        icon={<DashboardIcon />}
+        label="Dashboard"
+      />
+      <IconNavItem
+        active={onTestCases}
+        onClick={onShowTestCases}
+        icon={<TestCasesIcon />}
+        label="Test cases"
+      />
+      <IconNavItem
+        active={onTestRunsBoard}
+        onClick={onShowTestRunsBoard}
+        icon={<PlayIcon />}
+        label="Test Runs"
+      />
+      <IconNavItem
+        active={onTestRuns}
+        onClick={onShowTestRuns}
+        icon={<TableIcon />}
+        label="Test Cycles"
+      />
+      <IconNavItem
+        active={onPlans}
+        onClick={onShowPlans}
+        icon={<ClipboardIcon />}
+        label="Test plans"
+      />
+      <IconNavItem
+        active={onReports}
+        onClick={onShowReports}
+        icon={<ChartIcon />}
+        label="Reports"
+      />
 
-      {/* QA WORKSPACE */}
-      <SectionLabel>QA Workspace</SectionLabel>
-      <div className="flex flex-col gap-0.5 px-2">
-        <NavItem
-          active={onDashboard}
-          onClick={onShowDashboard}
-          icon={<DashboardIcon />}
-          label="Dashboard"
-        />
-        <NavItem
-          active={onTestCases}
-          onClick={onShowTestCases}
-          icon={<TestCasesIcon />}
-          label="Test cases"
-          badge={counts.cases > 0 ? formatNumber(counts.cases) : undefined}
-        />
-        <NavItem
-          active={onTestRuns}
-          onClick={onShowTestRuns}
-          icon={<PlayIcon />}
-          label="Test runs"
-        />
-        <NavItem
-          active={onPlans}
-          onClick={onShowPlans}
-          icon={<ClipboardIcon />}
-          label="Test plans"
-        />
-        <NavItem active={onReports} onClick={onShowReports} icon={<ChartIcon />} label="Reports" />
-      </div>
+      <div className="my-1.5 h-px w-8 flex-shrink-0 bg-border" />
 
-      {/* CONFIGURATION */}
-      <SectionLabel>Configuration</SectionLabel>
-      <div className="flex flex-col gap-0.5 px-2">
-        <NavItem
-          active={onPlatforms}
-          onClick={onShowPlatforms}
-          icon={<LayersIcon />}
-          label="Platforms"
-        />
-        <NavItem active={onMembers} onClick={onShowMembers} icon={<PeopleIcon />} label="Members" />
-        <NavItem active={onSettings} onClick={onShowSettings} icon={<CogIcon />} label="Settings" />
-      </div>
-
-      {/* spacer */}
-      <div className="flex-1" />
-
-      {/* Account block */}
-      {user && <AccountBlock user={user} onLogout={onLogout} onShowProfile={onShowProfile} />}
-
-      {/* Theme toggle — flips light/dark via data-theme on <html>, persisted in localStorage. */}
-      <div className="px-3 pb-3 pt-1">
-        <LightModeToggle />
-      </div>
+      <IconNavItem
+        active={onPlatforms}
+        onClick={onShowPlatforms}
+        icon={<LayersIcon />}
+        label="Platforms"
+      />
+      <IconNavItem
+        active={onMembers}
+        onClick={onShowMembers}
+        icon={<PeopleIcon />}
+        label="Members"
+      />
+      <IconNavItem
+        active={onSettings}
+        onClick={onShowSettings}
+        icon={<CogIcon />}
+        label="Settings"
+      />
     </aside>
   );
 }
 
-// ─── Section label ───────────────────────────────────────────
+// ─── Icon nav item ────────────────────────────────────────────
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-      {children}
-    </div>
-  );
-}
-
-// ─── NavItem ────────────────────────────────────────────────
-
-function NavItem({
+function IconNavItem({
   active,
   onClick,
   icon,
   label,
-  badge,
 }: {
   active: boolean;
   onClick: () => void;
   icon: React.ReactNode;
   label: string;
-  badge?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      title={label}
+      aria-label={label}
       className={cn(
-        'group flex items-center gap-2.5 rounded-[7px] px-2 py-1.5 text-[13px] transition-colors',
+        'group relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-[10px] transition-colors',
         active
-          ? 'bg-white font-medium text-slate-900 shadow-[0_1px_2px_rgba(0,0,0,0.06),0_0_0_1px_rgba(0,0,0,0.06)]'
-          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
+          ? 'bg-primary-light text-primary-text'
+          : 'text-text-3 hover:bg-surface-2 hover:text-text',
       )}
     >
-      <span
-        className={cn(
-          'flex h-4 w-4 flex-shrink-0 items-center justify-center',
-          active ? 'text-slate-900' : 'text-slate-400 group-hover:text-slate-700',
-        )}
-      >
-        {icon}
-      </span>
-      <span className="flex-1 text-left">{label}</span>
-      {badge !== undefined && (
-        <span
-          className={cn(
-            'rounded text-[11px] tabular-nums',
-            active ? 'text-slate-400' : 'text-slate-400',
-          )}
-        >
-          {badge}
-        </span>
-      )}
+      {active && <span className="absolute inset-y-2 left-0 w-[3px] rounded-r-[3px] bg-primary" />}
+      <span className="flex h-[18px] w-[18px] items-center justify-center">{icon}</span>
     </button>
-  );
-}
-
-// ─── Account block with overflow menu ────────────────────────
-
-function AccountBlock({
-  user,
-  onLogout,
-  onShowProfile,
-}: {
-  user: SessionUser;
-  onLogout: () => void;
-  onShowProfile: () => void;
-}) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [menuOpen]);
-
-  return (
-    <div ref={ref} className="relative mt-2 border-t border-slate-200 px-3 pt-3">
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onShowProfile}
-          title="Open your profile"
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md p-0.5 text-left transition-colors hover:bg-slate-50"
-        >
-          {user.avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={user.avatarUrl}
-              alt={user.name || user.username}
-              className="h-8 w-8 flex-shrink-0 rounded-full object-cover"
-            />
-          ) : (
-            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-rose-100 text-[11px] font-semibold text-rose-700">
-              {initials(user.name || user.username)}
-            </span>
-          )}
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[12.5px] font-semibold text-slate-900">
-              {user.name || user.username}
-            </p>
-            <p className="truncate text-[11px] text-slate-500">{roleLabel(user.role)}</p>
-          </div>
-        </button>
-        <button
-          type="button"
-          onClick={() => setMenuOpen(o => !o)}
-          className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-          title="Account menu"
-        >
-          <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
-            <circle cx="4" cy="8" r="1.25" />
-            <circle cx="8" cy="8" r="1.25" />
-            <circle cx="12" cy="8" r="1.25" />
-          </svg>
-        </button>
-      </div>
-
-      {menuOpen && (
-        <div className="absolute bottom-[calc(100%-6px)] left-3 right-3 z-30 rounded-lg border border-slate-200 bg-white py-1 shadow-[0_4px_24px_-4px_rgba(28,25,23,0.16)]">
-          <MenuRow
-            icon={
-              <svg
-                className="h-3.5 w-3.5"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <circle cx="8" cy="5.5" r="2.5" />
-                <path d="M3 13c0-2.5 2.5-4.5 5-4.5s5 2 5 4.5" />
-              </svg>
-            }
-            label={user.email}
-            subtle
-          />
-          <hr className="my-1 border-slate-100" />
-          <MenuRow
-            icon={
-              <svg
-                className="h-3.5 w-3.5"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <circle cx="8" cy="5.5" r="2.5" />
-                <path d="M3 13c0-2.5 2.5-4.5 5-4.5s5 2 5 4.5" />
-              </svg>
-            }
-            label="Your profile"
-            onClick={() => {
-              setMenuOpen(false);
-              onShowProfile();
-            }}
-          />
-          <MenuRow
-            icon={
-              <svg
-                className="h-3.5 w-3.5"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  d="M8 1v6m0 0l-3-2m3 2l3-2M2 11l6 4 6-4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            }
-            label="Keyboard shortcuts"
-            comingSoon
-          />
-          <hr className="my-1 border-slate-100" />
-          <MenuRow
-            icon={
-              <svg
-                className="h-3.5 w-3.5"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3M11 11l3-3-3-3M14 8H6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            }
-            label="Sign out"
-            danger
-            onClick={() => {
-              setMenuOpen(false);
-              onLogout();
-            }}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MenuRow({
-  icon,
-  label,
-  onClick,
-  danger,
-  subtle,
-  comingSoon,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  onClick?: () => void;
-  danger?: boolean;
-  subtle?: boolean;
-  comingSoon?: boolean;
-}) {
-  const disabled = subtle || comingSoon;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={comingSoon ? 'Coming soon' : undefined}
-      className={cn(
-        'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] transition-colors',
-        disabled && 'cursor-default',
-        subtle && 'text-slate-400',
-        comingSoon && !subtle && 'text-slate-400',
-        danger && 'text-red-600 hover:bg-red-50',
-        !disabled && !danger && 'text-slate-700 hover:bg-slate-50',
-      )}
-    >
-      <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">{icon}</span>
-      <span className="flex-1 truncate">{label}</span>
-      {comingSoon && (
-        <span className="rounded bg-slate-100 px-1.5 py-px text-[9px] font-normal uppercase tracking-wider text-slate-400">
-          soon
-        </span>
-      )}
-    </button>
-  );
-}
-
-// ─── Light mode toggle ──────────────────────────────────────
-
-function LightModeToggle() {
-  const { theme, toggle } = useTheme();
-  const isDark = theme === 'dark';
-  return (
-    <button
-      type="button"
-      onClick={toggle}
-      title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-      className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border bg-surface py-1.5 text-[12px] font-medium text-text-2 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-surface-2 hover:text-text"
-    >
-      {isDark ? (
-        // Moon for dark mode
-        <svg
-          className="h-3.5 w-3.5 text-indigo-300"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.6}
-        >
-          <path
-            d="M13 9.5A5.5 5.5 0 0 1 6.5 3 5.5 5.5 0 1 0 13 9.5Z"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      ) : (
-        // Sun for light mode
-        <svg
-          className="h-3.5 w-3.5 text-amber-500"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.6}
-        >
-          <circle cx="8" cy="8" r="2.6" />
-          <path
-            d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M3 13l1-1M12 4l1-1"
-            strokeLinecap="round"
-          />
-        </svg>
-      )}
-      {isDark ? 'Dark mode' : 'Light mode'}
-    </button>
-  );
-}
-
-// ─── Workspace / project switcher ────────────────────────────
-
-interface ProjectSwitcherProps {
-  projects: Project[];
-  current: Project | null;
-  onSwitch: (id: string) => void;
-  onCreate: (name: string) => void;
-  onDelete: (id: string) => void;
-}
-
-function ProjectSwitcher({
-  projects,
-  current,
-  onSwitch,
-  onCreate,
-  onDelete,
-}: ProjectSwitcherProps) {
-  const [open, setOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState('');
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const submit = () => {
-    if (draft.trim()) onCreate(draft.trim());
-    setCreating(false);
-    setDraft('');
-    setOpen(false);
-  };
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        className="flex w-full cursor-pointer items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-left transition-colors hover:bg-slate-50"
-      >
-        <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded bg-indigo-100 text-[9px] font-bold uppercase text-indigo-700">
-          {workspaceInitials(current?.name)}
-        </span>
-        <span className="flex-1 truncate text-[12.5px] font-semibold text-slate-800">
-          {current?.name ?? 'No workspace'}
-        </span>
-        <svg
-          className="h-3 w-3 text-slate-400"
-          viewBox="0 0 12 12"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.5}
-        >
-          <path d="M3 4.5l3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="absolute left-0 right-0 z-30 mt-1 max-h-[280px] overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-          <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-            Switch workspace
-          </p>
-          {projects.map(p => (
-            <div
-              key={p.id}
-              className={cn(
-                'group/pr flex items-center gap-1 px-1 py-0.5',
-                p.id === current?.id && 'bg-indigo-50',
-              )}
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  onSwitch(p.id);
-                  setOpen(false);
-                }}
-                className={cn(
-                  'flex flex-1 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors',
-                  p.id === current?.id
-                    ? 'font-semibold text-blue-700'
-                    : 'text-slate-700 hover:bg-slate-50',
-                )}
-              >
-                <span className="w-3 text-blue-600">{p.id === current?.id ? '✓' : ''}</span>
-                <span className="flex-1 truncate text-left">{p.name}</span>
-              </button>
-              {projects.length > 1 && (
-                <button
-                  type="button"
-                  title="Delete workspace"
-                  onClick={() => {
-                    if (
-                      confirm(
-                        `Permanently delete workspace "${p.name}" and ALL its data?\n\nThis cannot be undone.`,
-                      )
-                    ) {
-                      onDelete(p.id);
-                      setOpen(false);
-                    }
-                  }}
-                  className="mr-1 cursor-pointer rounded p-1 text-slate-400 opacity-0 transition-all hover:bg-red-50 hover:text-red-600 group-hover/pr:opacity-100"
-                >
-                  <svg
-                    className="h-3 w-3"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={1.5}
-                  >
-                    <path d="M2 4h12M5 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1M10 8v5M6 8v5M3 4l1 9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-9" />
-                  </svg>
-                </button>
-              )}
-            </div>
-          ))}
-
-          <hr className="my-1 border-slate-100" />
-
-          {creating ? (
-            <div className="px-2 py-1">
-              <input
-                autoFocus
-                value={draft}
-                onChange={e => setDraft(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') submit();
-                  if (e.key === 'Escape') {
-                    setCreating(false);
-                    setDraft('');
-                  }
-                }}
-                onBlur={submit}
-                placeholder="Workspace name…"
-                className="w-full rounded border border-blue-400 bg-white px-2 py-1 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setCreating(true);
-                setDraft('');
-              }}
-              className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-xs text-blue-600 hover:bg-blue-50"
-            >
-              <span className="text-sm">+</span> New workspace
-            </button>
-          )}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -653,6 +185,17 @@ function PlayIcon() {
   return (
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
       <path d="M5 3l7 5-7 5V3z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function TableIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <line x1="2" y1="6.5" x2="14" y2="6.5" />
+      <line x1="6" y1="6.5" x2="6" y2="13" />
+      <line x1="10" y1="6.5" x2="10" y2="13" />
     </svg>
   );
 }
@@ -707,35 +250,4 @@ function CogIcon() {
       />
     </svg>
   );
-}
-
-// ─── tiny helpers ───────────────────────────────────────────
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-function workspaceInitials(name?: string): string {
-  if (!name) return '?';
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
-
-function roleLabel(role: string): string {
-  switch (role) {
-    case 'SuperAdmin':
-      return 'Super Admin';
-    case 'QAManager':
-      return 'QA Manager';
-    default:
-      return role;
-  }
-}
-
-function formatNumber(n: number): string {
-  return n.toLocaleString('en-US');
 }

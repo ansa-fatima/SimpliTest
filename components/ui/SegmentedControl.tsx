@@ -14,19 +14,21 @@ interface SegmentedControlProps {
   onChange: (value: string) => void;
 }
 
+// Shared by NewTestCaseModal and TestCaseEdit — one control, one place to
+// fix if its styling ever needs to change.
 export function SegmentedControl({ options, value, onChange }: SegmentedControlProps) {
   return (
-    <div className="flex overflow-hidden rounded-lg border border-slate-200">
-      {options.map((opt, i) => (
+    <div className="flex overflow-hidden rounded-lg border border-border">
+      {options.map(opt => (
         <button
           key={opt.value}
           type="button"
           onClick={() => onChange(opt.value)}
           className={cn(
-            'cursor-pointer border-r border-slate-200 px-2.5 py-1 text-xs font-medium transition-all last:border-r-0',
+            'flex-1 px-2.5 py-1.5 text-xs transition-colors',
             value === opt.value
-              ? opt.activeClass || 'bg-blue-50 font-semibold text-blue-700'
-              : 'bg-white text-slate-500 hover:bg-slate-50',
+              ? `font-semibold ${opt.activeClass || 'bg-primary-light text-primary-text'}`
+              : 'bg-surface text-text-3 hover:bg-surface-2',
           )}
         >
           {opt.label}

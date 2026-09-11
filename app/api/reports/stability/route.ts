@@ -1,5 +1,7 @@
 import { prisma } from '@/lib/db';
 import { ok, serverError } from '@/lib/api';
+import { parsePeriodParams } from '@/lib/period';
+import { DataPoint, pointFromRun, pointFromQuickLog, stats } from '@/lib/stability';
 
 // GET /api/reports/stability
 //   ?projectId=...
@@ -19,48 +21,10 @@ import { ok, serverError } from '@/lib/api';
 // Each data point also carries its source cycleId + a label, so the UI can
 // let a user click through from a stat straight to the underlying log/run.
 
-type DataPoint = {
-  pass: boolean;
-  // 0–1 credit this point contributes to the pass rate. Binary (0 or 1) for
-  // a test case run, but a tracked quick log gets partial credit for partial
-  // resolution — 6 of 8 issues done reads as 75%, not a flat 0% just because
-  // it isn't fully resolved yet.
-  score: number;
-  ts: Date;
-  cycleId: string;
-  cycleName: string;
-  kind: 'quicklog' | 'caserun';
-  label: string;
-  detail: string;
-};
-
-function stats(points: DataPoint[]) {
-  const total = points.length;
-  // "Passed"/"failed" stay binary counts (how many points are fully clean) —
-  // it's passRate that's now the average of each point's partial-credit
-  // score, so a module with several half-resolved quick logs reads as
-  // meaningfully better than 0% instead of just "failed".
-  const passed = points.filter(p => p.pass).length;
-  const failed = total - passed;
-  const passRate =
-    total === 0 ? 0 : Math.round((points.reduce((sum, p) => sum + p.score, 0) / total) * 100);
-  const label: 'Stable' | 'At Risk' | 'Unstable' | 'No data' =
-    total === 0 ? 'No data' : passRate >= 90 ? 'Stable' : passRate >= 70 ? 'At Risk' : 'Unstable';
-  const lastActivity = total === 0 ? null : new Date(Math.max(...points.map(p => p.ts.getTime())));
-
-  // Trend: compare the average score of the earlier half of data points to
-  // the later half. Needs at least 4 points to say anything meaningful.
-  let trend: 'up' | 'down' | 'flat' = 'flat';
-  if (total >= 4) {
-    const sorted = [...points].sort((a, b) => a.ts.getTime() - b.ts.getTime());
-    const mid = Math.floor(sorted.length / 2);
-    const rateOf = (arr: DataPoint[]) =>
-      arr.length === 0 ? 0 : (arr.reduce((sum, p) => sum + p.score, 0) / arr.length) * 100;
-    const diff = rateOf(sorted.slice(mid)) - rateOf(sorted.slice(0, mid));
-    trend = diff >= 5 ? 'up' : diff <= -5 ? 'down' : 'flat';
-  }
-
-  const logs = [...points]
+// Per-log drill-down list — Stability-report-specific (Dashboard's shared
+// `stats()` doesn't need this, so it stays local rather than in lib/stability).
+function buildLogs(points: DataPoint[]) {
+  return [...points]
     .sort((a, b) => b.ts.getTime() - a.ts.getTime())
     .map(p => ({
       cycleId: p.cycleId,
@@ -72,8 +36,6 @@ function stats(points: DataPoint[]) {
       score: p.score,
       ts: p.ts.toISOString(),
     }));
-
-  return { total, passed, failed, passRate, label, trend, lastActivity, logs };
 }
 
 // Sort worst-first (lowest pass rate), pushing "No data" rows to the bottom —
@@ -89,11 +51,32 @@ export async function GET(req: Request) {
   try {
     const sp = new URL(req.url).searchParams;
     const projectId = sp.get('projectId') || undefined;
+    const { period, sprintOffset, start: periodStart, end: periodEnd } = parsePeriodParams(sp);
+
+    // Scope filters — Portal and Module narrow the DB query itself (cheap,
+    // and safe since neither one nests). Suite (Feature) can't be filtered
+    // at this level: suites nest arbitrarily, and a suite's own rollup needs
+    // every descendant still present to walk, so it's applied after — see
+    // targetSuiteRow below. Tester isn't a Stability filter — module/feature
+    // health is meant to read the same no matter who's looking; it lives on
+    // Cycle History instead, where "who did this" is actually the point.
+    const portalIdFilter = sp.get('portalId') || undefined;
+    const moduleIdFilter = sp.get('moduleId') || undefined;
+    const suiteIdFilter = sp.get('suiteId') || undefined;
 
     const [portals, runs, quickLogs] = await Promise.all([
       prisma.portal.findMany({
-        where: projectId ? { projectId } : undefined,
-        include: { modules: { include: { suites: true }, orderBy: { name: 'asc' } } },
+        where: {
+          ...(projectId ? { projectId } : {}),
+          ...(portalIdFilter ? { id: portalIdFilter } : {}),
+        },
+        include: {
+          modules: {
+            where: moduleIdFilter ? { id: moduleIdFilter } : undefined,
+            include: { suites: true },
+            orderBy: { name: 'asc' },
+          },
+        },
         orderBy: { name: 'asc' },
       }),
       prisma.testRun.findMany({
@@ -141,69 +124,20 @@ export async function GET(req: Request) {
     };
 
     for (const r of runs) {
-      const point: DataPoint = {
-        pass: r.result === 'Passed',
-        score: r.result === 'Passed' ? 1 : 0,
-        ts: r.executedAt ?? r.updatedAt,
-        cycleId: r.cycleId,
-        cycleName: r.cycle.name,
-        kind: 'caserun',
-        label: r.testCase.title,
-        detail: `${r.result} · ${r.cycle.name}`,
-      };
+      const point = pointFromRun(r);
+      if (periodStart && point.ts < periodStart) continue;
+      if (periodEnd && point.ts >= periodEnd) continue;
       if (r.testCase.suiteId) pushTo(suitePoints, r.testCase.suiteId, point);
       else if (r.testCase.moduleId) pushTo(moduleDirectPoints, r.testCase.moduleId, point);
     }
     for (const log of quickLogs) {
       if (!log.scopeId) continue;
-      // Done/Remaining are only meaningful once someone has actually filled
-      // them in (e.g. re-opening this cycle after a retest) — untouched,
-      // both default to 0, which must NOT read as "nothing remains". Once
-      // they ARE tracked, they're the live truth: a cycle that originally
-      // found 8 issues but was edited to 0 remaining is a genuine pass now,
-      // even though issueCount (what was found) still says 8. Untracked
-      // cycles keep the original "found nothing" rule.
-      const done = log.doneCount ?? 0;
-      const remaining = log.remainingCount ?? 0;
-      const tracked = done > 0 || remaining > 0;
-      const issuesOpen = tracked ? remaining > 0 : (log.issueCount ?? 0) > 0;
-      // A log can separately record real Failed/Blocked test-case results
-      // even once its own issue tracking says fully resolved — those still
-      // count as a fail here, same rule the Quick Log Summary modal already
-      // uses. Without this, a log with 3 failed cases but "issues: done"
-      // read as a Pass here while its own summary called it Failed.
-      const hasCaseFailure = (log.failedCount ?? 0) > 0 || (log.blockedCount ?? 0) > 0;
-      const pass = !issuesOpen && !hasCaseFailure;
-      // A tracked log (and no case failure) gets partial credit for partial
-      // resolution (6 of 8 done = 0.75) instead of an all-or-nothing 0/1 —
-      // that's the whole point of tracking Done/Remaining rather than just
-      // Pass/Fail.
-      const score = tracked && !hasCaseFailure ? done / (done + remaining) : pass ? 1 : 0;
-      let detail: string;
-      if (pass) {
-        detail = tracked ? `Pass · ${done} issue${done === 1 ? '' : 's'} resolved` : 'Pass';
-      } else if (hasCaseFailure) {
-        detail = `Fail · ${log.failedCount ?? 0} failed, ${log.blockedCount ?? 0} blocked`;
-      } else if (tracked) {
-        const total = done + remaining;
-        detail = `Fail · ${remaining} of ${total} issue${total === 1 ? '' : 's'} still open`;
-      } else {
-        detail = `Fail · ${log.issueCount} issue${log.issueCount === 1 ? '' : 's'}`;
-      }
-      const point: DataPoint = {
-        pass,
-        score,
-        ts: log.completedAt ?? log.createdAt,
-        cycleId: log.id,
-        cycleName: log.name,
-        kind: 'quicklog',
-        label: log.name,
-        detail,
-      };
+      const point = pointFromQuickLog(log);
+      if (periodStart && point.ts < periodStart) continue;
+      if (periodEnd && point.ts >= periodEnd) continue;
       if (log.scopeType === 'Suite') pushTo(suitePoints, log.scopeId, point);
       else if (log.scopeType === 'Module') pushTo(moduleDirectPoints, log.scopeId, point);
     }
-
     let stable = 0,
       atRisk = 0,
       unstable = 0,
@@ -211,7 +145,7 @@ export async function GET(req: Request) {
     const allPoints: DataPoint[] = [];
 
     const portalRows = portals.map(p => {
-      const moduleRows = p.modules.map(m => {
+      const moduleRowsRaw = p.modules.map(m => {
         // Nested suites: build parent → children so a suite's row rolls up
         // its own descendants, not just its direct data.
         const childrenOf = new Map<string, string[]>();
@@ -228,14 +162,33 @@ export async function GET(req: Request) {
         const suiteRows = m.suites.map(s => {
           const ids = collectDescendants(s.id);
           const points = ids.flatMap(id => suitePoints.get(id) ?? []);
-          return { id: s.id, name: s.name, parentId: s.parentId, ...stats(points) };
+          return {
+            id: s.id,
+            name: s.name,
+            parentId: s.parentId,
+            ...stats(points),
+            logs: buildLogs(points),
+          };
         });
 
-        // Module rollup = its own direct cases/logs + every suite under it (any depth).
-        const modulePoints = [
-          ...(moduleDirectPoints.get(m.id) ?? []),
-          ...m.suites.flatMap(s => suitePoints.get(s.id) ?? []),
-        ];
+        // A specific Feature (suite) selected: that suite's own rollup
+        // represents this module everywhere below — row list AND the KPI
+        // totals — not the whole module diluted by its siblings. "Show me
+        // just this feature" should mean exactly that. Suite filtering
+        // can't happen earlier (in the DB query) because suites nest
+        // arbitrarily and collectDescendants needs every sibling present
+        // to walk correctly — it's applied here, after rollups are built.
+        const targetSuiteRow = suiteIdFilter
+          ? suiteRows.find(s => s.id === suiteIdFilter)
+          : undefined;
+        if (suiteIdFilter && !targetSuiteRow) return null; // this module doesn't contain the selected feature
+
+        const modulePoints = targetSuiteRow
+          ? collectDescendants(suiteIdFilter!).flatMap(id => suitePoints.get(id) ?? [])
+          : [
+              ...(moduleDirectPoints.get(m.id) ?? []),
+              ...m.suites.flatMap(s => suitePoints.get(s.id) ?? []),
+            ];
         allPoints.push(...modulePoints);
         const moduleStats = stats(modulePoints);
         if (moduleStats.label === 'Stable') stable++;
@@ -247,9 +200,13 @@ export async function GET(req: Request) {
           id: m.id,
           name: m.name,
           ...moduleStats,
-          suites: suiteRows.sort((a, b) => riskRank(a) - riskRank(b)),
+          logs: buildLogs(modulePoints),
+          suites: (targetSuiteRow ? [targetSuiteRow] : suiteRows).sort(
+            (a, b) => riskRank(a) - riskRank(b),
+          ),
         };
       });
+      const moduleRows = moduleRowsRaw.filter((m): m is NonNullable<typeof m> => m !== null);
 
       return {
         id: p.id,
@@ -261,13 +218,24 @@ export async function GET(req: Request) {
 
     const overall = stats(allPoints);
 
+    // Once Module or Feature narrows things down, a portal with zero
+    // surviving modules isn't telling you anything real about that portal
+    // — it's just noise from the filter, unlike an actually-empty portal in
+    // the unfiltered view, which is worth showing as "No modules".
+    const portalRowsToReturn =
+      moduleIdFilter || suiteIdFilter ? portalRows.filter(p => p.modules.length > 0) : portalRows;
+
     return ok({
-      portals: portalRows,
+      portals: portalRowsToReturn,
       totals: {
         totalDataPoints: overall.total,
         overallPassRate: overall.passRate,
         modules: { stable, atRisk, unstable, noData },
       },
+      period,
+      periodStart: periodStart ? periodStart.toISOString() : null,
+      periodEnd: periodEnd ? periodEnd.toISOString() : null,
+      sprintOffset,
     });
   } catch (e) {
     return serverError(e);

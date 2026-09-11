@@ -14,7 +14,7 @@ type BulkBody =
       patch: Partial<Record<'priority' | 'severity' | 'type' | 'author', string>>;
     }
   | { action: 'move'; ids: string[]; targetSuiteId?: string; targetFeatureId?: string }
-  | { action: 'duplicate'; ids: string[] }
+  | { action: 'duplicate'; ids: string[]; targetSuiteId?: string }
   | { action: 'reorder'; ids: string[] };
 
 // POST /api/test-cases/bulk
@@ -75,6 +75,17 @@ export async function POST(req: Request) {
       case 'duplicate': {
         const sources = await prisma.testCase.findMany({ where: { id: { in: body.ids } } });
         if (sources.length === 0) return ok({ created: 0 });
+
+        // No target -- copy stays exactly where the source lives (portal,
+        // module, or suite, whichever it's actually attached to). A target
+        // always means "attach the copy to this feature", same as `move`.
+        let target: { portalId: null; moduleId: null; suiteId: string } | null = null;
+        if (body.targetSuiteId) {
+          const suite = await prisma.suite.findUnique({ where: { id: body.targetSuiteId } });
+          if (!suite) return bad('targetSuiteId not found', 404);
+          target = { portalId: null, moduleId: null, suiteId: body.targetSuiteId };
+        }
+
         const created = await prisma.$transaction(
           sources.map(s =>
             prisma.testCase.create({
@@ -82,12 +93,17 @@ export async function POST(req: Request) {
                 title: `${s.title} (copy)`,
                 sub: s.sub,
                 desc: s.desc,
+                preconditions: s.preconditions,
                 steps: s.steps as Prisma.InputJsonValue,
                 expected: s.expected,
+                labels: s.labels,
+                attachments: s.attachments as Prisma.InputJsonValue,
                 priority: s.priority,
                 severity: s.severity,
                 type: s.type,
-                suiteId: s.suiteId,
+                portalId: target ? target.portalId : s.portalId,
+                moduleId: target ? target.moduleId : s.moduleId,
+                suiteId: target ? target.suiteId : s.suiteId,
                 author: s.author,
               },
             }),

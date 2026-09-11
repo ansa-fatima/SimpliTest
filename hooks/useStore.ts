@@ -10,6 +10,7 @@ import {
   ApiTestRun,
   CycleSummary,
   CycleScopeType,
+  CycleOverviewData,
   RunResult,
   Project,
   Portal,
@@ -38,6 +39,11 @@ function toLocalTestCase(c: ApiTestCase): TestCase {
     severity: c.severity,
     type: c.type,
     feature: c.suite?.name ?? c.feature?.name ?? '',
+    module: c.suite?.module.name ?? c.module?.name ?? '',
+    portal: c.suite?.module.portal?.name ?? c.module?.portal?.name ?? c.portal?.name ?? '',
+    suiteId: c.suite?.id,
+    moduleId: c.suite?.module.id ?? c.module?.id,
+    portalId: c.suite?.module.portal?.id ?? c.module?.portal?.id ?? c.portal?.id,
     updated: relativeTime(c.updatedAt),
     desc: c.desc ?? '',
     preconditions: c.preconditions ?? '',
@@ -46,6 +52,8 @@ function toLocalTestCase(c: ApiTestCase): TestCase {
     created: formatDate(c.createdAt),
     author: c.author ?? '',
     updatedFull: formatDate(c.updatedAt),
+    labels: c.labels ?? [],
+    attachments: Array.isArray(c.attachments) ? c.attachments : [],
   };
 }
 
@@ -112,6 +120,10 @@ export interface AppState {
   summary: CycleSummary | null;
   cyclesLoading: boolean;
   runsLoading: boolean;
+  // Summary screen a case-based cycle opens to before the actual run —
+  // KPIs, tester, and related quick logs in the same module.
+  cycleOverview: CycleOverviewData | null;
+  cycleOverviewLoading: boolean;
   // Quick log (Manual-mode cycle) opened from outside the Test Runs page —
   // e.g. Dashboard's Recent activity or the Stability report drilldown. Shown
   // as a read-only summary modal rather than navigating into CycleView, which
@@ -147,6 +159,8 @@ export function useStore() {
     summary: null,
     cyclesLoading: false,
     runsLoading: false,
+    cycleOverview: null,
+    cycleOverviewLoading: false,
     quickLogCycle: null,
     dataVersion: 0,
   });
@@ -683,6 +697,8 @@ export function useStore() {
           portalId: patch.portalId,
           moduleId: patch.moduleId,
           suiteId: patch.suiteId,
+          labels: patch.labels,
+          attachments: patch.attachments,
         });
       } catch (e) {
         // Bail out here — don't fake a success toast or merge an unsaved
@@ -740,21 +756,30 @@ export function useStore() {
     [showToast, state.data, state.currentKey],
   );
 
-  // Persisted duplicate — POSTs to the same bulk endpoint the list view's
+  // Persisted copy — POSTs to the same bulk endpoint the list view's
   // Duplicate action uses, so this actually survives a refresh (it used to
-  // only edit an in-memory copy and silently vanish).
-  const duplicateTC = useCallback(async () => {
-    const apiId = state.currentTC?.apiId;
-    if (!apiId) return;
-    try {
-      await api.post('/api/test-cases/bulk', { action: 'duplicate', ids: [apiId] });
-    } catch (e) {
-      showToast(`Duplicate failed: ${(e as Error).message}`, 'error');
-      return;
-    }
-    setState(s => ({ ...s, page: 'list', dataVersion: s.dataVersion + 1 }));
-    showToast('Test case duplicated ✓', 'success');
-  }, [showToast, state.currentTC]);
+  // only edit an in-memory copy and silently vanish). An explicit
+  // targetSuiteId re-homes the copy to a chosen feature; omitting it copies
+  // the case right where it already lives.
+  const duplicateTC = useCallback(
+    async (targetSuiteId?: string) => {
+      const apiId = state.currentTC?.apiId;
+      if (!apiId) return;
+      try {
+        await api.post('/api/test-cases/bulk', {
+          action: 'duplicate',
+          ids: [apiId],
+          ...(targetSuiteId ? { targetSuiteId } : {}),
+        });
+      } catch (e) {
+        showToast(`Copy failed: ${(e as Error).message}`, 'error');
+        return;
+      }
+      setState(s => ({ ...s, page: 'list', dataVersion: s.dataVersion + 1 }));
+      showToast('Test case copied ✓', 'success');
+    },
+    [showToast, state.currentTC],
+  );
 
   // ─── Cycles ────────────────────────────────────────────────
 
@@ -773,6 +798,11 @@ export function useStore() {
 
   const showCycles = useCallback(() => {
     setState(s => ({ ...s, page: 'cycles' }));
+    loadCycles();
+  }, [loadCycles]);
+
+  const showTestRunsBoard = useCallback(() => {
+    setState(s => ({ ...s, page: 'testRuns' }));
     loadCycles();
   }, [loadCycles]);
 
@@ -818,12 +848,56 @@ export function useStore() {
     [showToast, state.cycles],
   );
 
+  // The new front door for a case-based cycle — a summary (KPIs, tester,
+  // related quick logs) before committing to the full run/execution screen.
+  // Manual cycles skip straight to their existing read-only summary modal,
+  // same short-circuit as openCycle.
+  const openCycleOverview = useCallback(
+    async (cycleId: string) => {
+      let cycle = state.cycles.find(c => c.id === cycleId) ?? null;
+      if (!cycle) {
+        try {
+          cycle = await api.get<TestCycle>(`/api/cycles/${cycleId}`);
+        } catch (e) {
+          showToast(`Failed to open cycle: ${(e as Error).message}`, 'error');
+          return;
+        }
+      }
+      if ((cycle.mode ?? 'CaseBased') === 'Manual') {
+        setState(s => ({ ...s, quickLogCycle: cycle }));
+        return;
+      }
+
+      setState(s => ({
+        ...s,
+        page: 'cycleOverview',
+        cycleOverview: null,
+        cycleOverviewLoading: true,
+      }));
+      try {
+        const overview = await api.get<CycleOverviewData>(`/api/cycles/${cycleId}/overview`);
+        setState(s => ({ ...s, cycleOverview: overview, cycleOverviewLoading: false }));
+      } catch (e) {
+        setState(s => ({ ...s, cycleOverviewLoading: false }));
+        showToast(`Failed to open cycle: ${(e as Error).message}`, 'error');
+      }
+    },
+    [showToast, state.cycles],
+  );
+
   const closeQuickLogCycle = useCallback(() => {
     setState(s => ({ ...s, quickLogCycle: null }));
   }, []);
 
   const backToCycles = useCallback(() => {
-    setState(s => ({ ...s, page: 'cycles', currentCycle: null, runs: [], summary: null }));
+    setState(s => ({
+      ...s,
+      page: 'cycles',
+      currentCycle: null,
+      runs: [],
+      summary: null,
+      cycleOverview: null,
+    }));
   }, []);
 
   const createCycle = useCallback(
@@ -859,7 +933,11 @@ export function useStore() {
         return;
       }
       try {
-        await api.post<TestCycle>('/api/cycles', { ...input, projectId });
+        // Attributed the same way executedBy is on a test run — from the
+        // logged-in session, not a field the tester fills in — so the
+        // Reports Tester filter can narrow quick logs too.
+        const loggedBy = state.user?.name || state.user?.username || '';
+        await api.post<TestCycle>('/api/cycles', { ...input, projectId, loggedBy });
         showToast(
           input.mode === 'Manual' ? 'Quick-log cycle saved ✓' : 'Cycle created ✓',
           'success',
@@ -869,7 +947,7 @@ export function useStore() {
         showToast(`Failed to create cycle: ${(e as Error).message}`, 'error');
       }
     },
-    [loadCycles, showToast, state.currentProjectId],
+    [loadCycles, showToast, state.currentProjectId, state.user],
   );
 
   // Patch any subset of fields on a cycle — used by the manual edit modal.
@@ -879,6 +957,17 @@ export function useStore() {
         await api.patch<TestCycle>(`/api/cycles/${cycleId}`, patch);
         showToast('Cycle updated ✓', 'success');
         await loadCycles();
+        // Keep the Cycle Overview screen in sync if it's showing the cycle
+        // that was just edited — otherwise it'd keep displaying stale
+        // pre-edit values until the user leaves and reopens it.
+        setState(s => {
+          if (s.cycleOverview?.cycle.id !== cycleId) return s;
+          api
+            .get<CycleOverviewData>(`/api/cycles/${cycleId}/overview`)
+            .then(overview => setState(s2 => ({ ...s2, cycleOverview: overview })))
+            .catch(() => {});
+          return s;
+        });
       } catch (e) {
         showToast(`Update failed: ${(e as Error).message}`, 'error');
       }
@@ -1030,7 +1119,9 @@ export function useStore() {
     showDashboard,
     showTestCases,
     showCycles,
+    showTestRunsBoard,
     openCycle,
+    openCycleOverview,
     closeQuickLogCycle,
     backToCycles,
     createCycle,

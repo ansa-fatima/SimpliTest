@@ -8,7 +8,9 @@ export type Page =
   | 'list'
   | 'view'
   | 'edit'
+  | 'testRuns'
   | 'cycles'
+  | 'cycleOverview'
   | 'cycle'
   | 'reports'
   | 'members'
@@ -75,6 +77,8 @@ export interface TestCycle {
   scopeType: CycleScopeType;
   scopeId: string | null;
   scopeName?: string | null;
+  /** Most-frequent executor among this cycle's runs (case-based only; server-computed). */
+  tester?: string | null;
   targetDate: string | null;
   completedAt?: string | null;
   createdAt: string;
@@ -90,6 +94,8 @@ export interface TestCycle {
   version?: string | null;
   cycleCategory?: string | null;
   ticketLink?: string | null;
+  /** Who logged this quick log (Manual mode only). */
+  loggedBy?: string;
   issueCount?: number;
   criticalCount?: number;
   majorCount?: number;
@@ -101,6 +107,58 @@ export interface TestCycle {
   blockedCount?: number;
 }
 
+export interface CycleOverviewData {
+  cycle: {
+    id: string;
+    name: string;
+    status: CycleStatus;
+    cycleCategory: string | null;
+    version: string | null;
+    ticketLink: string | null;
+    environment: string | null;
+    platform: string | null;
+    scopeName: string | null;
+    moduleName: string | null;
+    createdAt: string;
+    completedAt: string | null;
+    targetDate: string | null;
+  };
+  total: number;
+  executed: number;
+  percent: number;
+  passRate: number;
+  failed: number;
+  blocked: number;
+  counts: Record<RunResult, number>;
+  tester: string | null;
+  stability: {
+    moduleName: string;
+    passRate: number;
+    label: string;
+    trend: string;
+    total: number;
+  } | null;
+  recurringIssues: {
+    total: number;
+    items: {
+      id: string;
+      title: string;
+      caseNum: number;
+      severity: string;
+      scopeName: string;
+      occurrences: number;
+      cycleCount: number;
+      lastSeen: string;
+    }[];
+  };
+}
+
+export interface CaseAttachment {
+  name: string;
+  dataUrl: string;
+  size: number;
+}
+
 export interface ApiTestCase {
   id: string;
   caseNum: number;
@@ -110,6 +168,8 @@ export interface ApiTestCase {
   preconditions: string;
   steps: unknown;
   expected: string;
+  labels: string[];
+  attachments: CaseAttachment[];
   priority: Priority;
   severity: Severity;
   type: TestType;
@@ -121,8 +181,18 @@ export interface ApiTestCase {
   owner?: UserSummary | null;
   createdAt: string;
   updatedAt: string;
-  suite?: { id: string; name: string; module: { id: string; name: string } };
+  // Attaches to exactly one of these three -- whichever is set says where
+  // this case lives in the Portal/Module/Suite hierarchy.
+  portal?: { id: string; name: string } | null;
+  module?: { id: string; name: string; portal: { id: string; name: string } } | null;
+  suite?: {
+    id: string;
+    name: string;
+    module: { id: string; name: string; portal: { id: string; name: string } };
+  };
   feature?: { id: string; name: string; module: { id: string; name: string } };
+  /** Most recently touched run's verdict, or null if this case has never been run. */
+  lastResult?: RunResult | null;
 }
 
 export interface ApiTestRun {
@@ -153,7 +223,15 @@ export interface TestCase {
   priority: Priority;
   severity: Severity;
   type: TestType;
+  /** Suite (feature) name -- kept as "feature" for back-compat with older call sites. */
   feature: string;
+  /** Module and portal names -- derived from whichever level the case actually attaches to. */
+  module: string;
+  portal: string;
+  /** Ids of whichever level the case actually attaches to -- e.g. for preselecting a "copy to" destination. */
+  suiteId?: string;
+  moduleId?: string;
+  portalId?: string;
   updated: string;
   desc: string;
   /** Setup steps the tester must complete before running this case. */
@@ -163,6 +241,8 @@ export interface TestCase {
   created: string;
   author: string;
   updatedFull: string;
+  labels: string[];
+  attachments: CaseAttachment[];
 }
 
 export interface Module {

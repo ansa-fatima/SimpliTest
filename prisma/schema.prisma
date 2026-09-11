@@ -244,6 +244,14 @@ model TestCase {
   preconditions String     @default("")
   steps         Json
   expected      String     @default("")
+  // Free-form tags (e.g. "@quiz", "@regression-suite") — no fixed vocabulary,
+  // just labels the author attaches for their own search/grouping.
+  labels        String[]   @default([])
+  // Small files (screenshots, spec snippets) stored inline as base64 data
+  // URLs -- same pattern already used for User.avatarUrl, no separate blob
+  // storage. Each entry: { name, dataUrl, size }. Client enforces a size cap
+  // per file since this rides in a JSON column, not object storage.
+  attachments   Json       @default("[]")
   priority      Priority
   severity      Severity
   type          TestType
@@ -344,6 +352,11 @@ model TestCycle {
   version        String? // app version under test
   cycleCategory  String? // Stability / Regression / Functional / UI / Performance
   ticketLink     String?
+  // Who logged this quick log — plain text like TestRun.executedBy, set
+  // automatically from the session at creation time (not user-editable).
+  // Lets Reports' Tester filter narrow quick logs the same way it already
+  // narrows test runs. Existing rows predate this field and stay blank.
+  loggedBy       String  @default("")
 
   // Aggregate counts for Manual cycles. CaseBased cycles derive these from runs[].
   issueCount     Int @default(0) // total defects found

@@ -206,7 +206,7 @@ export function exportApiTestCases(cases: ApiTestCase[], ctx: ApiExportContext =
   // Bold + light fill on the header row.
   const headerStyle = {
     font: { bold: true, color: { rgb: 'FFFFFF' } },
-    fill: { fgColor: { rgb: '4F46E5' } }, // brand indigo
+    fill: { fgColor: { rgb: '3F2DAA' } }, // brand purple
     alignment: { horizontal: 'left', vertical: 'center' },
     border: {
       bottom: { style: 'thin', color: { rgb: 'CCCCCC' } },

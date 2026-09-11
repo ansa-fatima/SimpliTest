@@ -27,7 +27,12 @@ export async function GET(req: Request) {
       orderBy: { createdAt: 'desc' },
       include: {
         runs: {
-          select: { result: true, wasEverIssue: true, testCase: { select: { severity: true } } },
+          select: {
+            result: true,
+            wasEverIssue: true,
+            executedBy: true,
+            testCase: { select: { severity: true } },
+          },
         },
       },
     });
@@ -82,6 +87,11 @@ export async function GET(req: Request) {
       const severity = { Critical: 0, Major: 0, Minor: 0 };
       let issuesFound = 0;
       let issuesResolved = 0;
+      // Most-frequent executedBy among this cycle's runs -- a case-based
+      // cycle has no single "owner" field, so this stands in for one. Not
+      // meant to be exact for a heavily multi-tester cycle, just a
+      // reasonable "who mostly ran this" for the list view.
+      const executorCounts = new Map<string, number>();
       for (const r of c.runs) {
         counts[r.result]++;
         if (r.wasEverIssue) {
@@ -91,7 +101,17 @@ export async function GET(req: Request) {
             severity[r.testCase.severity as keyof typeof severity]++;
           }
         }
+        if (r.executedBy)
+          executorCounts.set(r.executedBy, (executorCounts.get(r.executedBy) ?? 0) + 1);
       }
+      let tester: string | null = null;
+      let topCount = 0;
+      executorCounts.forEach((n, name) => {
+        if (n > topCount) {
+          tester = name;
+          topCount = n;
+        }
+      });
       const total = c.runs.length;
       const done = total - counts.NotRun;
       const percent = total === 0 ? 0 : Math.round((done / total) * 100);
@@ -132,6 +152,7 @@ export async function GET(req: Request) {
         portalName,
         moduleName,
         scopeName,
+        tester,
         summary: { total, done, percent, counts, severity, issuesFound, issuesResolved },
       };
     });
@@ -170,6 +191,7 @@ export async function POST(req: Request) {
       version?: string;
       cycleCategory?: string;
       ticketLink?: string;
+      loggedBy?: string;
       issueCount?: number;
       criticalCount?: number;
       majorCount?: number;
@@ -220,6 +242,7 @@ export async function POST(req: Request) {
           version: body.version?.trim() || null,
           cycleCategory: body.cycleCategory?.trim() || null,
           ticketLink: body.ticketLink?.trim() || null,
+          loggedBy: body.loggedBy?.trim() || '',
           issueCount: nz(body.issueCount),
           criticalCount: nz(body.criticalCount),
           majorCount: nz(body.majorCount),

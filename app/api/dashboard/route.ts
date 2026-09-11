@@ -1,5 +1,17 @@
 import { prisma } from '@/lib/db';
 import { ok, serverError } from '@/lib/api';
+import { pointFromRun, pointFromQuickLog, stats } from '@/lib/stability';
+import { computeRecurringIssues, caseScopeName } from '@/lib/recurringIssues';
+
+// Full run detail needed by pointFromRun() -- shared so the module-stability
+// query below and the Stability report ask Prisma for exactly the same shape.
+const runSelect = {
+  result: true,
+  executedAt: true,
+  updatedAt: true,
+  cycleId: true,
+  cycle: { select: { name: true } },
+} as const;
 
 // Always compute fresh from the database. Without this, Next.js can decide
 // this GET handler has no per-request dependencies (it only reads a
@@ -46,10 +58,13 @@ export async function GET(req: Request) {
       runsPrev30d,
       openFailures,
       newFailuresToday,
+      criticalIssues,
       modules,
       allRuns,
       manualLogs,
       recentCyclesRaw,
+      recurringRuns,
+      recentRunEvents,
     ] = await Promise.all([
       prisma.testCase.count({ where: wsCase }),
       prisma.testRun.findMany({
@@ -78,22 +93,31 @@ export async function GET(req: Request) {
           cycle: { status: 'Active', ...wsCycle },
         },
       }),
+      // Same "open failure" methodology as openFailures above, narrowed to
+      // Critical severity -- a KPI for "how many of the currently-open
+      // failures are the ones that actually matter most".
+      prisma.testRun.count({
+        where: {
+          result: 'Failed',
+          cycle: { status: 'Active', ...wsCycle },
+          testCase: { severity: 'Critical' },
+        },
+      }),
       prisma.module.findMany({
         where: projectId ? { portal: { projectId } } : undefined,
         select: {
           id: true,
           name: true,
-          // Direct module-attached cases
-          testCases: { select: { id: true, runs: { select: { result: true } } } },
+          // Direct module-attached cases -- full run detail (not just
+          // result) so these can feed the same stats()/pointFromRun scoring
+          // the Stability report uses, instead of a separate simpler rule.
+          testCases: { select: { id: true, title: true, runs: { select: runSelect } } },
           // Plus cases nested in suites below this module
           suites: {
             select: {
               id: true,
               testCases: {
-                select: {
-                  id: true,
-                  runs: { select: { result: true } },
-                },
+                select: { id: true, title: true, runs: { select: runSelect } },
               },
             },
           },
@@ -109,6 +133,8 @@ export async function GET(req: Request) {
       prisma.testCycle.findMany({
         where: { mode: 'Manual', ...wsCycle },
         select: {
+          id: true,
+          name: true,
           completedAt: true,
           createdAt: true,
           issueCount: true,
@@ -118,6 +144,10 @@ export async function GET(req: Request) {
           blockedCount: true,
           scopeType: true,
           scopeId: true,
+          loggedBy: true,
+          portalName: true,
+          moduleName: true,
+          featureName: true,
         },
       }),
       prisma.testCycle.findMany({
@@ -125,7 +155,48 @@ export async function GET(req: Request) {
         orderBy: { createdAt: 'desc' },
         take: 8,
         include: {
-          runs: { select: { result: true, wasEverIssue: true } },
+          runs: { select: { result: true, wasEverIssue: true, executedBy: true } },
+        },
+      }),
+      // Recurring issues -- a test case that has failed/blocked in more than
+      // one distinct cycle. Fetched unwindowed (all history) since "keeps
+      // coming back" is inherently a long-view question; grouped in JS below
+      // because Prisma can't easily express "count of distinct cycleId per
+      // testCaseId" in one groupBy.
+      prisma.testRun.findMany({
+        where: { result: { in: ['Failed', 'Blocked'] }, executedAt: { not: null }, cycle: wsCycle },
+        select: {
+          testCaseId: true,
+          cycleId: true,
+          executedAt: true,
+          testCase: {
+            select: {
+              id: true,
+              title: true,
+              caseNum: true,
+              severity: true,
+              module: { select: { name: true } },
+              suite: { select: { name: true, module: { select: { name: true } } } },
+              portal: { select: { name: true } },
+            },
+          },
+        },
+      }),
+      // Recent individual test-run verdicts -- one of the two real event
+      // types behind Recent Activity (the other is quick-log creation, read
+      // from manualLogs above). Deliberately NOT trying to synthesize
+      // "cycle started"/"issue resolved" events -- nothing tracks those
+      // moments today, so inventing them would be showing fake activity.
+      prisma.testRun.findMany({
+        where: { executedAt: { not: null }, NOT: { result: 'NotRun' }, cycle: wsCycle },
+        orderBy: { executedAt: 'desc' },
+        take: 8,
+        select: {
+          result: true,
+          executedAt: true,
+          executedBy: true,
+          testCase: { select: { title: true, caseNum: true } },
+          cycle: { select: { name: true } },
         },
       }),
     ]);
@@ -203,6 +274,20 @@ export async function GET(req: Request) {
     const totalPrev = runsPrev30d.length + manualPrev.length;
     const passRatePrev = totalPrev === 0 ? 0 : Math.round((passedPrev / totalPrev) * 100);
 
+    // Failed/Blocked 30d counts, same blended convention as passed30d above.
+    // Quick logs have no Blocked concept -- a failed log is just a Failed
+    // count, never a Blocked one.
+    const failed30d =
+      runs30d.filter(r => r.result === 'Failed').length +
+      manualCurrent.filter(l => !logPass(l)).length;
+    const blocked30d = runs30d.filter(r => r.result === 'Blocked').length;
+    const failedPrev30d =
+      runsPrev30d.filter(r => r.result === 'Failed').length +
+      manualPrev.filter(l => !logPass(l)).length;
+    const blockedPrev30d = runsPrev30d.filter(r => r.result === 'Blocked').length;
+    const pctChange = (curr: number, prev: number) =>
+      prev === 0 ? (curr === 0 ? 0 : 100) : Math.round(((curr - prev) / prev) * 100);
+
     // 8-week window: bucket by ISO week starting Monday
     const weeks: {
       label: string;
@@ -248,36 +333,89 @@ export async function GET(req: Request) {
       skipped: w.skipped,
     }));
 
-    // Module stability — pass rate per module across all (non-NotRun) runs,
-    // plus quick logs scoped to that module or one of its suites (matches the
-    // Stability report's attribution — logs scoped to All/Portal/Custom don't
-    // point at a specific module, so they're not counted here).
+    // Module stability — same scoring as the Stability report (partial
+    // credit, Stable/At Risk/Unstable thresholds, trend), via the shared
+    // lib/stability helpers, so this panel's numbers can never disagree with
+    // the dedicated report. Quick logs scoped to a module or one of its
+    // suites count too (logs scoped to All/Portal/Custom don't point at a
+    // specific module, so they're not counted here).
+
+    // Recurring issues -- a test case that's failed/blocked in 2+ DISTINCT
+    // cycles (a case that fails once and gets fixed isn't "recurring" --
+    // one that keeps coming back across separate runs is). Shared grouping
+    // with the Cycle Overview's per-cycle version — see lib/recurringIssues.
+    const recurringIssues = computeRecurringIssues(
+      recurringRuns.map(r => ({
+        cycleId: r.cycleId,
+        executedAt: r.executedAt!,
+        testCase: { ...r.testCase, scopeName: caseScopeName(r.testCase) },
+      })),
+      5,
+    );
+
+    // Recent activity -- two real, directly-observable event kinds. Not
+    // attempting "cycle started"/"issue resolved"/"N cases created" here:
+    // nothing in the schema timestamps those moments, so synthesizing them
+    // would just be showing fabricated activity.
+    const runEvents = recentRunEvents.map(r => ({
+      kind: 'run' as const,
+      actor: r.executedBy || 'Someone',
+      verb: r.result === 'Passed' ? 'marked' : 'marked',
+      caseLabel: `TC-${String(r.testCase.caseNum).padStart(3, '0')}`,
+      result: r.result,
+      cycleName: r.cycle.name,
+      ts: r.executedAt!.toISOString(),
+    }));
+    const logEvents = [...manualLogs]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 8)
+      .map(l => ({
+        kind: 'quicklog' as const,
+        actor: l.loggedBy || 'Someone',
+        scopeName:
+          [l.portalName, l.moduleName, l.featureName].filter(Boolean).join(' › ') || l.name,
+        ts: l.createdAt.toISOString(),
+      }));
+    const recentActivity = [...runEvents, ...logEvents]
+      .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())
+      .slice(0, 8);
+
     const moduleStability = modules
       .map(m => {
-        let total = 0,
-          passed = 0;
-        const walkCase = (runs: { result: string }[]) => {
-          for (const r of runs) {
-            if (r.result === 'NotRun') continue;
-            total++;
-            if (r.result === 'Passed') passed++;
-          }
-        };
-        for (const tc of m.testCases) walkCase(tc.runs);
+        const points = [
+          ...m.testCases.flatMap(tc =>
+            tc.runs
+              .filter(r => r.result === 'Passed' || r.result === 'Failed')
+              .map(r => pointFromRun({ ...r, testCase: { title: tc.title } })),
+          ),
+          ...m.suites.flatMap(s =>
+            s.testCases.flatMap(tc =>
+              tc.runs
+                .filter(r => r.result === 'Passed' || r.result === 'Failed')
+                .map(r => pointFromRun({ ...r, testCase: { title: tc.title } })),
+            ),
+          ),
+        ];
         const suiteIds = new Set(m.suites.map(s => s.id));
-        for (const s of m.suites) {
-          for (const tc of s.testCases) walkCase(tc.runs);
-        }
         for (const l of manualLogs) {
           const scoped =
             (l.scopeType === 'Module' && l.scopeId === m.id) ||
             (l.scopeType === 'Suite' && l.scopeId && suiteIds.has(l.scopeId));
           if (!scoped) continue;
-          total++;
-          if (logPass(l)) passed++;
+          points.push(pointFromQuickLog(l));
         }
-        const passRate = total === 0 ? null : Math.round((passed / total) * 100);
-        return { name: m.name, passRate, totalRuns: total };
+        const s = stats(points);
+        // "Issues" = the data points that didn't pass -- the same failing
+        // runs/logs that pull the pass rate down, not a separately-tracked
+        // count that could disagree with it.
+        return {
+          name: m.name,
+          passRate: s.total === 0 ? null : s.passRate,
+          totalRuns: s.total,
+          issues: s.failed,
+          label: s.label,
+          trend: s.trend,
+        };
       })
       .filter(m => m.totalRuns > 0);
 
@@ -316,6 +454,20 @@ export async function GET(req: Request) {
         passRate = done === 0 ? 0 : Math.round((counts.Passed / done) * 100);
       }
 
+      // Same "single name or 'N testers'" convention as the Cycle History
+      // report -- executedBy for a case-based run, loggedBy for a quick log.
+      const tester =
+        c.mode === 'Manual'
+          ? c.loggedBy || ''
+          : (() => {
+              const names = Array.from(new Set(c.runs.map(r => r.executedBy).filter(Boolean)));
+              return names.length === 0
+                ? ''
+                : names.length === 1
+                  ? names[0]
+                  : `${names.length} testers`;
+            })();
+
       let scopeName: string | null = null;
       if (c.scopeType === 'All') scopeName = 'All test cases';
       else if (c.scopeType === 'Custom') scopeName = 'Custom selection';
@@ -339,6 +491,7 @@ export async function GET(req: Request) {
         done,
         passRate,
         counts,
+        tester,
         // Manual-cycle aggregates — used by the dashboard to render Pass/Fail
         // chips for quick-logs (where there are no real runs to %-derive from).
         moduleName: c.moduleName,
@@ -353,8 +506,14 @@ export async function GET(req: Request) {
       runs30d: { total: total30d, prev: totalPrev },
       passRate: { current: passRate, prev: passRatePrev, delta: passRate - passRatePrev },
       openFailures: { total: openFailures, newToday: newFailuresToday },
+      criticalIssues,
+      passed30d: { total: passed30d, pctChange: pctChange(passed30d, passedPrev) },
+      failed30d: { total: failed30d, pctChange: pctChange(failed30d, failedPrev30d) },
+      blocked30d: { total: blocked30d, pctChange: pctChange(blocked30d, blockedPrev30d) },
       weeklyRuns,
       moduleStability,
+      recurringIssues,
+      recentActivity,
       recentCycles,
     });
   } catch (e) {

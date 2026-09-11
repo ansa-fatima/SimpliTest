@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { NewCycleModal, CycleFormPayload } from './NewCycleModal';
 import { CycleReportModal } from './CycleReportModal';
 import { ManualCycleSummaryModal } from './ManualCycleSummaryModal';
-import { cn } from '@/lib/utils';
+import { avatarColour, cn, initials, localDateStr } from '@/lib/utils';
 
 interface CyclesListProps {
   cycles: TestCycle[];
@@ -20,11 +20,17 @@ interface CyclesListProps {
   onUpdate?: (id: string, patch: Record<string, unknown>) => Promise<void>;
 }
 
-const STATUS_BADGE: Record<CycleStatus, string> = {
-  Active: 'bg-amber-50 text-amber-700 ring-amber-200',
-  Completed: 'bg-blue-50 text-blue-700 ring-blue-200',
-  Archived: 'bg-amber-50 text-amber-700 ring-amber-200',
-};
+// A cycle named "Sanity Cycle 15" gets a short "C15" code from its trailing
+// number -- purely a display nicety, so a name with no trailing number
+// simply gets no code rather than a made-up one.
+function cycleCode(name: string): string | null {
+  const m = name.match(/(\d+)\s*$/);
+  return m ? `C${m[1]}` : null;
+}
+
+function isoDate(iso: string | null | undefined): string {
+  return iso ? localDateStr(new Date(iso)) : '—';
+}
 
 type ModeFilter = 'all' | 'CaseBased' | 'Manual';
 type SortKey = 'date' | 'portal' | 'module' | 'status';
@@ -72,18 +78,22 @@ export function CyclesList({
   const manualCount = cycles.filter(c => (c.mode ?? 'CaseBased') === 'Manual').length;
   const detailedCount = cycles.length - manualCount;
 
-  // Status is always one of: Open to do / Completed / Archived — no other
-  // wording ("Done", "Open-to-do") so the label is consistent everywhere.
-  // Quick logs (Manual) are always Completed the moment they're logged —
-  // whether the issues they found are still open is a separate question,
-  // answered by the Passed/Failed verdict, not by this lifecycle status.
-  const cycleStatusBadge = (c: TestCycle): { label: string; cls: string } => {
+  // Status is always one of: In Progress / Completed / Archived — no other
+  // wording so the label is consistent everywhere. Quick logs (Manual) are
+  // always Completed the moment they're logged — whether the issues they
+  // found are still open is a separate question, answered by the
+  // Passed/Failed verdict, not by this lifecycle status.
+  const cycleStatusTone = (c: TestCycle): { label: string; dot: string; text: string } => {
     if ((c.mode ?? 'CaseBased') === 'Manual') {
-      if (c.status === 'Archived') return { label: 'Archived', cls: STATUS_BADGE.Archived };
-      return { label: 'Completed', cls: STATUS_BADGE.Completed };
+      if (c.status === 'Archived')
+        return { label: 'Archived', dot: 'bg-text-3', text: 'text-text-3' };
+      return { label: 'Completed', dot: 'bg-success', text: 'text-success' };
     }
-    if (c.status === 'Active') return { label: 'Open to do', cls: STATUS_BADGE.Active };
-    return { label: c.status, cls: STATUS_BADGE[c.status] };
+    if (c.status === 'Active')
+      return { label: 'In Progress', dot: 'bg-primary', text: 'text-primary-text' };
+    if (c.status === 'Archived')
+      return { label: 'Archived', dot: 'bg-text-3', text: 'text-text-3' };
+    return { label: 'Completed', dot: 'bg-success', text: 'text-success' };
   };
 
   // Quick-logs show the executed-on date (back-datable) so cycles sort by
@@ -100,7 +110,7 @@ export function CyclesList({
         case 'module':
           return compareNullsLast(a.moduleName, b.moduleName, dir);
         case 'status':
-          return dir * cycleStatusBadge(a).label.localeCompare(cycleStatusBadge(b).label);
+          return dir * cycleStatusTone(a).label.localeCompare(cycleStatusTone(b).label);
         case 'date':
         default:
           return dir * (cycleDate(a) - cycleDate(b));
@@ -116,10 +126,10 @@ export function CyclesList({
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
-              Test runs
+              Test Cycles
             </h1>
             <p className="text-[13px] text-text-2">
-              Track execution cycles — detailed per-test-case or quick aggregate logs.
+              Case-based regression, sanity, and quick-log cycles across this workspace.
             </p>
           </div>
           <div className="flex gap-2">
@@ -135,10 +145,10 @@ export function CyclesList({
             <button
               type="button"
               onClick={() => setCreateMode('CaseBased')}
-              className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-[7px] text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-primary-hover"
+              className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-[7px] text-[13px] font-medium text-white shadow-sm transition-all hover:bg-primary-hover"
             >
               <i className="ti ti-plus text-[15px]" />
-              New test run
+              New Cycle
             </button>
           </div>
         </div>
@@ -178,7 +188,7 @@ export function CyclesList({
                   : 'border border-border bg-surface text-text-2 hover:bg-surface-2',
               )}
             >
-              {s}
+              {s === 'Active' ? 'In Progress' : s}
             </button>
           ))}
 
@@ -225,82 +235,80 @@ export function CyclesList({
           <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border bg-surface py-20 text-text-3">
             <i className="ti ti-list-check text-[36px] opacity-50" />
             <p className="text-[14px] font-medium text-text-2">
-              {cycles.length === 0 ? 'No test runs yet' : 'No runs match this filter'}
+              {cycles.length === 0 ? 'No cycles yet' : 'No cycles match this filter'}
             </p>
             <p className="max-w-[320px] text-center text-[12px]">
               {cycles.length === 0
-                ? 'Use Quick log for a simple counts-only record, or New test run for case-by-case execution.'
+                ? 'Use Quick log for a simple counts-only record, or New Cycle for case-by-case execution.'
                 : 'Try widening the tabs above.'}
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-            <table className="w-full border-collapse text-[12.5px]">
+          <div className="overflow-hidden rounded-lg border border-border bg-surface">
+            <table className="w-full table-fixed border-collapse text-[12.5px]">
               <thead className="bg-surface-2">
                 <tr>
-                  <Th>Name</Th>
-                  <Th>Date</Th>
-                  <Th>Portal</Th>
-                  <Th>Module</Th>
-                  <Th>Feature</Th>
-                  <Th>Environment</Th>
-                  <Th>Platform</Th>
-                  <Th>Version</Th>
-                  <Th>Cycle type</Th>
-                  <Th>Ticket</Th>
-                  <Th width="60px" align="right">
-                    Issues
+                  <Th width="150px">Cycle</Th>
+                  <Th width="185px">Scope</Th>
+                  <Th width="60px">Version</Th>
+                  <Th width="85px">Environment</Th>
+                  <Th width="78px">Start</Th>
+                  <Th width="78px">End</Th>
+                  <Th width="48px" align="right">
+                    Total
                   </Th>
-                  <Th width="60px" align="right">
+                  <Th width="42px" align="right">
                     Crit
                   </Th>
-                  <Th width="60px" align="right">
+                  <Th width="42px" align="right">
                     Major
                   </Th>
-                  <Th width="60px" align="right">
+                  <Th width="42px" align="right">
                     Minor
                   </Th>
-                  <Th width="60px" align="right">
-                    Done
-                  </Th>
-                  <Th width="60px" align="right">
-                    Remain
-                  </Th>
-                  <Th width="100px">Status</Th>
-                  <th className="w-[120px] border-b border-border px-2 py-2.5" />
+                  <Th width="100px">Tester</Th>
+                  <Th width="62px">Ticket</Th>
+                  <Th width="80px">Status</Th>
+                  <th className="w-[80px] border-b border-border px-2 py-2.5" />
                 </tr>
               </thead>
               <tbody>
                 {sorted.map(c => {
                   const isManual = (c.mode ?? 'CaseBased') === 'Manual';
-                  const status = cycleStatusBadge(c);
-
-                  // For CaseBased cycles, derive the counts from the embedded summary.
+                  const status = cycleStatusTone(c);
+                  const code = cycleCode(c.name);
                   const summary = c.summary;
-                  const counts = summary?.counts ?? {
-                    NotRun: 0,
-                    Passed: 0,
-                    Failed: 0,
-                    Blocked: 0,
-                    Skipped: 0,
-                  };
 
-                  const severity = summary?.severity ?? { Critical: 0, Major: 0, Minor: 0 };
-                  const total = summary?.total ?? 0;
+                  // Manual cycles have no per-case "total" the way a case-based
+                  // cycle does -- Passed+Failed+Blocked (the only counts a quick
+                  // log actually tracks) stands in for it.
+                  const total = isManual
+                    ? (c.passedCount ?? 0) + (c.failedCount ?? 0) + (c.blockedCount ?? 0)
+                    : (summary?.total ?? 0);
 
-                  // Issues/Done/Remaining read the same way for both modes now:
-                  // Issues is a fixed baseline (found), Done is how many of
-                  // those are fixed, Remaining is the rest — none of them
-                  // move except Done/Remaining as retesting happens. For a
-                  // case-based cycle that baseline comes from the sticky
-                  // wasEverIssue flag (see /api/cycles), not the live
-                  // Failed/Blocked counts, which would otherwise shrink
-                  // "Issues" itself every time a case gets fixed.
-                  const issueCount = isManual ? (c.issueCount ?? 0) : (summary?.issuesFound ?? 0);
-                  const done = isManual ? (c.doneCount ?? 0) : (summary?.issuesResolved ?? 0);
-                  const remaining = isManual
-                    ? (c.remainingCount ?? 0)
-                    : (summary?.issuesFound ?? 0) - (summary?.issuesResolved ?? 0);
+                  // Severity breakdown of issues found -- for case-based
+                  // cycles this is the summary's ever-Failed/Blocked baseline
+                  // (see /api/cycles), for a quick log it's the counts
+                  // recorded directly on the cycle.
+                  const critical = isManual
+                    ? (c.criticalCount ?? 0)
+                    : (summary?.severity?.Critical ?? 0);
+                  const major = isManual ? (c.majorCount ?? 0) : (summary?.severity?.Major ?? 0);
+                  const minor = isManual ? (c.minorCount ?? 0) : (summary?.severity?.Minor ?? 0);
+
+                  // Case-based cycles have no single "owner" field -- `tester`
+                  // is the most-frequent executor across its runs (see
+                  // /api/cycles). Manual quick logs already have one: whoever
+                  // logged it.
+                  const tester = isManual ? c.loggedBy || null : (c.tester ?? null);
+
+                  const start = isoDate(c.createdAt);
+                  const end = isoDate(isManual ? c.completedAt : (c.completedAt ?? c.targetDate));
+
+                  const scopeLabel =
+                    c.scopeName === 'All test cases'
+                      ? 'All cases'
+                      : (c.scopeName ?? c.moduleName ?? c.portalName ?? null);
 
                   return (
                     <tr
@@ -311,157 +319,81 @@ export function CyclesList({
                       }}
                       className="group cursor-pointer border-b border-border transition-colors last:border-b-0 hover:bg-surface-2"
                     >
-                      <td className="max-w-[160px] px-3 py-2.5 font-medium text-text">
-                        <span className="inline-flex max-w-full items-center gap-1.5">
-                          <span className="truncate" title={c.name}>
-                            {c.name}
-                          </span>
-                          {/* Resolution status — for a quick log, only shown
-                              once Done/Remaining have actually been filled in
-                              (e.g. after editing following a retest), not for
-                              every quick log by default. For a case-based
-                              cycle, shown once anything has actually run. */}
-                          {isManual
-                            ? ((c.doneCount ?? 0) > 0 || (c.remainingCount ?? 0) > 0) && (
-                                <span
-                                  className={cn(
-                                    'h-[7px] w-[7px] flex-shrink-0 rounded-full',
-                                    (c.remainingCount ?? 0) === 0 ? 'bg-emerald-500' : 'bg-red-500',
-                                  )}
-                                  title={
-                                    (c.remainingCount ?? 0) === 0
-                                      ? 'Fully resolved'
-                                      : `${c.remainingCount} issue(s) still open`
-                                  }
-                                />
-                              )
-                            : // Only claim "resolved" once every case has actually
-                              // been executed — otherwise a run that's 30% done
-                              // with zero failures so far would show the same
-                              // green dot as one that's actually finished clean.
-                              total > 0 &&
-                              counts.NotRun === 0 && (
-                                <span
-                                  className={cn(
-                                    'h-[7px] w-[7px] flex-shrink-0 rounded-full',
-                                    remaining === 0 ? 'bg-emerald-500' : 'bg-red-500',
-                                  )}
-                                  title={
-                                    remaining === 0
-                                      ? 'Fully resolved'
-                                      : `${remaining} issue(s) still open`
-                                  }
-                                />
-                              )}
-                        </span>
+                      <td className="overflow-hidden px-3 py-2.5 align-middle">
+                        <p className="truncate font-medium text-text" title={c.name}>
+                          {c.name}
+                        </p>
+                        {code && <p className="font-mono text-[10.5px] text-text-3">{code}</p>}
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-text-2">
-                        {/* Quick-logs show the executed-on date (back-datable) so
-                            cycles sort by when they actually ran, not when typed. */}
-                        {new Date((isManual && c.completedAt) || c.createdAt).toLocaleDateString(
-                          'en-GB',
-                          {
-                            day: 'numeric',
-                            month: 'short',
-                            year: 'numeric',
-                          },
-                        )}
+                      <td className="px-2 py-2.5 align-middle">
+                        <Chip color="slate" text={scopeLabel} />
                       </td>
-                      <td className="px-3 py-2.5">
-                        {/* Portal/Module are resolved server-side for both cycle
-                            modes (see /api/cycles), so both columns can just
-                            render the field directly — no per-mode branching. */}
-                        {c.portalName ? (
-                          <Chip color="slate" text={c.portalName} />
-                        ) : (
-                          <span className="text-text-3">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        {c.moduleName ? (
-                          <Chip color="emerald" text={c.moduleName} />
-                        ) : (
-                          <span className="text-text-3">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5 text-text">
-                        {isManual ? (
-                          c.featureName || <span className="text-text-3">—</span>
-                        ) : c.scopeType === 'Suite' && c.scopeName ? (
-                          (c.scopeName.split(' / ')[1] ?? c.scopeName)
-                        ) : (
-                          <span className="text-text-3">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        {c.environment ? (
-                          <Chip color="red-50" text={c.environment} />
-                        ) : (
-                          <span className="text-text-3">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        {c.platform ? (
-                          <Chip color="green-50" text={c.platform} />
-                        ) : (
-                          <span className="text-text-3">—</span>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[11.5px] text-text-2">
+                      <td className="truncate px-2 py-2.5 align-middle font-mono text-[11.5px] text-text-2">
                         {c.version || <span className="text-text-3">—</span>}
                       </td>
-                      <td className="px-3 py-2.5">
-                        {c.cycleCategory ? (
-                          <Chip color="yellow" text={c.cycleCategory} />
-                        ) : isManual ? (
-                          <span className="text-text-3">—</span>
+                      <td className="truncate px-2 py-2.5 align-middle text-text-2">
+                        {c.environment || <span className="text-text-3">—</span>}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-2.5 align-middle text-text-2">
+                        {start}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-2.5 align-middle text-text-2">
+                        {end}
+                      </td>
+                      <td className="px-2 py-2.5 text-right align-middle tabular-nums text-text">
+                        {total || <span className="text-text-3">—</span>}
+                      </td>
+                      <td className="px-2 py-2.5 text-right align-middle tabular-nums text-danger">
+                        {critical || <span className="text-text-3">—</span>}
+                      </td>
+                      <td className="px-2 py-2.5 text-right align-middle tabular-nums text-warning">
+                        {major || <span className="text-text-3">—</span>}
+                      </td>
+                      <td className="px-2 py-2.5 text-right align-middle tabular-nums text-text-2">
+                        {minor || <span className="text-text-3">—</span>}
+                      </td>
+                      <td className="overflow-hidden px-2 py-2.5 align-middle">
+                        {tester ? (
+                          <span className="flex items-center gap-1.5">
+                            <span
+                              className={cn(
+                                'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[8.5px] font-bold',
+                                avatarColour(tester),
+                              )}
+                            >
+                              {initials(tester)}
+                            </span>
+                            <span className="truncate text-text-2">{tester}</span>
+                          </span>
                         ) : (
-                          <Chip color="slate" text={c.scopeType} />
+                          <span className="text-text-3">Unattributed</span>
                         )}
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-[11.5px]">
+                      <td className="overflow-hidden px-2 py-2.5 align-middle text-[11.5px]">
                         {c.ticketLink ? (
-                          renderTicketLink(c.ticketLink)
+                          <span className="flex max-w-full items-center gap-1">
+                            <i className="ti ti-brand-jira flex-shrink-0 text-[13px] text-text-3" />
+                            <span className="truncate">{renderTicketLink(c.ticketLink)}</span>
+                          </span>
                         ) : (
                           <span className="text-text-3">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-text">
-                        {issueCount || <span className="text-text-3">—</span>}
-                      </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-red-700">
-                        {(isManual ? (c.criticalCount ?? 0) : severity.Critical) || (
-                          <span className="text-text-3">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-amber-700">
-                        {(isManual ? (c.majorCount ?? 0) : severity.Major) || (
-                          <span className="text-text-3">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-slate-500">
-                        {(isManual ? (c.minorCount ?? 0) : severity.Minor) || (
-                          <span className="text-text-3">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-emerald-700">
-                        {done || <span className="text-text-3">—</span>}
-                      </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-red-700">
-                        {remaining || <span className="text-text-3">—</span>}
-                      </td>
-                      <td className="px-3 py-2.5">
+                      <td className="overflow-hidden px-1.5 py-2.5 align-middle">
                         <span
                           className={cn(
-                            'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ring-1',
-                            status.cls,
+                            'inline-flex max-w-full items-center gap-1 truncate font-medium',
+                            status.text,
                           )}
                         >
+                          <span
+                            className={cn('h-1.5 w-1.5 flex-shrink-0 rounded-full', status.dot)}
+                          />
                           {status.label}
                         </span>
                       </td>
                       <td
-                        className="whitespace-nowrap px-2 py-2.5 text-right"
+                        className="whitespace-nowrap px-2 py-2.5 text-right align-middle"
                         onClick={e => e.stopPropagation()}
                       >
                         <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">

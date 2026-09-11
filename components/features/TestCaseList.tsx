@@ -7,7 +7,16 @@ import { exportApiTestCases } from '@/lib/export';
 import { ImportCsvModal } from '@/components/features/ImportCsvModal';
 import { NewTestCaseModal } from '@/components/features/NewTestCaseModal';
 import { TruncatedText } from '@/components/ui/TruncatedText';
-import { avatarColour, cn, initials, priorityBadge, statusBadge, typeBadge } from '@/lib/utils';
+import {
+  avatarColour,
+  cn,
+  initials,
+  localDateStr,
+  priorityTone,
+  resultTone,
+  statusBadge,
+  typeBadge,
+} from '@/lib/utils';
 
 // ─── Data shapes that come back from /api/portals?projectId=… ─────────
 interface ApiSuite {
@@ -1051,7 +1060,7 @@ export function TestCaseList({
         {/* Two-column body */}
         <div className="flex items-start gap-6">
           {/* Hierarchy column */}
-          <aside className="w-[260px] flex-shrink-0 rounded-lg border border-border bg-surface">
+          <aside className="w-[300px] flex-shrink-0 rounded-lg border border-border bg-surface">
             <div className="flex items-center justify-between border-b border-border px-3 py-2">
               <span className="text-[10px] font-semibold uppercase tracking-widest text-text-3">
                 Hierarchy
@@ -1441,8 +1450,8 @@ export function TestCaseList({
                     </div>
                   </div>
                 )}
-                <div className="overflow-hidden rounded-lg border border-border bg-surface">
-                  <table className="w-full table-fixed border-collapse text-[13px]">
+                <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+                  <table className="w-full min-w-[800px] table-fixed border-collapse text-[13px]">
                     <thead className="bg-surface-2">
                       <tr>
                         <th className="w-[36px] border-b border-border px-4 py-2.5 text-left">
@@ -1451,10 +1460,13 @@ export function TestCaseList({
                             onChange={toggleSelectAll}
                           />
                         </th>
-                        <Th width="90px">ID</Th>
-                        <Th>Title</Th>
-                        <Th width="110px">Priority</Th>
-                        <Th width="130px">Type</Th>
+                        <Th width="80px">ID</Th>
+                        <Th>Test Case</Th>
+                        <Th width="95px">Priority</Th>
+                        <Th width="95px">Type</Th>
+                        <Th width="85px">Status</Th>
+                        <Th width="100px">Last Result</Th>
+                        <Th width="95px">Updated</Th>
                         <th className="w-[56px] border-b border-border px-2 py-2.5" />
                       </tr>
                     </thead>
@@ -1503,10 +1515,55 @@ export function TestCaseList({
                               <TruncatedText text={tc.title} className="text-text" />
                             </td>
                             <td className="px-4 py-3">
-                              <Pill className={priorityBadge(tc.priority)}>{tc.priority}</Pill>
+                              {(() => {
+                                const t = priorityTone(tc.priority);
+                                return (
+                                  <span
+                                    className={cn(
+                                      'inline-flex items-center gap-1.5 font-medium',
+                                      t.text,
+                                    )}
+                                  >
+                                    <span
+                                      className={cn(
+                                        'h-1.5 w-1.5 flex-shrink-0 rounded-full',
+                                        t.dot,
+                                      )}
+                                    />
+                                    {tc.priority}
+                                  </span>
+                                );
+                              })()}
                             </td>
                             <td className="px-4 py-3">
                               <Pill className={typeBadge(tc.type)}>{tc.type}</Pill>
+                            </td>
+                            <td className="px-4 py-3">
+                              <Pill className={statusBadge(tc.status)}>{tc.status}</Pill>
+                            </td>
+                            <td className="px-4 py-3">
+                              {(() => {
+                                const t = resultTone(tc.lastResult);
+                                return (
+                                  <span
+                                    className={cn(
+                                      'inline-flex items-center gap-1.5 font-medium',
+                                      t.text,
+                                    )}
+                                  >
+                                    <span
+                                      className={cn(
+                                        'h-1.5 w-1.5 flex-shrink-0 rounded-full',
+                                        t.dot,
+                                      )}
+                                    />
+                                    {t.label}
+                                  </span>
+                                );
+                              })()}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-text-2">
+                              {localDateStr(new Date(tc.updatedAt))}
                             </td>
                             <td
                               className="relative px-2 py-3 text-right"
@@ -1821,7 +1878,9 @@ function NodeRow({
         >
           {chevron ?? <span className="inline-block w-3" />}
           {icon}
-          <span className="flex-1 truncate">{label}</span>
+          <span className="flex-1 truncate" title={label}>
+            {label}
+          </span>
           {suffix}
         </div>
       )}

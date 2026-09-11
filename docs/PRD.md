@@ -4,12 +4,12 @@
 
 |                 |                             |
 | --------------- | --------------------------- |
-| **Status**      | Final v2.0                  |
+| **Status**      | Final v3.0                  |
 | **Prepared by** | Ansa Fatima, QA Engineering |
-| **Date**        | September 2, 2026           |
+| **Date**        | September 11, 2026          |
 | **Audience**    | Engineering & QA management |
 
-This revision expands three areas — **Test Case Management**, **Test Execution (Test Runs)**, and the **Stability Report** — with a full walkthrough of what each feature is and how it works today. Every other section is carried forward for context.
+This revision reworks **Reporting & Analytics** end to end — a redesigned Dashboard, a filterable Stability report (Period/Sprint, Portal, Module, Feature), and a new **Cycle History** report that replaces the old Execution and Release reports — and documents real file **attachments** on test cases, and **tester attribution** on both test runs and quick logs. Every other section is carried forward for context.
 
 ---
 
@@ -30,17 +30,17 @@ Simplitest is a purpose-built test management platform for SimpliEd's QA organiz
 - **Single source of truth** — every portal/app has one structured home for its test cases (Portal → Module → Suite → Test Case).
 - **Two speeds of testing** — support full case-by-case regression cycles and 30-second quick logs, so lightweight testing gets recorded instead of skipped.
 - **Early warning on instability** — surface which modules are trending toward instability before they become a release incident.
-- **Self-serve reporting** — give managers and leads execution, release, and stability reports without asking QA for manual updates.
+- **Self-serve reporting** — give managers and leads dashboard, stability, and cycle-history reporting without asking QA for manual updates.
 - **Low-friction team admin** — invites, roles, and account recovery that don't depend on email infrastructure.
 
 ## 4. Non-goals (out of scope for this version)
 
 - Automated test execution or CI test-runner integration — today's runs are logged manually, whether or not the testing itself was automated.
-- File/screenshot/video evidence attachments on test runs — shown as "Coming soon" in the UI, not yet built.
+- Evidence attachments on a test **run's result** (e.g. a screenshot of a specific failure) — shown as "Coming soon" in the UI, not yet built. (Test **cases** themselves do support small file attachments today — see §7.1.)
 - Replacing a defect tracker — issue counts and severities are tracked, but there's no ticket workflow; a ticket-link field points out to an external tracker.
 - Real-time collaboration beyond per-run notes (no comment threads or @mentions).
 - A native mobile app — the web app is responsive, not a packaged app.
-- Dedicated tester-performance and per-module coverage reports — descoped to keep the report set focused on release-readiness and stability, the two questions managers actually ask.
+- A dedicated tester-performance leaderboard (pass rate ranked per tester) — Cycle History's Tester filter and per-cycle attribution cover "who ran what," but ranking testers against each other stays out of scope.
 
 ## 5. Target users
 
@@ -77,6 +77,7 @@ Test case management is where every portal's test content lives — one structur
 - **Bulk actions** — multi-select bulk field edit, bulk move between hierarchy locations, duplicate, and delete. This is the exact tooling that made the Mobile App → Teacher/Parent/Student App portal restructuring possible without a manual, error-prone case-by-case migration.
 - **CSV import** for bringing in existing suites wholesale — this is how the current ~3,400-case SimpliEd test suite was migrated into Simplitest in the first place, rather than retyped by hand.
 - **Stable external references** — every case gets a permanent, sequential case number, so a case can be cited in a bug report or a conversation ("TC-142 is failing") without ambiguity.
+- **Attachments.** Up to 5 small files per case (a screenshot, a spec snippet) — stored inline with the case, no separate file-storage service to run — capped at 5 MB per file.
 
 ---
 
@@ -98,31 +99,37 @@ Test execution covers everything to do with actually running tests and recording
 **Retesting is an edit to the same record, not a new cycle:**
 
 - A quick log carries its own **Done** and **Remaining** issue counts, editable directly on that same cycle as fixes land and get re-verified — there is no separate "retest" object and nothing new gets created. Reopening a quick log and updating Done/Remaining _is_ the retest.
-- These counts are what feed the Stability report's partial-credit scoring (§7.3.4).
+- These counts are what feed the Stability report's partial-credit scoring (§7.3.2).
 
 **Findability, once logged:**
 
 - Every run — case-based or quick log — is sortable and filterable by date (newest first by default), portal, module, and status, and every report that references a run links straight back to it.
+- **Tester attribution.** Both a case-based run and a quick log record who performed it — attached automatically from the signed-in session, never a manual field to fill in. This is what the Cycle History report's Tester filter matches against; a run or log from before attribution existed simply won't match any tester filter.
 
 ---
 
 ### 7.3 Reporting & analytics
 
-Simplitest ships four reports (Dashboard KPIs, Execution, Release, and Stability). The first three are summarized briefly; the Stability report — the one that answers "is this module getting better or worse" — is covered in full detail below.
+Simplitest's reporting surfaces are the **Dashboard** (the home-screen overview, seen first on every visit) and, under **Reports**, two dedicated reports: **Stability** and **Cycle History**. Two earlier reports — Execution and Release — were retired; their content is now fully covered between Stability (is this area getting better or worse) and Cycle History (a filterable log of every cycle that's ever run), so there's one place to check per question instead of three overlapping ones.
+
+Both Stability and Cycle History share the same scoping filters, so narrowing down "which module, which sprint" works identically wherever you are:
+
+- **Period** — Today / Last 7 days / Last 30 days / Sprint / All time.
+  - **Sprint** is a fixed, calendar-aligned 2-week block (not a rolling 14-day window), anchored to the team's real sprint start date — so "this sprint" means the same calendar dates for everyone. A stepper pages backward through prior sprints one at a time; the current sprint stays open-ended (runs to now) while a past sprint gets its real closing date.
+- **Portal → Module → Feature (Suite)** — the same cascading scope picker used everywhere else in the product. Narrowing to a module or feature automatically hides portals/modules that have nothing in scope, rather than padding the view with empty rows.
 
 #### 7.3.1 Dashboard
 
-Total cases, pass rate, open failures, active runs, an execution trend chart, and a Recent Activity feed of the latest test cycles and quick logs.
+The home screen answers "what's going on right now" at a glance:
 
-#### 7.3.2 Execution report
+- A greeting banner naming how many test runs are currently in progress and how many failures are open, with a one-click link into Test Runs.
+- Four 30-day stat cards — **Passed**, **Failed**, **Blocked**, and current **Open failures** — each with its trend against the prior 30-day window.
+- An **Active test run** card, shown whenever one is open: scope, a live progress bar, pass rate, and a Continue button straight into the run.
+- An 8-week execution trend chart and a Pass/Fail/Blocked donut summary.
+- A **Coverage by module** panel — real per-module pass rates, worst-covered first.
+- A **Recent test runs** table — run name, progress, result (Pass / Fail / Active), and who ran it (tester name, or "Unattributed" for runs and logs from before tester attribution existed).
 
-Test run results over a chosen window (7/30/90 days, 12 months, or all time), with a daily or weekly trend chart that always reconciles exactly with the KPI totals shown above it, however wide the window.
-
-#### 7.3.3 Release report
-
-Sprint-level pass/fail summary per cycle, built to directly support go/no-go release decisions.
-
-#### 7.3.4 Stability report — full detail
+#### 7.3.2 Stability report
 
 The Stability report answers "is this module getting better or worse," by blending every recorded result for a module or suite into one rolling pass rate with a trend, rather than showing any single run in isolation.
 
@@ -134,8 +141,18 @@ The Stability report answers "is this module getting better or worse," by blendi
 - **Partial-credit scoring.** Every data point carries a 0–1 score, not just a binary pass/fail. A tracked quick log scores `done ÷ (done + remaining)` — 6 of 8 resolved scores **0.75**. A case-based run scores 1 (Passed) or 0 (Failed). The report's headline **pass rate is the average score** across all data points, not a raw count of full passes — so a module full of half-resolved quick logs correctly reads as meaningfully better than a flat 0%. The separate Passed/Failed counts shown alongside stay binary, for anyone who wants the raw tally instead.
 - **Classification thresholds** — pass rate **≥ 90% → Stable**, **≥ 70% → At Risk**, otherwise **→ Unstable**. A module or suite with zero data points is labeled **No data**, kept distinct from "bad" so an untested area doesn't visually masquerade as a risk — and it sorts to the bottom of the risk-ranked list rather than looking alarming by default.
 - **Trend indicator.** A module's data points are split into an earlier and a later half by timestamp (at least 4 points are required to say anything meaningful), and the average score of each half is compared: **Up** (≥5-point improvement), **Down** (≥5-point decline), or **Flat**.
+- **Overview panel** — a coverage-by-module bar list and a pass/fail donut, both computed from whatever the active Period/Portal/Module/Feature scope resolves to, so the summary at the top and the drill-down list below it can never silently disagree.
 - **Drill-down panel.** Clicking any module or suite opens its own pass-rate trend chart, plus the _full_ list of every underlying cycle — case-based runs and quick logs together, newest first, not filtered to failures only — each tagged Pass/Fail with its own detail line (for example, _"Fail · 3 of 8 issues still open"_), and each linking straight through to that specific run or quick log.
-- **Export and sharing** — CSV/PDF export and a shareable link, matching the other reports.
+- **Export and sharing** — CSV/PDF export and a shareable link.
+
+#### 7.3.3 Cycle History report
+
+A flat, filterable log of every cycle — case-based test run or quick log — answering "how many cycles ran against this module, and by whom" directly, instead of opening each cycle in turn to check.
+
+- The same Period/Portal/Module/Feature filters as Stability, plus a **Tester** filter — matches whoever executed a case-based run, or logged a quick log. A run or log from before tester attribution existed won't match any tester filter, since there's nothing honest to attribute it to.
+- A KPI row: total cycles, total issues logged, quick-log count, test-run count.
+- A **cycles per module** bar list, and the full row-level table — cycle name, type (quick log / test run), Module › Feature, tester, issue count, and result (Active / Pass / Fail) — each row linking through to the underlying run.
+- CSV export.
 
 ---
 
@@ -155,27 +172,28 @@ The Stability report answers "is this module getting better or worse," by blendi
 
 ## 9. Technical overview
 
-Built on Next.js 14 (App Router) with TypeScript and Tailwind CSS, backed by PostgreSQL via Prisma. One codebase serves both the web application and its API. Deployment is continuous: pushes to the main branch run through GitHub Actions and deploy automatically via CapRover.
+Built on Next.js 14 (App Router) with TypeScript and Tailwind CSS, backed by PostgreSQL via Prisma. One codebase serves both the web application and its API. Deployment is continuous: pushes to the main branch run through GitHub Actions and deploy automatically via CapRover. The interface was restyled this cycle around a single indigo brand color driving every button, link, and highlight from one shared token, plus a slimmed icon-rail-and-topbar navigation layout.
 
 ## 10. Roadmap / future considerations
 
-- Evidence attachments (screenshots, video) on test runs.
+- Evidence attachments on a test run's **result** (e.g. a screenshot of a specific failure) — test cases themselves already support attachments (§7.1).
 - CI / automated test-runner integration.
 - Native mobile app or installable PWA.
 - Two-way defect-tracker integration.
 
 ## Appendix A: Feature status summary
 
-| Area                                     | Status                                                                                                 |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Test case management                     | Live — hierarchy, bulk edit/move, search & filter, CSV import                                          |
-| Case-based test cycles                   | Live — scoped execution (all / portal / module / suite / custom pick)                                  |
-| Manual quick logs                        | Live — lightweight aggregate logging with editable Done/Remaining tracking, feeds the Stability report |
-| Dashboard                                | Live — KPIs, execution trend chart, Recent activity feed                                               |
-| Execution report                         | Live — 7/30/90-day, 12-month, and all-time windows                                                     |
-| Release report                           | Live — sprint-level pass/fail summary                                                                  |
-| Stability report                         | Live — blended pass rate with partial credit, trend, and drill-down panel to every underlying run      |
-| Team & role management                   | Live — invite links, 5-tier roles scoped per workspace, admin-mediated password reset                  |
-| Evidence attachments (screenshots/video) | Planned — placeholder in UI today                                                                      |
-| CI / automated test-runner integration   | Not started                                                                                            |
-| Two-way defect-tracker sync              | Not started                                                                                            |
+| Area                                   | Status                                                                                                         |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Test case management                   | Live — hierarchy, bulk edit/move, search & filter, CSV import, small file attachments                          |
+| Case-based test cycles                 | Live — scoped execution (all / portal / module / suite / custom pick), tester attribution                      |
+| Manual quick logs                      | Live — lightweight aggregate logging with editable Done/Remaining tracking, tester attribution                 |
+| Dashboard                              | Live — 30-day Passed/Failed/Blocked KPIs, active-run card, execution trend, coverage by module, recent runs    |
+| Stability report                       | Live — Period/Sprint + Portal/Module/Feature filters, blended pass rate with partial credit, trend, drill-down |
+| Cycle History report                   | Live — every cycle in one filterable table (adds a Tester filter), cycles-per-module rollup, CSV export        |
+| Execution report                       | Retired — merged into Stability + Cycle History                                                                |
+| Release report                         | Retired — merged into Stability + Cycle History                                                                |
+| Team & role management                 | Live — invite links, 5-tier roles scoped per workspace, admin-mediated password reset                          |
+| Evidence attachments on run results    | Planned — placeholder in UI today                                                                              |
+| CI / automated test-runner integration | Not started                                                                                                    |
+| Two-way defect-tracker sync            | Not started                                                                                                    |

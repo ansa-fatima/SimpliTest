@@ -2,8 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
+import { cn } from '@/lib/utils';
 import { StepEditor } from '@/components/ui/StepEditor';
-import { Priority, Severity, TestType, ApiTestCase } from '@/types';
+import { AttachmentsField } from '@/components/ui/AttachmentsField';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Priority, Severity, TestType, ApiTestCase, CaseAttachment } from '@/types';
 
 // Structurally matches the tree shape TestCaseList already fetches from
 // /api/portals — kept local/duck-typed since TestCaseList doesn't export its
@@ -64,6 +67,7 @@ export function NewTestCaseModal({
   const [priority, setPriority] = useState<Priority>('High');
   const [severity, setSeverity] = useState<Severity>('Critical');
   const [type, setType] = useState<TestType>('Functional');
+  const [attachments, setAttachments] = useState<CaseAttachment[]>([]);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -114,6 +118,7 @@ export function NewTestCaseModal({
         severity,
         type,
         author: authorName,
+        attachments,
         // Exactly one of these three — deepest pick wins.
         ...(suiteId ? { suiteId } : moduleId ? { moduleId } : { portalId }),
       });
@@ -126,35 +131,180 @@ export function NewTestCaseModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[92vh] w-full max-w-[720px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[92vh] w-full max-w-[960px] flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 pb-4 pt-5">
+        <div className="flex items-center justify-between border-b border-border px-6 pb-4 pt-5">
           <div>
-            <h2 className="text-base font-bold text-slate-900">New test case</h2>
+            <h2 className="text-base font-bold text-text">New test case</h2>
             {targetLabel && (
-              <p className="mt-0.5 text-[12px] text-slate-400">
-                Will be added to <span className="font-medium text-slate-600">{targetLabel}</span>
+              <p className="mt-0.5 text-[12px] text-text-3">
+                Will be added to <span className="font-medium text-text-2">{targetLabel}</span>
               </p>
             )}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="cursor-pointer rounded p-1 text-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+            className="cursor-pointer rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text"
           >
-            ✕
+            <i className="ti ti-x text-[18px]" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          <div className="flex flex-col gap-4">
-            {/* Location cascade — Portal required, Module/Suite optional drill-down. */}
-            <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[1fr_240px]">
+          {/* Main content */}
+          <div className="overflow-y-auto border-b border-border px-6 py-5 md:border-b-0 md:border-r">
+            <div className="flex flex-col gap-4">
+              {/* Title first and prominent — the one field every case needs
+                  a good, scannable summary of before anything else. */}
+              <Field label="Title" required>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  placeholder="Describe what this test verifies…"
+                  className="w-full rounded-lg border border-border bg-surface px-3.5 py-2.5 text-[15px] font-medium text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                />
+              </Field>
+
+              {/* Classification — grouped in one row so priority/severity/type
+                  read as one "how important, what kind" decision. */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <Field label="Priority" required>
+                  <SegmentedControl
+                    value={priority}
+                    onChange={v => setPriority(v as Priority)}
+                    options={[
+                      {
+                        value: 'High',
+                        label: 'High',
+                        activeClass: 'bg-pill-high-bg text-pill-high-text',
+                      },
+                      {
+                        value: 'Medium',
+                        label: 'Med',
+                        activeClass: 'bg-pill-medium-bg text-pill-medium-text',
+                      },
+                      {
+                        value: 'Low',
+                        label: 'Low',
+                        activeClass: 'bg-pill-low-bg text-pill-low-text',
+                      },
+                    ]}
+                  />
+                </Field>
+                <Field label="Severity" required>
+                  <SegmentedControl
+                    value={severity}
+                    onChange={v => setSeverity(v as Severity)}
+                    options={[
+                      {
+                        value: 'Critical',
+                        label: 'Critical',
+                        activeClass: 'bg-pill-high-bg text-pill-high-text',
+                      },
+                      {
+                        value: 'Major',
+                        label: 'Major',
+                        activeClass: 'bg-pill-medium-bg text-pill-medium-text',
+                      },
+                      {
+                        value: 'Minor',
+                        label: 'Minor',
+                        activeClass: 'bg-pill-low-bg text-pill-low-text',
+                      },
+                    ]}
+                  />
+                </Field>
+                <Field label="Type" required>
+                  <div className="flex flex-wrap gap-1">
+                    {TYPES.map(t => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setType(t)}
+                        className={cn(
+                          'cursor-pointer rounded border px-2 py-1 text-xs transition-all',
+                          type === t
+                            ? 'border-primary bg-primary-light font-semibold text-primary-text'
+                            : 'border-border bg-surface text-text-3 hover:bg-surface-2',
+                        )}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+              </div>
+
+              {/* Test details — everything about what the test actually does,
+                  grouped into its own section so it reads apart from the
+                  classification fields above. */}
+              <div className="mt-1 rounded-xl border border-border bg-surface p-4">
+                <div className="mb-3.5 flex items-center gap-2 text-[13px] font-semibold text-text">
+                  <i className="ti ti-file-text text-[15px] text-primary" />
+                  Test details
+                </div>
+                <div className="flex flex-col gap-4">
+                  <Field label="Description">
+                    <textarea
+                      value={desc}
+                      onChange={e => setDesc(e.target.value)}
+                      rows={2}
+                      placeholder="Optional background context…"
+                      className="w-full resize-y rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                    />
+                  </Field>
+
+                  <Field label="Preconditions">
+                    <textarea
+                      value={preconditions}
+                      onChange={e => setPreconditions(e.target.value)}
+                      rows={2}
+                      placeholder={'- User is signed in\n- Test data is loaded'}
+                      className="w-full resize-y rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                    />
+                  </Field>
+
+                  <Field label="Steps" required>
+                    <StepEditor steps={steps} onChange={setSteps} />
+                  </Field>
+
+                  <Field label="Expected result">
+                    <textarea
+                      value={expected}
+                      onChange={e => setExpected(e.target.value)}
+                      rows={2}
+                      placeholder="What should happen?"
+                      className="w-full resize-y rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                    />
+                  </Field>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border bg-surface p-4">
+                <div className="mb-3.5 flex items-center gap-2 text-[13px] font-semibold text-text">
+                  <i className="ti ti-paperclip text-[15px] text-primary" />
+                  Attachments
+                </div>
+                <AttachmentsField attachments={attachments} onChange={setAttachments} />
+              </div>
+
+              {error && <p className="text-xs text-danger">{error}</p>}
+            </div>
+          </div>
+
+          {/* Right rail — Location cascade + at-a-glance facts about the
+              case being created. No Related cases / Attachments here: there's
+              no real relation or file-storage feature behind either yet. */}
+          <div className="overflow-y-auto bg-surface-2 px-5 py-5">
+            <div className="mb-5">
+              <div className="mb-2.5 flex items-center gap-2 text-[12px] font-semibold text-text">
+                <i className="ti ti-map-pin text-[14px] text-primary" />
                 Location
-              </p>
-              <div className="grid grid-cols-3 gap-2">
+              </div>
+              <div className="flex flex-col gap-2">
                 <select
                   value={portalId}
                   onChange={e => {
@@ -162,7 +312,7 @@ export function NewTestCaseModal({
                     setModuleId('');
                     setSuiteId('');
                   }}
-                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-500"
+                  className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs text-text outline-none focus:border-primary"
                 >
                   {tree.map(p => (
                     <option key={p.id} value={p.id}>
@@ -177,7 +327,7 @@ export function NewTestCaseModal({
                     setSuiteId('');
                   }}
                   disabled={modules.length === 0}
-                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                  className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs text-text outline-none focus:border-primary disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-text-3"
                 >
                   <option value="">Attach to portal directly</option>
                   {modules.map(m => (
@@ -190,7 +340,7 @@ export function NewTestCaseModal({
                   value={suiteId}
                   onChange={e => setSuiteId(e.target.value)}
                   disabled={!mod || suiteOptions.length === 0}
-                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                  className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs text-text outline-none focus:border-primary disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-text-3"
                 >
                   <option value="">Attach to module directly</option>
                   {suiteOptions.map(s => (
@@ -202,106 +352,38 @@ export function NewTestCaseModal({
               </div>
             </div>
 
-            <hr className="border-slate-100" />
-
-            {/* Properties */}
-            <div className="flex flex-wrap items-end gap-4">
-              <Field label="Priority" required>
-                <SegmentedRow
-                  value={priority}
-                  onChange={v => setPriority(v as Priority)}
-                  options={[
-                    { value: 'High', label: 'High', active: 'bg-red-100 text-red-800' },
-                    { value: 'Medium', label: 'Med', active: 'bg-amber-100 text-amber-800' },
-                    { value: 'Low', label: 'Low', active: 'bg-green-100 text-green-800' },
-                  ]}
-                />
-              </Field>
-              <Field label="Severity" required>
-                <SegmentedRow
-                  value={severity}
-                  onChange={v => setSeverity(v as Severity)}
-                  options={[
-                    { value: 'Critical', label: 'Critical', active: 'bg-red-100 text-red-800' },
-                    { value: 'Major', label: 'Major', active: 'bg-amber-100 text-amber-800' },
-                    { value: 'Minor', label: 'Minor', active: 'bg-green-100 text-green-800' },
-                  ]}
-                />
-              </Field>
-              <Field label="Type" required>
-                <div className="flex flex-wrap gap-1">
-                  {TYPES.map(t => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setType(t)}
-                      className={`cursor-pointer rounded border px-2 py-1 text-xs transition-all ${
-                        type === t
-                          ? 'border-blue-500 bg-indigo-50 font-semibold text-blue-700'
-                          : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
-                      }`}
-                    >
-                      {t}
-                    </button>
-                  ))}
+            <div>
+              <div className="mb-2.5 flex items-center gap-2 text-[12px] font-semibold text-text">
+                <i className="ti ti-info-circle text-[14px] text-primary" />
+                Details
+              </div>
+              <div className="flex flex-col text-[12px] text-text-2">
+                <div className="flex items-center justify-between border-b border-border py-2">
+                  <span>Created by</span>
+                  <span className="flex items-center gap-1.5 font-medium text-text">
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary-light text-[8px] font-bold text-primary-text">
+                      {authorName.slice(0, 1).toUpperCase()}
+                    </span>
+                    {authorName || 'You'}
+                  </span>
                 </div>
-              </Field>
+                <div className="flex items-center justify-between py-2">
+                  <span>Linked to runs</span>
+                  <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[10.5px] text-text-2">
+                    0 runs
+                  </span>
+                </div>
+              </div>
             </div>
-
-            <Field label="Title" required>
-              <input
-                type="text"
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                placeholder="Describe what this test verifies…"
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </Field>
-
-            <Field label="Description">
-              <textarea
-                value={desc}
-                onChange={e => setDesc(e.target.value)}
-                rows={2}
-                placeholder="Optional background context…"
-                className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </Field>
-
-            <Field label="Preconditions">
-              <textarea
-                value={preconditions}
-                onChange={e => setPreconditions(e.target.value)}
-                rows={2}
-                placeholder={'- User is signed in\n- Test data is loaded'}
-                className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </Field>
-
-            <Field label="Steps" required>
-              <StepEditor steps={steps} onChange={setSteps} />
-            </Field>
-
-            <Field label="Expected result">
-              <textarea
-                value={expected}
-                onChange={e => setExpected(e.target.value)}
-                rows={2}
-                placeholder="What should happen?"
-                className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </Field>
-
-            {error && <p className="text-xs text-red-600">{error}</p>}
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-border px-6 py-3">
           <button
             type="button"
             onClick={onClose}
-            className="cursor-pointer rounded-lg px-3.5 py-2 text-[13px] font-medium text-slate-600 transition-colors hover:bg-slate-100"
+            className="cursor-pointer rounded-lg px-3.5 py-2 text-[13px] font-medium text-text-2 transition-colors hover:bg-surface-2"
           >
             Cancel
           </button>
@@ -309,7 +391,7 @@ export function NewTestCaseModal({
             type="button"
             onClick={handleSave}
             disabled={saving}
-            className="cursor-pointer rounded-lg bg-blue-600 px-3.5 py-2 text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="cursor-pointer rounded-lg bg-primary px-3.5 py-2 text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? 'Saving…' : 'Save test case'}
           </button>
@@ -322,47 +404,21 @@ export function NewTestCaseModal({
 function Field({
   label,
   required,
+  hint,
   children,
 }: {
   label: string;
   required?: boolean;
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1">
-      <label className="text-[11px] font-semibold text-slate-500">
-        {label} {required && <span className="text-red-500">*</span>}
+      <label className="text-[11px] font-semibold text-text-2">
+        {label} {required && <span className="text-danger">*</span>}
+        {hint && <span className="ml-1.5 font-normal normal-case text-text-3">{hint}</span>}
       </label>
       {children}
-    </div>
-  );
-}
-
-function SegmentedRow<T extends string>({
-  value,
-  onChange,
-  options,
-}: {
-  value: T;
-  onChange: (v: T) => void;
-  options: { value: T; label: string; active: string }[];
-}) {
-  return (
-    <div className="flex overflow-hidden rounded-lg border border-slate-200">
-      {options.map(o => (
-        <button
-          key={o.value}
-          type="button"
-          onClick={() => onChange(o.value)}
-          className={`px-2.5 py-1.5 text-xs transition-colors ${
-            value === o.value
-              ? `font-semibold ${o.active}`
-              : 'bg-white text-slate-500 hover:bg-slate-50'
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
     </div>
   );
 }

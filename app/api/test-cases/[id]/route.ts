@@ -11,6 +11,25 @@ const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
 const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
 const STATUSES: CaseStatus[] = ['Active', 'Draft', 'Archived'];
 
+const MAX_ATTACHMENTS = 5;
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+
+function cleanAttachments(input: unknown): { name: string; dataUrl: string; size: number }[] {
+  if (!Array.isArray(input)) return [];
+  return (input as { name: string; dataUrl: string; size: number }[])
+    .filter(
+      a =>
+        a &&
+        typeof a.name === 'string' &&
+        typeof a.dataUrl === 'string' &&
+        a.dataUrl.startsWith('data:') &&
+        typeof a.size === 'number' &&
+        a.size <= MAX_ATTACHMENT_BYTES,
+    )
+    .slice(0, MAX_ATTACHMENTS)
+    .map(a => ({ name: a.name.slice(0, 200), dataUrl: a.dataUrl, size: a.size }));
+}
+
 const ownerSelect = {
   id: true,
   name: true,
@@ -75,6 +94,15 @@ export async function PATCH(req: Request, { params }: Ctx) {
     if (typeof body.expected === 'string') data.expected = body.expected;
     if (body.steps !== undefined) data.steps = body.steps as Prisma.InputJsonValue;
     if (typeof body.author === 'string') data.author = body.author;
+    if (Array.isArray(body.labels)) {
+      data.labels = (body.labels as unknown[])
+        .filter((l): l is string => typeof l === 'string')
+        .map(l => l.trim())
+        .filter(Boolean);
+    }
+    if (body.attachments !== undefined) {
+      data.attachments = cleanAttachments(body.attachments) as unknown as Prisma.InputJsonValue;
+    }
 
     if (body.priority !== undefined) {
       if (!PRIORITIES.includes(body.priority as Priority)) return bad('invalid priority');

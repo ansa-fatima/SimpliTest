@@ -2,11 +2,14 @@
 
 import { useStore } from '@/hooks/useStore';
 import { Sidebar } from '@/components/layout/Sidebar';
+import { Topbar } from '@/components/layout/Topbar';
 import { LoginPage } from '@/components/features/LoginPage';
 import { TestCaseList } from '@/components/features/TestCaseList';
 import { TestCaseView } from '@/components/features/TestCaseView';
 import { TestCaseEdit } from '@/components/features/TestCaseEdit';
+import { TestRunsBoard } from '@/components/features/TestRunsBoard';
 import { CyclesList } from '@/components/features/CyclesList';
+import { CycleOverview } from '@/components/features/CycleOverview';
 import { CycleView } from '@/components/features/CycleView';
 import { Dashboard } from '@/components/features/Dashboard';
 import { Reports } from '@/components/features/Reports';
@@ -36,7 +39,9 @@ export default function Home() {
     showDashboard,
     showTestCases,
     showCycles,
+    showTestRunsBoard,
     openCycle,
+    openCycleOverview,
     closeQuickLogCycle,
     backToCycles,
     createCycle,
@@ -82,6 +87,8 @@ export default function Home() {
     summary,
     cyclesLoading,
     runsLoading,
+    cycleOverview,
+    cycleOverviewLoading,
     quickLogCycle,
     dataVersion,
   } = state;
@@ -110,214 +117,251 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50">
-      {/* Sidebar — hidden on login */}
+    <div className="flex h-screen flex-col overflow-hidden bg-bg">
+      {/* Topbar — hidden on login */}
       {page !== 'login' && (
-        <Sidebar
-          page={page}
+        <Topbar
           user={user}
           projects={projects}
           currentProjectId={currentProjectId}
           onSwitchProject={switchProject}
           onCreateProject={createProject}
           onDeleteProject={deleteProject}
-          onShowDashboard={showDashboard}
-          onShowTestCases={showTestCases}
-          onShowTestRuns={showCycles}
-          onShowPlans={showPlans}
-          onShowReports={showReports}
-          onShowPlatforms={showPlatforms}
-          onShowMembers={showMembers}
-          onShowSettings={showSettings}
+          onOpenCase={viewApiCase}
           onShowProfile={showProfile}
           onLogout={logout}
         />
       )}
 
-      {/* Main content area */}
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {page === 'login' && <LoginPage onLogin={login} />}
-
-        {page === 'dashboard' && (
-          <Dashboard
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        {/* Sidebar — hidden on login */}
+        {page !== 'login' && (
+          <Sidebar
+            page={page}
+            onShowDashboard={showDashboard}
+            onShowTestCases={showTestCases}
+            onShowTestRunsBoard={showTestRunsBoard}
             onShowTestRuns={showCycles}
-            onOpenCycle={openCycle}
-            projectId={currentProjectId}
+            onShowPlans={showPlans}
+            onShowReports={showReports}
+            onShowPlatforms={showPlatforms}
+            onShowMembers={showMembers}
+            onShowSettings={showSettings}
           />
         )}
 
-        {page === 'reports' && (
-          <Reports
-            projectId={currentProjectId}
-            projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
-            portals={portals}
-            onOpenCycle={openCycle}
-          />
-        )}
+        {/* Main content area */}
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {page === 'login' && <LoginPage onLogin={login} />}
 
-        {page === 'members' && (
-          <Members
-            currentUser={user}
-            workspaceId={currentProjectId}
-            workspaceName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
-            onSelfRoleChanged={refreshSessionUser}
-          />
-        )}
+          {page === 'dashboard' && (
+            <Dashboard
+              onShowTestRuns={showTestRunsBoard}
+              onOpenCycle={openCycle}
+              onShowReports={showReports}
+              projectId={currentProjectId}
+              userName={user?.name || user?.username || null}
+            />
+          )}
 
-        {page === 'plans' && (
-          <ComingSoon
-            title="Test plans"
-            subtitle="Reusable test packs you can run on every release."
-            icon="ti-clipboard-text"
-            features={[
-              {
-                icon: 'ti-bookmark',
-                label: 'Pinned plans',
-                desc: 'Save a curated set of cases (e.g. "Smoke pack") and re-run it any time.',
-              },
-              {
-                icon: 'ti-repeat',
-                label: 'One-click re-run',
-                desc: 'Spin up a fresh Test Run from a plan in one click — keeps history per release.',
-              },
-              {
-                icon: 'ti-share',
-                label: 'Shareable',
-                desc: 'Hand a plan to another tester or schedule it on a cadence.',
-              },
-            ]}
-            cta={{
-              label: 'Use Test Runs for now',
-              icon: 'ti-arrow-right',
-              onClick: showCycles,
-              hint: 'Test Runs already supports module/suite/custom scopes — plans add reusability on top.',
-            }}
-          />
-        )}
+          {page === 'reports' && (
+            <Reports
+              projectId={currentProjectId}
+              projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
+              portals={portals}
+              onOpenCycle={openCycle}
+            />
+          )}
 
-        {page === 'platforms' && (
-          <ComingSoon
-            title="Platforms & portals"
-            subtitle="Organize where your test cases live."
-            icon="ti-stack-2"
-            features={[
-              {
-                icon: 'ti-app-window',
-                label: 'Platform list',
-                desc: 'Group portals under platforms like Web, Mobile, Desktop.',
-              },
-              {
-                icon: 'ti-eye',
-                label: 'Visibility rules',
-                desc: 'Restrict a portal to certain roles (e.g. Student portal = QA only).',
-              },
-              {
-                icon: 'ti-grip-vertical',
-                label: 'Reorder',
-                desc: 'Drag portals to set the order they appear in the sidebar tree.',
-              },
-            ]}
-            cta={{
-              label: 'Manage portals in Test Cases',
-              icon: 'ti-arrow-right',
-              onClick: showTestCases,
-              hint: 'Every portal/module/suite is fully manageable inline today — this config screen just consolidates it.',
-            }}
-          />
-        )}
+          {page === 'members' && (
+            <Members
+              currentUser={user}
+              workspaceId={currentProjectId}
+              workspaceName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
+              onSelfRoleChanged={refreshSessionUser}
+            />
+          )}
 
-        {page === 'profile' && <Profile currentUser={user} onUpdated={refreshSessionUser} />}
+          {page === 'plans' && (
+            <ComingSoon
+              title="Test plans"
+              subtitle="Reusable test packs you can run on every release."
+              icon="ti-clipboard-text"
+              features={[
+                {
+                  icon: 'ti-bookmark',
+                  label: 'Pinned plans',
+                  desc: 'Save a curated set of cases (e.g. "Smoke pack") and re-run it any time.',
+                },
+                {
+                  icon: 'ti-repeat',
+                  label: 'One-click re-run',
+                  desc: 'Spin up a fresh Test Run from a plan in one click — keeps history per release.',
+                },
+                {
+                  icon: 'ti-share',
+                  label: 'Shareable',
+                  desc: 'Hand a plan to another tester or schedule it on a cadence.',
+                },
+              ]}
+              cta={{
+                label: 'Use Test Runs for now',
+                icon: 'ti-arrow-right',
+                onClick: showCycles,
+                hint: 'Test Runs already supports module/suite/custom scopes — plans add reusability on top.',
+              }}
+            />
+          )}
 
-        {page === 'settings' && (
-          <ComingSoon
-            title="Settings"
-            subtitle="Workspace preferences, integrations, and billing."
-            icon="ti-settings"
-            features={[
-              {
-                icon: 'ti-bell',
-                label: 'Notifications',
-                desc: 'Email + Slack alerts when runs complete or new failures land.',
-              },
-              {
-                icon: 'ti-plug',
-                label: 'Integrations',
-                desc: 'Connect Jira, Linear, GitHub Issues for two-way defect sync.',
-              },
-              {
-                icon: 'ti-key',
-                label: 'API tokens',
-                desc: 'Create scoped tokens for CI pipelines to push test results.',
-              },
-            ]}
-          />
-        )}
+          {page === 'platforms' && (
+            <ComingSoon
+              title="Platforms & portals"
+              subtitle="Organize where your test cases live."
+              icon="ti-stack-2"
+              features={[
+                {
+                  icon: 'ti-app-window',
+                  label: 'Platform list',
+                  desc: 'Group portals under platforms like Web, Mobile, Desktop.',
+                },
+                {
+                  icon: 'ti-eye',
+                  label: 'Visibility rules',
+                  desc: 'Restrict a portal to certain roles (e.g. Student portal = QA only).',
+                },
+                {
+                  icon: 'ti-grip-vertical',
+                  label: 'Reorder',
+                  desc: 'Drag portals to set the order they appear in the sidebar tree.',
+                },
+              ]}
+              cta={{
+                label: 'Manage portals in Test Cases',
+                icon: 'ti-arrow-right',
+                onClick: showTestCases,
+                hint: 'Every portal/module/suite is fully manageable inline today — this config screen just consolidates it.',
+              }}
+            />
+          )}
 
-        {page === 'list' && (
-          <TestCaseList
-            projectId={currentProjectId}
-            projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
-            currentKey={currentKey}
-            onNavigate={navFeature}
-            authorName={user?.name || user?.username || 'You'}
-            onOpenCase={viewApiCase}
-            dataVersion={dataVersion}
-          />
-        )}
+          {page === 'profile' && <Profile currentUser={user} onUpdated={refreshSessionUser} />}
 
-        {page === 'view' && currentTC && (
-          <TestCaseView
-            tc={currentTC}
-            cases={currentCases}
-            currentKey={currentKey}
-            onBack={() => navFeature(currentKey.split(':')[0], currentKey.split(':')[1])}
-            onEdit={showEdit}
-            onDelete={() => {
-              if (confirm(`Delete "${currentTC.title}"? This cannot be undone.`)) {
-                deleteTC(currentTC.id);
-              }
-            }}
-            onDuplicate={duplicateTC}
-            onView={viewTC}
-          />
-        )}
+          {page === 'settings' && (
+            <ComingSoon
+              title="Settings"
+              subtitle="Workspace preferences, integrations, and billing."
+              icon="ti-settings"
+              features={[
+                {
+                  icon: 'ti-bell',
+                  label: 'Notifications',
+                  desc: 'Email + Slack alerts when runs complete or new failures land.',
+                },
+                {
+                  icon: 'ti-plug',
+                  label: 'Integrations',
+                  desc: 'Connect Jira, Linear, GitHub Issues for two-way defect sync.',
+                },
+                {
+                  icon: 'ti-key',
+                  label: 'API tokens',
+                  desc: 'Create scoped tokens for CI pipelines to push test results.',
+                },
+              ]}
+            />
+          )}
 
-        {page === 'edit' && currentTC && (
-          <TestCaseEdit
-            tc={currentTC}
-            projectId={currentProjectId}
-            onBack={() => viewTC(currentTC.id)}
-            onSave={saveEdit}
-          />
-        )}
+          {page === 'list' && (
+            <TestCaseList
+              projectId={currentProjectId}
+              projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
+              currentKey={currentKey}
+              onNavigate={navFeature}
+              authorName={user?.name || user?.username || 'You'}
+              onOpenCase={viewApiCase}
+              dataVersion={dataVersion}
+            />
+          )}
 
-        {page === 'cycles' && (
-          <CyclesList
-            cycles={cycles}
-            loading={cyclesLoading}
-            modules={modules}
-            projectId={currentProjectId}
-            onOpen={openCycle}
-            onArchive={archiveCycle}
-            onDelete={deleteCycle}
-            onCreate={createCycle}
-            onUpdate={updateCycle}
-          />
-        )}
+          {page === 'view' && currentTC && (
+            <TestCaseView
+              tc={currentTC}
+              cases={currentCases}
+              currentKey={currentKey}
+              projectId={currentProjectId}
+              onBack={() => navFeature(currentKey.split(':')[0], currentKey.split(':')[1])}
+              onEdit={showEdit}
+              onDelete={() => {
+                if (confirm(`Delete "${currentTC.title}"? This cannot be undone.`)) {
+                  deleteTC(currentTC.id);
+                }
+              }}
+              onDuplicate={duplicateTC}
+              onView={viewTC}
+            />
+          )}
 
-        {page === 'cycle' && currentCycle && (
-          <CycleView
-            cycle={currentCycle}
-            runs={runs}
-            summary={summary}
-            loading={runsLoading}
-            onBack={backToCycles}
-            onSubmitResult={submitResult}
-            onCloseRun={closeCycle}
-            onRegenerate={regenerateCycle}
-          />
-        )}
-      </main>
+          {page === 'edit' && currentTC && (
+            <TestCaseEdit
+              tc={currentTC}
+              projectId={currentProjectId}
+              onBack={() => viewTC(currentTC.id)}
+              onSave={saveEdit}
+            />
+          )}
+
+          {page === 'testRuns' && (
+            <TestRunsBoard
+              cycles={cycles}
+              loading={cyclesLoading}
+              modules={modules}
+              projectId={currentProjectId}
+              onOpenOverview={openCycleOverview}
+              onCreate={createCycle}
+              onUpdate={updateCycle}
+            />
+          )}
+
+          {page === 'cycles' && (
+            <CyclesList
+              cycles={cycles}
+              loading={cyclesLoading}
+              modules={modules}
+              projectId={currentProjectId}
+              onOpen={openCycleOverview}
+              onArchive={archiveCycle}
+              onDelete={deleteCycle}
+              onCreate={createCycle}
+              onUpdate={updateCycle}
+            />
+          )}
+
+          {page === 'cycleOverview' && (
+            <CycleOverview
+              data={cycleOverview}
+              loading={cycleOverviewLoading}
+              modules={modules}
+              projectId={currentProjectId}
+              onBack={backToCycles}
+              onOpenTestRun={() => cycleOverview && openCycle(cycleOverview.cycle.id)}
+              onUpdate={updateCycle}
+            />
+          )}
+
+          {page === 'cycle' && currentCycle && (
+            <CycleView
+              cycle={currentCycle}
+              runs={runs}
+              summary={summary}
+              loading={runsLoading}
+              onBack={backToCycles}
+              onSubmitResult={submitResult}
+              onCloseRun={closeCycle}
+              onRegenerate={regenerateCycle}
+            />
+          )}
+        </main>
+      </div>
 
       {/* Quick log summary — opened from outside the Test Runs page (Dashboard's
           Recent activity, the Stability report drilldown) since a quick log has

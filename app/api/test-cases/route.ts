@@ -7,6 +7,30 @@ const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
 const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
 const STATUSES: CaseStatus[] = ['Active', 'Draft', 'Archived'];
 
+// Attachments ride inline as base64 data URLs in a JSON column (same trick
+// as User.avatarUrl) -- no object storage. Capped modestly since this isn't
+// meant for anything but a handful of small screenshots/specs per case.
+const MAX_ATTACHMENTS = 5;
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+
+function cleanAttachments(
+  input: { name: string; dataUrl: string; size: number }[] | undefined,
+): { name: string; dataUrl: string; size: number }[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter(
+      a =>
+        a &&
+        typeof a.name === 'string' &&
+        typeof a.dataUrl === 'string' &&
+        a.dataUrl.startsWith('data:') &&
+        typeof a.size === 'number' &&
+        a.size <= MAX_ATTACHMENT_BYTES,
+    )
+    .slice(0, MAX_ATTACHMENTS)
+    .map(a => ({ name: a.name.slice(0, 200), dataUrl: a.dataUrl, size: a.size }));
+}
+
 const ownerSelect = {
   id: true,
   name: true,
@@ -118,16 +142,26 @@ export async function GET(req: Request) {
     if (statuses.length) where.status = { in: statuses };
     if (ownerIds.length) where.ownerId = { in: ownerIds };
 
-    const [items, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       prisma.testCase.findMany({
         where,
-        include: caseInclude,
+        include: {
+          ...caseInclude,
+          // Last Result column -- most recently touched run stands in for
+          // "latest", same fallback pointFromRun/pointFromQuickLog use
+          // (executedAt is null until a verdict is actually recorded).
+          runs: { orderBy: { updatedAt: 'desc' }, take: 1, select: { result: true } },
+        },
         orderBy: { [sortField]: order },
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
       prisma.testCase.count({ where }),
     ]);
+    const items = rows.map(({ runs, ...rest }) => ({
+      ...rest,
+      lastResult: runs[0]?.result ?? null,
+    }));
 
     return ok({ items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
   } catch (e) {
@@ -155,6 +189,8 @@ export async function POST(req: Request) {
       status?: CaseStatus;
       ownerId?: string | null;
       preconditions?: string;
+      labels?: string[];
+      attachments?: { name: string; dataUrl: string; size: number }[];
     }>(req);
 
     const title = body?.title?.trim();
@@ -202,6 +238,8 @@ export async function POST(req: Request) {
         author: body.author ?? '',
         ownerId: body.ownerId ?? null,
         order: (last?.order ?? -1) + 1,
+        labels: (body.labels ?? []).map(l => l.trim()).filter(Boolean),
+        attachments: cleanAttachments(body.attachments) as unknown as Prisma.InputJsonValue,
       },
       include: caseInclude,
     });
