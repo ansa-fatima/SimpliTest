@@ -17,7 +17,35 @@ export async function GET(_req: Request, { params }: Ctx) {
       include: { _count: { select: { runs: true } } },
     });
     if (!cycle) return notFound('Cycle not found');
-    return ok(cycle);
+
+    // Resolve scope name -- the raw row only has scopeType/scopeId; a
+    // refetch (e.g. CycleView refreshing after openCycle) needs the same
+    // resolved name the list route already provides, or the header/
+    // breadcrumb goes blank the moment this replaces the cached list copy.
+    let scopeName: string | null = null;
+    if (cycle.scopeType === 'All') scopeName = 'All test cases';
+    else if (cycle.scopeType === 'Custom') scopeName = 'Custom selection';
+    else if (cycle.scopeType === 'Portal' && cycle.scopeId) {
+      const p = await prisma.portal.findUnique({
+        where: { id: cycle.scopeId },
+        select: { name: true },
+      });
+      scopeName = p?.name ?? null;
+    } else if (cycle.scopeType === 'Module' && cycle.scopeId) {
+      const m = await prisma.module.findUnique({
+        where: { id: cycle.scopeId },
+        select: { name: true },
+      });
+      scopeName = m?.name ?? null;
+    } else if (cycle.scopeType === 'Suite' && cycle.scopeId) {
+      const s = await prisma.suite.findUnique({
+        where: { id: cycle.scopeId },
+        select: { name: true, module: { select: { name: true } } },
+      });
+      scopeName = s ? `${s.module.name} / ${s.name}` : null;
+    }
+
+    return ok({ ...cycle, scopeName });
   } catch (e) {
     return serverError(e);
   }

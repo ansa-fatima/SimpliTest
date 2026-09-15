@@ -12,19 +12,21 @@ interface SidebarProps {
   onShowTestCases: () => void;
   onShowTestRunsBoard: () => void;
   onShowTestRuns: () => void;
-  onShowPlans: () => void;
   onShowReports: () => void;
 
   // Configuration nav
-  onShowPlatforms: () => void;
   onShowMembers: () => void;
   onShowSettings: () => void;
 }
 
 // Page-buckets used to decide which top-level nav item is "active".
 const TESTCASE_PAGES: Page[] = ['list', 'view', 'edit'];
-const TESTRUNS_BOARD_PAGES: Page[] = ['testRuns'];
-const TESTRUN_PAGES: Page[] = ['cycles', 'cycleOverview', 'cycle'];
+// The Execution screen ('cycle') is opened from both Test Runs and Test
+// Cycles, but it's the same working/execution screen either way (its own
+// breadcrumb always reads "Test Runs / Execution") -- so it always reads as
+// Test Runs here too, regardless of which list it was opened from.
+const TESTRUNS_BOARD_PAGES: Page[] = ['testRuns', 'cycle'];
+const TESTRUN_PAGES: Page[] = ['cycles', 'cycleOverview'];
 
 // Slim icon-only rail -- everything workspace-identity-related (which
 // project, who's signed in, theme) now lives in the Topbar above; this rail
@@ -35,9 +37,7 @@ export function Sidebar({
   onShowTestCases,
   onShowTestRunsBoard,
   onShowTestRuns,
-  onShowPlans,
   onShowReports,
-  onShowPlatforms,
   onShowMembers,
   onShowSettings,
 }: SidebarProps) {
@@ -45,9 +45,7 @@ export function Sidebar({
   const onTestCases = TESTCASE_PAGES.includes(page);
   const onTestRunsBoard = TESTRUNS_BOARD_PAGES.includes(page);
   const onTestRuns = TESTRUN_PAGES.includes(page);
-  const onPlans = page === 'plans';
   const onReports = page === 'reports';
-  const onPlatforms = page === 'platforms';
   const onMembers = page === 'members';
   const onSettings = page === 'settings';
 
@@ -89,12 +87,6 @@ export function Sidebar({
         label="Test Cycles"
       />
       <IconNavItem
-        active={onPlans}
-        onClick={onShowPlans}
-        icon={<ClipboardIcon />}
-        label="Test plans"
-      />
-      <IconNavItem
         active={onReports}
         onClick={onShowReports}
         icon={<ChartIcon />}
@@ -103,12 +95,6 @@ export function Sidebar({
 
       <div className="my-1.5 h-px w-8 flex-shrink-0 bg-border" />
 
-      <IconNavItem
-        active={onPlatforms}
-        onClick={onShowPlatforms}
-        icon={<LayersIcon />}
-        label="Platforms"
-      />
       <IconNavItem
         active={onMembers}
         onClick={onShowMembers}
@@ -200,32 +186,11 @@ function TableIcon() {
   );
 }
 
-function ClipboardIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
-      <rect x="3" y="3" width="10" height="11" rx="1.5" />
-      <rect x="5.5" y="1.5" width="5" height="2.5" rx="0.5" />
-      <line x1="5.5" y1="7" x2="10.5" y2="7" strokeLinecap="round" />
-      <line x1="5.5" y1="10" x2="9" y2="10" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function ChartIcon() {
   return (
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
       <path d="M3 13V6M7 13V3M11 13V8" strokeLinecap="round" />
       <line x1="2" y1="13.5" x2="14" y2="13.5" />
-    </svg>
-  );
-}
-
-function LayersIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
-      <path d="M8 1.5L1.5 5 8 8.5 14.5 5 8 1.5z" strokeLinejoin="round" />
-      <path d="M1.5 8.5L8 12 14.5 8.5" strokeLinejoin="round" />
-      <path d="M1.5 11.5L8 15 14.5 11.5" strokeLinejoin="round" />
     </svg>
   );
 }

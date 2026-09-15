@@ -58,6 +58,7 @@ export async function GET(req: Request) {
     const portalIdFilter = sp.get('portalId') || undefined;
     const moduleIdFilter = sp.get('moduleId') || undefined;
     const suiteIdFilter = sp.get('suiteId') || undefined;
+    const versionFilter = sp.get('version') || undefined;
     const testerFilter = sp.get('tester') || undefined;
 
     // Resolve scope -> portal/module names once, the same way /api/cycles
@@ -115,7 +116,11 @@ export async function GET(req: Request) {
 
     const [caseCycles, manualCycles] = await Promise.all([
       prisma.testCycle.findMany({
-        where: { projectId, mode: 'CaseBased' },
+        where: {
+          projectId,
+          mode: 'CaseBased',
+          ...(versionFilter ? { version: versionFilter } : {}),
+        },
         select: {
           id: true,
           name: true,
@@ -127,7 +132,7 @@ export async function GET(req: Request) {
         },
       }),
       prisma.testCycle.findMany({
-        where: { projectId, mode: 'Manual' },
+        where: { projectId, mode: 'Manual', ...(versionFilter ? { version: versionFilter } : {}) },
         select: {
           id: true,
           name: true,

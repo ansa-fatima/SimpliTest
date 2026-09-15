@@ -14,8 +14,6 @@ export type Page =
   | 'cycle'
   | 'reports'
   | 'members'
-  | 'plans'
-  | 'platforms'
   | 'settings'
   | 'profile';
 
@@ -85,7 +83,9 @@ export interface TestCycle {
   updatedAt: string;
   summary?: CycleSummary;
 
-  // Manual-mode bookkeeping (free text; present for all cycles but only meaningful when mode === 'Manual')
+  // Portal/Module/Suite name -- free text for Manual (quick-log) cycles,
+  // server-derived from scopeType/scopeId for CaseBased cycles. Present on
+  // both modes so listings can filter/display location consistently.
   portalName?: string | null;
   moduleName?: string | null;
   featureName?: string | null;

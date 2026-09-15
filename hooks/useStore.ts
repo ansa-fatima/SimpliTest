@@ -130,6 +130,16 @@ export interface AppState {
   // has nothing to show for a quick log (no per-case TestRun rows).
   quickLogCycle: TestCycle | null;
 
+  // Which report tile Reports should open on when it mounts — set by
+  // showReports(tab). null means land on the tile picker, same as today.
+  reportsInitialTab: 'stability' | 'cycleHistory' | null;
+
+  // Which sidebar item the Execution screen (page 'cycle') was reached from
+  // -- so the sidebar keeps highlighting wherever the user actually came
+  // from instead of always jumping to Test Cycles. Set by openCycle /
+  // openCycleOverview based on the page they were called from.
+  cycleOrigin: 'testRuns' | 'cycles';
+
   // Monotonic counter — bumped on test-case create/edit/delete so any subscribed
   // list (e.g. TestCaseList) refetches from the API.
   dataVersion: number;
@@ -162,6 +172,8 @@ export function useStore() {
     cycleOverview: null,
     cycleOverviewLoading: false,
     quickLogCycle: null,
+    reportsInitialTab: null,
+    cycleOrigin: 'cycles',
     dataVersion: 0,
   });
 
@@ -502,10 +514,14 @@ export function useStore() {
   }, []);
 
   const showDashboard = useCallback(() => update({ page: 'dashboard' }), [update]);
-  const showReports = useCallback(() => update({ page: 'reports' }), [update]);
+  // An optional tab jumps straight into that report (e.g. Dashboard's "Full
+  // stability report" link) instead of always landing on the picker tiles.
+  const showReports = useCallback(
+    (tab?: 'stability' | 'cycleHistory') =>
+      update({ page: 'reports', reportsInitialTab: tab ?? null }),
+    [update],
+  );
   const showMembers = useCallback(() => update({ page: 'members' }), [update]);
-  const showPlans = useCallback(() => update({ page: 'plans' }), [update]);
-  const showPlatforms = useCallback(() => update({ page: 'platforms' }), [update]);
   const showSettings = useCallback(() => update({ page: 'settings' }), [update]);
   const showProfile = useCallback(() => update({ page: 'profile' }), [update]);
 
@@ -828,6 +844,11 @@ export function useStore() {
       setState(s => ({
         ...s,
         page: 'cycle',
+        // The board is the only place that should make Execution read as
+        // "Test Runs" in the sidebar — every other entry point (Test
+        // Cycles, Cycle Overview, Dashboard) keeps the prior "Test Cycles"
+        // default.
+        cycleOrigin: s.page === 'testRuns' ? 'testRuns' : 'cycles',
         currentCycle: cycle,
         runs: [],
         summary: null,
@@ -871,6 +892,7 @@ export function useStore() {
       setState(s => ({
         ...s,
         page: 'cycleOverview',
+        cycleOrigin: 'cycles',
         cycleOverview: null,
         cycleOverviewLoading: true,
       }));
@@ -889,16 +911,21 @@ export function useStore() {
     setState(s => ({ ...s, quickLogCycle: null }));
   }, []);
 
-  const backToCycles = useCallback(() => {
+  // Leaves a cycle/overview screen for wherever the user actually came from
+  // -- the Test Runs board if that's what opened it (cycleOrigin), Test
+  // Cycles otherwise. Named for what it does, not a fixed destination, since
+  // that destination now varies.
+  const backFromCycle = useCallback(() => {
     setState(s => ({
       ...s,
-      page: 'cycles',
+      page: s.cycleOrigin === 'testRuns' ? 'testRuns' : 'cycles',
       currentCycle: null,
       runs: [],
       summary: null,
       cycleOverview: null,
     }));
-  }, []);
+    loadCycles();
+  }, [loadCycles]);
 
   const createCycle = useCallback(
     async (input: {
@@ -965,6 +992,21 @@ export function useStore() {
           api
             .get<CycleOverviewData>(`/api/cycles/${cycleId}/overview`)
             .then(overview => setState(s2 => ({ ...s2, cycleOverview: overview })))
+            .catch(() => {});
+          return s;
+        });
+        // Same idea for the Execution screen — editing a run from its own
+        // header shouldn't need a leave-and-reopen to see the new name/
+        // version/environment in the header.
+        setState(s => {
+          if (s.currentCycle?.id !== cycleId) return s;
+          api
+            .get<TestCycle>(`/api/cycles/${cycleId}`)
+            .then(fresh =>
+              setState(s2 =>
+                s2.currentCycle?.id === cycleId ? { ...s2, currentCycle: fresh } : s2,
+              ),
+            )
             .catch(() => {});
           return s;
         });
@@ -1123,7 +1165,7 @@ export function useStore() {
     openCycle,
     openCycleOverview,
     closeQuickLogCycle,
-    backToCycles,
+    backFromCycle,
     createCycle,
     archiveCycle,
     deleteCycle,
@@ -1139,8 +1181,6 @@ export function useStore() {
     closeCycle,
     showReports,
     showMembers,
-    showPlans,
-    showPlatforms,
     showSettings,
     showProfile,
     refreshSessionUser,

@@ -57,12 +57,12 @@ export async function GET(req: Request) {
     // and safe since neither one nests). Suite (Feature) can't be filtered
     // at this level: suites nest arbitrarily, and a suite's own rollup needs
     // every descendant still present to walk, so it's applied after — see
-    // targetSuiteRow below. Tester isn't a Stability filter — module/feature
-    // health is meant to read the same no matter who's looking; it lives on
-    // Cycle History instead, where "who did this" is actually the point.
+    // targetSuiteRow below.
     const portalIdFilter = sp.get('portalId') || undefined;
     const moduleIdFilter = sp.get('moduleId') || undefined;
     const suiteIdFilter = sp.get('suiteId') || undefined;
+    const versionFilter = sp.get('version') || undefined;
+    const testerFilter = sp.get('tester') || undefined;
 
     const [portals, runs, quickLogs] = await Promise.all([
       prisma.portal.findMany({
@@ -81,8 +81,13 @@ export async function GET(req: Request) {
       }),
       prisma.testRun.findMany({
         where: {
-          cycle: { projectId, mode: 'CaseBased' },
+          cycle: {
+            projectId,
+            mode: 'CaseBased',
+            ...(versionFilter ? { version: versionFilter } : {}),
+          },
           result: { in: ['Passed', 'Failed'] },
+          ...(testerFilter ? { executedBy: testerFilter } : {}),
         },
         select: {
           result: true,
@@ -99,6 +104,8 @@ export async function GET(req: Request) {
           mode: 'Manual',
           scopeType: { in: ['Module', 'Suite'] },
           scopeId: { not: null },
+          ...(versionFilter ? { version: versionFilter } : {}),
+          ...(testerFilter ? { loggedBy: testerFilter } : {}),
         },
         select: {
           id: true,

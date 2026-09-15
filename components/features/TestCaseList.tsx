@@ -943,7 +943,7 @@ export function TestCaseList({
   // ─── Render ────────────────────────────────────────────────
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div className="flex-1 overflow-y-auto px-44 py-6">
         {/* Breadcrumb */}
         <div className="mb-2 flex items-center gap-1.5 text-[12px] text-text-3">
           <span className="hover:text-text">{projectName || 'Project'}</span>

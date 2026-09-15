@@ -151,7 +151,7 @@ export function Members({
   // ─── Render ──────────────────────────────────────────────
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div className="flex-1 overflow-y-auto px-44 py-6">
         {/* Header */}
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>

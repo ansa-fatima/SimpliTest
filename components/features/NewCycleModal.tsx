@@ -69,11 +69,12 @@ export function NewCycleModal({
   defaultMode = 'CaseBased',
 }: NewCycleModalProps) {
   const isEdit = !!initial;
-  const [mode, setMode] = useState<CycleMode>(initial?.mode ?? defaultMode);
+  // Fixed for the modal's lifetime -- which mode you're in is decided by
+  // which button opened it (Add Test Run vs Quick Log), not chosen here.
+  const mode: CycleMode = initial?.mode ?? defaultMode;
 
   // ── Core fields ─────────────────────────────────────────────
   const [name, setName] = useState(initial?.name ?? '');
-  const [description, setDescription] = useState(initial?.description ?? '');
   const [targetDate, setTargetDate] = useState(
     initial?.targetDate ? initial.targetDate.slice(0, 10) : '',
   );
@@ -93,19 +94,15 @@ export function NewCycleModal({
   const [modules, setModules] = useState<ApiModule[]>([]);
   const [portals, setPortals] = useState<ApiPortal[]>([]);
   const [loadingModules, setLoadingModules] = useState(true);
+  // Versions already used somewhere in this project -- the Version field is
+  // a real <select> now, so it needs a real option list rather than letting
+  // free text through.
+  const [knownVersions, setKnownVersions] = useState<string[]>([]);
 
-  // Custom scope — pick specific test cases instead of a location. Only
-  // meaningful for CaseBased; scope is 'location' unless the initial cycle
-  // was itself Custom-scoped (editing isn't supported for Custom yet, so this
-  // only ever starts true when freshly created that way isn't possible —
-  // kept simple: always starts on 'location').
-  const [scopePickMode, setScopePickMode] = useState<'location' | 'custom'>('location');
-  const [customSearch, setCustomSearch] = useState('');
-  const [customResults, setCustomResults] = useState<
-    { id: string; caseNum: number; title: string }[]
-  >([]);
-  const [customLoading, setCustomLoading] = useState(false);
-  const [selectedCaseIds, setSelectedCaseIds] = useState<Set<string>>(new Set());
+  // Read-only preview of how many cases the current scope covers -- mirrors
+  // exactly what /api/cycles POST would match, never a value typed in.
+  const [caseCount, setCaseCount] = useState<number | null>(null);
+  const [caseCountLoading, setCaseCountLoading] = useState(false);
 
   // ── Manual-mode fields ──────────────────────────────────────
   const [completedOn, setCompletedOn] = useState(() => {
@@ -169,16 +166,24 @@ export function NewCycleModal({
     (async () => {
       try {
         const modUrl = projectId ? `/api/modules?projectId=${projectId}` : '/api/modules';
-        const [mods, ports] = await Promise.all([
+        const [mods, ports, cycles] = await Promise.all([
           api.get<ApiModule[]>(modUrl),
           projectId
             ? api
                 .get<{ id: string; name: string }[]>(`/api/portals?projectId=${projectId}`)
                 .catch(() => [])
             : Promise.resolve([]),
+          projectId
+            ? api
+                .get<{ version: string | null }[]>(`/api/cycles?projectId=${projectId}`)
+                .catch(() => [])
+            : Promise.resolve([]),
         ]);
         setModules(mods);
         setPortals(ports.map(p => ({ id: p.id, name: p.name })));
+        setKnownVersions(
+          Array.from(new Set(cycles.map(c => c.version).filter((v): v is string => !!v))),
+        );
       } catch (e) {
         // Not fatal — Manual mode doesn't need any of this.
         console.error('[modules/portals]', e);
@@ -188,32 +193,32 @@ export function NewCycleModal({
     })();
   }, [projectId]);
 
-  // Custom-scope case picker — searches the whole workspace, debounced so
-  // every keystroke doesn't fire a request.
+  // Live count of how many cases the current CaseBased scope matches --
+  // same filters /api/cycles POST uses to generate runs, just read-only here.
   useEffect(() => {
-    if (mode !== 'CaseBased' || scopePickMode !== 'custom') return;
+    if (mode !== 'CaseBased') return;
     let cancelled = false;
-    setCustomLoading(true);
-    const t = setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({ page: '1', pageSize: '50', sort: 'caseNum' });
-        if (projectId) params.set('projectId', projectId);
-        if (customSearch.trim()) params.set('search', customSearch.trim());
-        const data = await api.get<{ items: { id: string; caseNum: number; title: string }[] }>(
-          `/api/test-cases?${params.toString()}`,
-        );
-        if (!cancelled) setCustomResults(data.items);
-      } catch (e) {
-        console.error('[case picker]', e);
-      } finally {
-        if (!cancelled) setCustomLoading(false);
-      }
-    }, 250);
+    setCaseCountLoading(true);
+    const params = new URLSearchParams({ pageSize: '1' });
+    if (suiteIdF) params.set('suiteId', suiteIdF);
+    else if (moduleIdF) params.set('moduleId', moduleIdF);
+    else if (portalIdF) params.set('portalId', portalIdF);
+    else if (projectId) params.set('projectId', projectId);
+    api
+      .get<{ total: number }>(`/api/test-cases?${params.toString()}`)
+      .then(d => {
+        if (!cancelled) setCaseCount(d.total);
+      })
+      .catch(() => {
+        if (!cancelled) setCaseCount(null);
+      })
+      .finally(() => {
+        if (!cancelled) setCaseCountLoading(false);
+      });
     return () => {
       cancelled = true;
-      clearTimeout(t);
     };
-  }, [mode, scopePickMode, customSearch, projectId]);
+  }, [mode, portalIdF, moduleIdF, suiteIdF, projectId]);
 
   // Cascading invariants — when a parent changes, child must clear if it no
   // longer matches. (Portal change → drop module if module not under new portal;
@@ -326,27 +331,18 @@ export function NewCycleModal({
 
     const payload: CycleFormPayload = {
       name: name.trim(),
-      description: description.trim() || undefined,
       mode,
       targetDate: targetDate || null,
     };
 
     if (mode === 'CaseBased') {
-      if (scopePickMode === 'custom') {
-        if (selectedCaseIds.size === 0) {
-          setError('Pick at least one test case');
-          return;
-        }
-        payload.scopeType = 'Custom';
-        payload.testCaseIds = Array.from(selectedCaseIds);
-      } else {
-        payload.scopeType = derivedScope.scopeType;
-        payload.scopeId = derivedScope.scopeId;
-      }
+      payload.scopeType = derivedScope.scopeType;
+      payload.scopeId = derivedScope.scopeId;
       // Optional context that's useful even when running test cases per-case.
       payload.environment = environment || undefined;
       payload.platform = platform || undefined;
       payload.version = version.trim() || undefined;
+      payload.cycleCategory = cycleCategory || undefined;
       payload.ticketLink = ticketLink.trim() || undefined;
     } else {
       // Quick-log was executed on `completedOn`. If that's still today, capture
@@ -397,62 +393,24 @@ export function NewCycleModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[92vh] w-full max-w-[640px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[92vh] w-full max-w-[640px] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 pb-4 pt-5">
-          <h2 className="text-base font-bold text-slate-900">
-            {isEdit ? 'Edit cycle' : 'New test run'}
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h2 className="text-[15px] font-semibold text-text">
+            {isEdit ? `Edit ${initial?.name}` : 'New Test Cycle'}
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="cursor-pointer rounded p-1 text-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+            className="rounded p-1 text-text-3 transition-colors hover:bg-surface-2 hover:text-text"
           >
-            ✕
+            <i className="ti ti-x text-[16px]" />
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {/* Mode toggle — hidden in edit mode (mode is locked) */}
-          {!isEdit && (
-            <div className="border-b border-slate-100 bg-slate-50 px-6 py-3">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                Cycle type
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                <ModeOption
-                  active={mode === 'CaseBased'}
-                  title="Detailed"
-                  desc="Execute each test case one by one (pass / fail / blocked per case)."
-                  onClick={() => setMode('CaseBased')}
-                />
-                <ModeOption
-                  active={mode === 'Manual'}
-                  title="Quick log"
-                  desc="Just record aggregate counts per Module + Feature — no test cases needed."
-                  onClick={() => setMode('Manual')}
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="flex flex-col gap-4 px-6 py-4">
-            {/* Common: name + description */}
-            <Field label="Name" required>
-              <input
-                type="text"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder={
-                  mode === 'Manual'
-                    ? 'e.g. Sprint 24 — QR Attendance regression'
-                    : 'e.g. Sprint 24 regression'
-                }
-                className="input"
-              />
-            </Field>
-
+          <div className="flex flex-col gap-4 px-5 py-4">
             {mode === 'Manual' ? (
               <>
                 {/* Manual-mode form ─────────────────────────────
@@ -461,6 +419,16 @@ export function NewCycleModal({
                     derivedScope below) — this is what makes module/feature
                     stability tracking possible for quick logs: the log is tied to
                     a real record, not a free-text string that can typo/drift. */}
+                <Field label="Name" required>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    placeholder="e.g. Sprint 24 — QR Attendance regression"
+                    className="input"
+                  />
+                </Field>
+
                 <Field label="Completed on" required>
                   <input
                     type="date"
@@ -469,7 +437,7 @@ export function NewCycleModal({
                     max={localDateStr()}
                     className="input"
                   />
-                  <p className="mt-1 text-[11px] text-slate-400">
+                  <p className="mt-1 text-[11px] text-text-3">
                     Back-date a cycle you ran earlier; defaults to today.
                   </p>
                 </Field>
@@ -543,7 +511,7 @@ export function NewCycleModal({
                         as-is to keep the text.
                       </p>
                     )}
-                  <p className="mt-1.5 text-[11px] text-slate-400">
+                  <p className="mt-1.5 text-[11px] text-text-3">
                     Picking a module or feature here feeds the Stability report — it counts this log
                     toward that module/feature&apos;s rolling pass rate.
                   </p>
@@ -599,8 +567,8 @@ export function NewCycleModal({
                 </Field>
 
                 {/* Issue counts */}
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <div className="rounded-lg border border-border bg-surface-2 p-3">
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-2">
                     Issues found
                   </p>
                   <div className="grid grid-cols-4 gap-2">
@@ -629,7 +597,7 @@ export function NewCycleModal({
                     />
                   </div>
                   {severityMismatch && (
-                    <p className="mt-1.5 text-[11px] font-medium text-red-600">
+                    <p className="mt-1.5 text-[11px] font-medium text-danger">
                       Critical + Major + Minor ({severitySum}) must equal Total ({issueCount}).
                     </p>
                   )}
@@ -637,7 +605,7 @@ export function NewCycleModal({
                   {/* Resolution — optional. To record a retest, come back and
                       edit THIS SAME cycle with fresh Done / Remaining numbers
                       rather than logging a new one. */}
-                  <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-slate-200 pt-2.5">
+                  <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-border pt-2.5">
                     <CountField
                       label="Done"
                       value={doneCount}
@@ -652,15 +620,15 @@ export function NewCycleModal({
                     />
                   </div>
                   {doneRemainingMismatch && (
-                    <p className="mt-1.5 text-[11px] font-medium text-red-600">
+                    <p className="mt-1.5 text-[11px] font-medium text-danger">
                       Done + Remaining ({doneRemainingSum}) must equal Total ({issueCount}).
                     </p>
                   )}
                 </div>
 
                 {/* Test case counts (optional) */}
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <div className="rounded-lg border border-border bg-surface-2 p-3">
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-2">
                     Test case results (optional)
                   </p>
                   <div className="grid grid-cols-3 gap-2">
@@ -688,219 +656,217 @@ export function NewCycleModal({
             ) : (
               <>
                 {/* CaseBased-mode form ──────────────────────── */}
-                <Field label="Description">
-                  <textarea
-                    value={description}
-                    onChange={e => setDescription(e.target.value)}
-                    rows={2}
-                    placeholder="Optional notes about this cycle…"
-                    className="input resize-y"
-                  />
-                </Field>
+                <p className="text-[12px] font-medium text-text-2">Basics</p>
 
-                <Field label="Scope">
-                  <div className="mb-2 flex gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setScopePickMode('location')}
-                      className={cn(
-                        'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                        scopePickMode === 'location'
-                          ? 'border-blue-500 bg-blue-50 font-semibold text-blue-700'
-                          : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50',
-                      )}
-                    >
-                      By location
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setScopePickMode('custom')}
-                      className={cn(
-                        'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                        scopePickMode === 'custom'
-                          ? 'border-blue-500 bg-blue-50 font-semibold text-blue-700'
-                          : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50',
-                      )}
-                    >
-                      Pick specific cases
-                    </button>
-                  </div>
-
-                  {scopePickMode === 'location' ? (
-                    <>
-                      {/* Optional cascading scope — leave any of the three blank and that
-                          level is treated as "any". Cycle scope is derived from the deepest
-                          non-empty pick (All / Portal / Module / Suite). */}
-                      <div className="grid grid-cols-3 gap-2">
-                        <select
-                          value={portalIdF}
-                          onChange={e => setPortalIdF(e.target.value)}
-                          disabled={loadingModules}
-                          className="input"
-                        >
-                          <option value="">Any portal</option>
-                          {portals.map(p => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          value={moduleIdF}
-                          onChange={e => setModuleIdF(e.target.value)}
-                          disabled={loadingModules || visibleModules.length === 0}
-                          className="input"
-                        >
-                          <option value="">Any module</option>
-                          {visibleModules.map(m => (
-                            <option key={m.id} value={m.id}>
-                              {m.name}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          value={suiteIdF}
-                          onChange={e => setSuiteIdF(e.target.value)}
-                          disabled={loadingModules || visibleSuites.length === 0}
-                          className="input"
-                        >
-                          <option value="">Any feature</option>
-                          {visibleSuites.map(s => (
-                            <option key={s.id} value={s.id}>
-                              {moduleIdF ? s.name : `${s.moduleName} — ${s.name}`}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <p className="mt-1.5 text-[11px] text-slate-400">
-                        {derivedScope.scopeType === 'All'
-                          ? 'Includes every test case in this workspace.'
-                          : derivedScope.scopeType === 'Portal'
-                            ? 'Includes every test case under this portal.'
-                            : derivedScope.scopeType === 'Module'
-                              ? 'Includes every test case under this module (direct + nested features).'
-                              : 'Includes only test cases in this feature.'}
-                      </p>
-                    </>
-                  ) : (
-                    <div>
-                      <input
-                        type="text"
-                        value={customSearch}
-                        onChange={e => setCustomSearch(e.target.value)}
-                        placeholder="Search test cases by title…"
-                        className="input"
-                      />
-                      <div className="mt-2 max-h-[180px] overflow-y-auto rounded-lg border border-slate-200">
-                        {customLoading ? (
-                          <p className="p-3 text-center text-[11px] text-slate-400">Loading…</p>
-                        ) : customResults.length === 0 ? (
-                          <p className="p-3 text-center text-[11px] text-slate-400">
-                            No test cases match.
-                          </p>
-                        ) : (
-                          customResults.map(tc => {
-                            const checked = selectedCaseIds.has(tc.id);
-                            return (
-                              <label
-                                key={tc.id}
-                                className="flex cursor-pointer items-center gap-2 border-b border-slate-100 px-2.5 py-1.5 text-[12px] last:border-b-0 hover:bg-slate-50"
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={() =>
-                                    setSelectedCaseIds(prev => {
-                                      const next = new Set(prev);
-                                      if (next.has(tc.id)) next.delete(tc.id);
-                                      else next.add(tc.id);
-                                      return next;
-                                    })
-                                  }
-                                />
-                                <span className="font-mono text-[10.5px] text-slate-400">
-                                  TC-{String(tc.caseNum).padStart(2, '0')}
-                                </span>
-                                <span className="truncate text-slate-700">{tc.title}</span>
-                              </label>
-                            );
-                          })
-                        )}
-                      </div>
-                      <p className="mt-1.5 text-[11px] text-slate-400">
-                        {selectedCaseIds.size} case{selectedCaseIds.size === 1 ? '' : 's'} selected
-                      </p>
-                    </div>
-                  )}
-                </Field>
-
-                {/* Run context — optional but very useful when sharing the summary. */}
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Environment">
-                    <SelectWithCustom
-                      value={environment}
-                      onChange={setEnvironment}
-                      options={ENVIRONMENTS}
-                      placeholder="Production / QA / …"
+                  <Field label="Cycle Name" required>
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={e => setName(e.target.value)}
+                      placeholder="e.g. Sprint 24 regression"
+                      className="input"
                     />
                   </Field>
-                  <Field label="Platform">
-                    <SelectWithCustom
-                      value={platform}
-                      onChange={setPlatform}
-                      options={PLATFORMS}
-                      placeholder="Android / iPhone / Web / All"
-                    />
+                  <Field label="Cycle Type">
+                    <select
+                      value={cycleCategory}
+                      onChange={e => setCycleCategory(e.target.value)}
+                      className="input"
+                    >
+                      <option value="">Select type…</option>
+                      {cycleCategory && !CYCLE_CATEGORIES.includes(cycleCategory) && (
+                        <option value={cycleCategory}>{cycleCategory}</option>
+                      )}
+                      {CYCLE_CATEGORIES.map(c => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
                   </Field>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Version">
-                    <input
-                      type="text"
+                    <select
                       value={version}
                       onChange={e => setVersion(e.target.value)}
-                      placeholder="v3.5.9"
                       className="input"
-                    />
+                    >
+                      <option value="">Select version…</option>
+                      {/* The current value always gets an option, even if it isn't
+                          in knownVersions yet — a real <select> silently blanks out
+                          otherwise, which would look like the saved version vanished. */}
+                      {version && !knownVersions.includes(version) && (
+                        <option value={version}>{version}</option>
+                      )}
+                      {knownVersions.map(v => (
+                        <option key={v} value={v}>
+                          {v}
+                        </option>
+                      ))}
+                    </select>
                   </Field>
-                  <Field label="Ticket link">
+                  <Field label="Environment">
+                    <select
+                      value={environment}
+                      onChange={e => setEnvironment(e.target.value)}
+                      className="input"
+                    >
+                      <option value="">Select environment…</option>
+                      {environment && !ENVIRONMENTS.includes(environment) && (
+                        <option value={environment}>{environment}</option>
+                      )}
+                      {ENVIRONMENTS.map(e => (
+                        <option key={e} value={e}>
+                          {e}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+
+                <Field label="Platform">
+                  <select
+                    value={platform}
+                    onChange={e => setPlatform(e.target.value)}
+                    className="input"
+                  >
+                    <option value="">Select platform…</option>
+                    {platform && !PLATFORMS.includes(platform) && (
+                      <option value={platform}>{platform}</option>
+                    )}
+                    {PLATFORMS.map(p => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                {/* Scope — three independent, optional selects. The deepest
+                    non-empty pick wins (suite > module > portal > All). */}
+                <p className="mt-1 text-[12px] font-medium text-text-2">Scope</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <Field label="Portal">
+                    <select
+                      value={portalIdF}
+                      onChange={e => setPortalIdF(e.target.value)}
+                      disabled={loadingModules}
+                      className="input"
+                    >
+                      <option value="">Select Portal…</option>
+                      {portals.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Module">
+                    <select
+                      value={moduleIdF}
+                      onChange={e => setModuleIdF(e.target.value)}
+                      disabled={loadingModules || visibleModules.length === 0}
+                      className="input"
+                    >
+                      <option value="">Select Module…</option>
+                      {visibleModules.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Suite">
+                    <select
+                      value={suiteIdF}
+                      onChange={e => setSuiteIdF(e.target.value)}
+                      disabled={loadingModules || visibleSuites.length === 0}
+                      className="input"
+                    >
+                      <option value="">Select Suite…</option>
+                      {visibleSuites.map(s => (
+                        <option key={s.id} value={s.id}>
+                          {moduleIdF ? s.name : `${s.moduleName} › ${s.name}`}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                <p className="text-[11px] text-text-3">
+                  {derivedScope.scopeType === 'All'
+                    ? 'Includes every test case in this workspace.'
+                    : derivedScope.scopeType === 'Portal'
+                      ? 'Includes every test case under this portal.'
+                      : derivedScope.scopeType === 'Module'
+                        ? 'Includes every test case under this module (direct + nested suites).'
+                        : 'Includes every test case under this suite.'}
+                </p>
+
+                <div className="flex items-center justify-between rounded-lg bg-surface-2 px-3 py-2 text-[12.5px]">
+                  <span className="text-text-2">Total Test Cases</span>
+                  <span className="font-semibold text-text">
+                    {caseCountLoading ? 'Counting…' : (caseCount ?? '—')}
+                  </span>
+                </div>
+
+                <p className="mt-1 text-[12px] font-medium text-text-2">Schedule &amp; Tracking</p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Start Date">
+                    <div className="input flex items-center bg-surface-2">
+                      {initial ? initial.createdAt.slice(0, 10) : localDateStr()}
+                    </div>
+                  </Field>
+                  <Field label="End Date">
                     <input
-                      type="text"
-                      value={ticketLink}
-                      onChange={e => setTicketLink(e.target.value)}
-                      placeholder="NPD-10656 or full URL"
+                      type="date"
+                      value={targetDate}
+                      onChange={e => setTargetDate(e.target.value)}
                       className="input"
                     />
                   </Field>
                 </div>
+
+                <Field label="Jira ticket link (optional)">
+                  <input
+                    type="text"
+                    value={ticketLink}
+                    onChange={e => setTicketLink(e.target.value)}
+                    placeholder="JIRA-1234 or a full URL"
+                    className="input"
+                  />
+                </Field>
+                <p className="-mt-2 text-[11px] text-text-3">
+                  Points out to your tracker — Simplitest doesn&apos;t manage a ticket workflow.
+                </p>
               </>
             )}
 
-            <Field label="Target date (optional)">
-              <input
-                type="date"
-                value={targetDate}
-                onChange={e => setTargetDate(e.target.value)}
-                className="input"
-              />
-            </Field>
-
-            {error && (
-              <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
-                {error}
-              </div>
+            {mode === 'Manual' && (
+              <Field label="Target date (optional)">
+                <input
+                  type="date"
+                  value={targetDate}
+                  onChange={e => setTargetDate(e.target.value)}
+                  className="input"
+                />
+              </Field>
             )}
+
+            {error && <p className="text-[12px] text-danger">{error}</p>}
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
           <button
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+            className="rounded-[7px] border border-border bg-surface px-3.5 py-1.5 text-[13px] text-text transition-colors hover:bg-surface-2"
           >
             Cancel
           </button>
@@ -915,10 +881,15 @@ export function NewCycleModal({
                   ? 'Fix the Done/Remaining mismatch before saving'
                   : undefined
             }
-            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {submitting && <i className="ti ti-loader-2 animate-spin text-[13px]" />}
-            {isEdit ? 'Save changes' : mode === 'Manual' ? 'Save quick log' : 'Create cycle'}
+            <i
+              className={cn(
+                'ti text-[13px]',
+                submitting ? 'ti-loader-2 animate-spin' : isEdit ? 'ti-check' : 'ti-plus',
+              )}
+            />
+            {isEdit ? 'Save Changes' : mode === 'Manual' ? 'Save Quick Log' : 'Create Cycle'}
           </button>
         </div>
       </div>
@@ -926,7 +897,7 @@ export function NewCycleModal({
       {/* Shared input styling — defined locally so this modal doesn't depend on globals */}
       <style jsx>{`
         :global(.input) {
-          @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100;
+          @apply w-full rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light;
         }
       `}</style>
     </div>
@@ -945,44 +916,12 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[11px] font-semibold text-slate-500">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
+    <div className="rounded-lg border border-border bg-surface p-2.5">
+      <p className="mb-1 text-[12px] font-medium text-text-2">
+        {label} {required && <span className="text-danger">*</span>}
+      </p>
       {children}
     </div>
-  );
-}
-
-function ModeOption({
-  active,
-  title,
-  desc,
-  onClick,
-}: {
-  active: boolean;
-  title: string;
-  desc: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-all',
-        active
-          ? 'border-blue-500 bg-white shadow-sm ring-2 ring-blue-100'
-          : 'border-slate-200 bg-white hover:border-slate-300',
-      )}
-    >
-      <span
-        className={cn('text-[13px] font-semibold', active ? 'text-blue-700' : 'text-slate-700')}
-      >
-        {title}
-      </span>
-      <span className="text-[11px] text-slate-500">{desc}</span>
-    </button>
   );
 }
 
@@ -1033,17 +972,15 @@ function CountField({
     tone === 'success'
       ? 'text-emerald-700'
       : tone === 'danger'
-        ? 'text-red-700'
+        ? 'text-danger'
         : tone === 'warning'
           ? 'text-amber-700'
           : tone === 'muted'
-            ? 'text-slate-500'
-            : 'text-slate-800';
+            ? 'text-text-3'
+            : 'text-text';
   return (
     <label className="flex flex-col gap-0.5">
-      <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
-        {label}
-      </span>
+      <span className="text-[10px] font-medium uppercase tracking-wider text-text-3">{label}</span>
       <input
         type="number"
         min={0}
@@ -1054,7 +991,7 @@ function CountField({
           onChange(Number.isFinite(n) && n >= 0 ? n : 0);
         }}
         className={cn(
-          'w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-center text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100',
+          'w-full rounded-md border border-border bg-surface px-2 py-1 text-center text-sm font-semibold outline-none focus:border-primary focus:ring-2 focus:ring-primary-light',
           tint,
         )}
       />

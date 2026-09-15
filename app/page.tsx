@@ -41,9 +41,8 @@ export default function Home() {
     showCycles,
     showTestRunsBoard,
     openCycle,
-    openCycleOverview,
     closeQuickLogCycle,
-    backToCycles,
+    backFromCycle,
     createCycle,
     archiveCycle,
     deleteCycle,
@@ -57,8 +56,6 @@ export default function Home() {
     closeCycle,
     showReports,
     showMembers,
-    showPlans,
-    showPlatforms,
     showSettings,
     showProfile,
     refreshSessionUser,
@@ -90,6 +87,7 @@ export default function Home() {
     cycleOverview,
     cycleOverviewLoading,
     quickLogCycle,
+    reportsInitialTab,
     dataVersion,
   } = state;
 
@@ -142,9 +140,7 @@ export default function Home() {
             onShowTestCases={showTestCases}
             onShowTestRunsBoard={showTestRunsBoard}
             onShowTestRuns={showCycles}
-            onShowPlans={showPlans}
-            onShowReports={showReports}
-            onShowPlatforms={showPlatforms}
+            onShowReports={() => showReports()}
             onShowMembers={showMembers}
             onShowSettings={showSettings}
           />
@@ -158,7 +154,8 @@ export default function Home() {
             <Dashboard
               onShowTestRuns={showTestRunsBoard}
               onOpenCycle={openCycle}
-              onShowReports={showReports}
+              onShowReports={() => showReports()}
+              onShowStabilityReport={() => showReports('stability')}
               projectId={currentProjectId}
               userName={user?.name || user?.username || null}
             />
@@ -170,6 +167,7 @@ export default function Home() {
               projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
               portals={portals}
               onOpenCycle={openCycle}
+              initialTab={reportsInitialTab}
             />
           )}
 
@@ -179,68 +177,6 @@ export default function Home() {
               workspaceId={currentProjectId}
               workspaceName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
               onSelfRoleChanged={refreshSessionUser}
-            />
-          )}
-
-          {page === 'plans' && (
-            <ComingSoon
-              title="Test plans"
-              subtitle="Reusable test packs you can run on every release."
-              icon="ti-clipboard-text"
-              features={[
-                {
-                  icon: 'ti-bookmark',
-                  label: 'Pinned plans',
-                  desc: 'Save a curated set of cases (e.g. "Smoke pack") and re-run it any time.',
-                },
-                {
-                  icon: 'ti-repeat',
-                  label: 'One-click re-run',
-                  desc: 'Spin up a fresh Test Run from a plan in one click — keeps history per release.',
-                },
-                {
-                  icon: 'ti-share',
-                  label: 'Shareable',
-                  desc: 'Hand a plan to another tester or schedule it on a cadence.',
-                },
-              ]}
-              cta={{
-                label: 'Use Test Runs for now',
-                icon: 'ti-arrow-right',
-                onClick: showCycles,
-                hint: 'Test Runs already supports module/suite/custom scopes — plans add reusability on top.',
-              }}
-            />
-          )}
-
-          {page === 'platforms' && (
-            <ComingSoon
-              title="Platforms & portals"
-              subtitle="Organize where your test cases live."
-              icon="ti-stack-2"
-              features={[
-                {
-                  icon: 'ti-app-window',
-                  label: 'Platform list',
-                  desc: 'Group portals under platforms like Web, Mobile, Desktop.',
-                },
-                {
-                  icon: 'ti-eye',
-                  label: 'Visibility rules',
-                  desc: 'Restrict a portal to certain roles (e.g. Student portal = QA only).',
-                },
-                {
-                  icon: 'ti-grip-vertical',
-                  label: 'Reorder',
-                  desc: 'Drag portals to set the order they appear in the sidebar tree.',
-                },
-              ]}
-              cta={{
-                label: 'Manage portals in Test Cases',
-                icon: 'ti-arrow-right',
-                onClick: showTestCases,
-                hint: 'Every portal/module/suite is fully manageable inline today — this config screen just consolidates it.',
-              }}
             />
           )}
 
@@ -316,7 +252,7 @@ export default function Home() {
               loading={cyclesLoading}
               modules={modules}
               projectId={currentProjectId}
-              onOpenOverview={openCycleOverview}
+              onOpenRun={openCycle}
               onCreate={createCycle}
               onUpdate={updateCycle}
             />
@@ -328,7 +264,7 @@ export default function Home() {
               loading={cyclesLoading}
               modules={modules}
               projectId={currentProjectId}
-              onOpen={openCycleOverview}
+              onOpen={openCycle}
               onArchive={archiveCycle}
               onDelete={deleteCycle}
               onCreate={createCycle}
@@ -342,7 +278,7 @@ export default function Home() {
               loading={cycleOverviewLoading}
               modules={modules}
               projectId={currentProjectId}
-              onBack={backToCycles}
+              onBack={backFromCycle}
               onOpenTestRun={() => cycleOverview && openCycle(cycleOverview.cycle.id)}
               onUpdate={updateCycle}
             />
@@ -354,10 +290,13 @@ export default function Home() {
               runs={runs}
               summary={summary}
               loading={runsLoading}
-              onBack={backToCycles}
+              modules={modules}
+              projectId={currentProjectId}
+              onBack={backFromCycle}
               onSubmitResult={submitResult}
               onCloseRun={closeCycle}
               onRegenerate={regenerateCycle}
+              onUpdate={updateCycle}
             />
           )}
         </main>

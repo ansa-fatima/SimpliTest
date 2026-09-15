@@ -36,6 +36,8 @@ export async function GET(req: Request, { params }: Ctx) {
       include: {
         testCase: {
           include: {
+            module: { select: { id: true, name: true } },
+            portal: { select: { id: true, name: true } },
             suite: { include: { module: { select: { id: true, name: true } } } },
           },
         },

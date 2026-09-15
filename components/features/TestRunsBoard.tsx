@@ -5,26 +5,22 @@ import { TestCycle, Module } from '@/types';
 import { pointFromQuickLog } from '@/lib/stability';
 import { avatarColour, cn, initials, localDateStr } from '@/lib/utils';
 import { NewCycleModal, CycleFormPayload } from './NewCycleModal';
+import { NewQuickLogModal, UpdateQuickLogModal } from './QuickLogModal';
 
 interface TestRunsBoardProps {
   cycles: TestCycle[];
   loading: boolean;
   modules: Module[];
   projectId: string | null;
-  onOpenOverview: (id: string) => void;
+  // Goes straight to the Execution screen — this board is the working view,
+  // not the Cycle Overview summary (that's still what Test Cycles opens to).
+  onOpenRun: (id: string) => void;
   onCreate: (input: CycleFormPayload) => Promise<void>;
   onUpdate: (id: string, patch: Record<string, unknown>) => Promise<void>;
 }
 
 type BoardTab = 'all' | 'inprogress' | 'planned' | 'completed';
 type MainTab = 'runs' | 'quicklogs';
-
-// A cycle named "Sanity Cycle 15" gets a short "C15" code -- same derivation
-// as the Test Cycles table, so the two screens read consistently.
-function cycleCode(name: string): string | null {
-  const m = name.match(/(\d+)\s*$/);
-  return m ? `C${m[1]}` : null;
-}
 
 // "Planned" isn't a real DB status -- it's an Active cycle nobody has
 // started executing yet (0 runs touched). Once at least one run has a
@@ -51,14 +47,16 @@ export function TestRunsBoard({
   loading,
   modules,
   projectId,
-  onOpenOverview,
+  onOpenRun,
   onCreate,
   onUpdate,
 }: TestRunsBoardProps) {
   const [mainTab, setMainTab] = useState<MainTab>('runs');
   const [tab, setTab] = useState<BoardTab>('all');
-  const [createMode, setCreateMode] = useState<'CaseBased' | 'Manual' | null>(null);
+  const [createRun, setCreateRun] = useState(false);
+  const [showQuickLog, setShowQuickLog] = useState(false);
   const [editingLog, setEditingLog] = useState<TestCycle | null>(null);
+  const [editingRun, setEditingRun] = useState<TestCycle | null>(null);
 
   const caseBased = cycles.filter(
     c => (c.mode ?? 'CaseBased') === 'CaseBased' && c.status !== 'Archived',
@@ -70,6 +68,9 @@ export function TestRunsBoard({
         new Date(b.completedAt ?? b.createdAt).getTime() -
         new Date(a.completedAt ?? a.createdAt).getTime(),
     );
+  const knownVersions = Array.from(
+    new Set(cycles.map(c => c.version).filter((v): v is string => !!v)),
+  );
 
   const inProgress = caseBased.filter(c => c.status === 'Active' && isStarted(c));
   const planned = caseBased.filter(c => c.status === 'Active' && !isStarted(c));
@@ -86,7 +87,7 @@ export function TestRunsBoard({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div className="flex-1 overflow-y-auto px-44 py-6">
         {/* Header */}
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
@@ -99,7 +100,7 @@ export function TestRunsBoard({
           </div>
           <button
             type="button"
-            onClick={() => setCreateMode(mainTab === 'runs' ? 'CaseBased' : 'Manual')}
+            onClick={() => (mainTab === 'runs' ? setCreateRun(true) : setShowQuickLog(true))}
             className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-[7px] text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-primary-hover"
           >
             <i className="ti ti-plus text-[15px]" />
@@ -166,7 +167,12 @@ export function TestRunsBoard({
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {visible.map(c => (
-                  <RunCard key={c.id} cycle={c} onOpen={() => onOpenOverview(c.id)} />
+                  <RunCard
+                    key={c.id}
+                    cycle={c}
+                    onOpen={() => onOpenRun(c.id)}
+                    onEdit={() => setEditingRun(c)}
+                  />
                 ))}
               </div>
             )}
@@ -182,7 +188,7 @@ export function TestRunsBoard({
                 No quick logs yet.
               </p>
             ) : (
-              <div className="flex flex-col gap-2.5">
+              <div className="flex flex-col gap-2">
                 {quickLogs.map(log => (
                   <QuickLogRow key={log.id} log={log} onEdit={() => setEditingLog(log)} />
                 ))}
@@ -192,29 +198,57 @@ export function TestRunsBoard({
         )}
       </div>
 
-      {createMode && (
+      {createRun && (
         <NewCycleModal
           modules={modules}
           projectId={projectId}
-          defaultMode={createMode}
-          onClose={() => setCreateMode(null)}
+          defaultMode="CaseBased"
+          onClose={() => setCreateRun(false)}
           onSave={async input => {
             await onCreate(input);
-            setCreateMode(null);
+            setCreateRun(false);
+          }}
+        />
+      )}
+
+      {showQuickLog && (
+        <NewQuickLogModal
+          projectId={projectId}
+          knownVersions={knownVersions}
+          onClose={() => setShowQuickLog(false)}
+          onSave={async input => {
+            await onCreate(input);
+            setShowQuickLog(false);
           }}
         />
       )}
 
       {editingLog && (
+        <UpdateQuickLogModal
+          log={editingLog}
+          onClose={() => setEditingLog(null)}
+          onSave={async patch => {
+            await onUpdate(editingLog.id, patch);
+            setEditingLog(null);
+          }}
+        />
+      )}
+
+      {editingRun && (
         <NewCycleModal
           modules={modules}
           projectId={projectId}
-          initial={editingLog}
-          onClose={() => setEditingLog(null)}
+          initial={editingRun}
+          onClose={() => setEditingRun(null)}
           onSave={async input => {
-            const patch: Record<string, unknown> = { ...input };
-            await onUpdate(editingLog.id, patch);
-            setEditingLog(null);
+            // Scope/mode aren't editable here — the run's cases were already
+            // generated against the original scope, and changing it here
+            // wouldn't regenerate them, so it'd just leave scope and actual
+            // runs disagreeing. Repopulate (on the card's own cycle) is the
+            // supported way to change what a run covers.
+            const { mode: _mode, scopeType: _scopeType, scopeId: _scopeId, ...patch } = input;
+            await onUpdate(editingRun.id, patch);
+            setEditingRun(null);
           }}
         />
       )}
@@ -293,7 +327,15 @@ function BoardTabButton({
   );
 }
 
-function RunCard({ cycle, onOpen }: { cycle: TestCycle; onOpen: () => void }) {
+function RunCard({
+  cycle,
+  onOpen,
+  onEdit,
+}: {
+  cycle: TestCycle;
+  onOpen: () => void;
+  onEdit: () => void;
+}) {
   const summary = cycle.summary;
   const total = summary?.total ?? 0;
   const done = summary?.done ?? 0;
@@ -302,7 +344,10 @@ function RunCard({ cycle, onOpen }: { cycle: TestCycle; onOpen: () => void }) {
   const failed = summary?.counts.Failed ?? 0;
   const blocked = summary?.counts.Blocked ?? 0;
   const isActive = cycle.status === 'Active';
-  const code = cycleCode(cycle.name);
+  // Real id-based code -- a name-derived one comes up blank for most cycle
+  // names (they rarely end in a trailing number), leaving cards with no code
+  // at all. Matches the QL-XXXX pattern quick logs already use.
+  const code = `C-${cycle.id.slice(-4).toUpperCase()}`;
   const status = statusTone(cycle);
   const scopeBits = [
     cycle.scopeName,
@@ -320,15 +365,25 @@ function RunCard({ cycle, onOpen }: { cycle: TestCycle; onOpen: () => void }) {
             {scopeBits.join(' · ')}
           </p>
         </div>
-        <span
-          className={cn(
-            'inline-flex flex-shrink-0 items-center gap-1.5 text-[11px] font-medium',
-            status.text,
-          )}
-        >
-          <span className={cn('h-1.5 w-1.5 flex-shrink-0 rounded-full', status.dot)} />
-          {status.label}
-        </span>
+        <div className="flex flex-shrink-0 items-center gap-1.5">
+          <span
+            className={cn(
+              'inline-flex flex-shrink-0 items-center gap-1.5 text-[11px] font-medium',
+              status.text,
+            )}
+          >
+            <span className={cn('h-1.5 w-1.5 flex-shrink-0 rounded-full', status.dot)} />
+            {status.label}
+          </span>
+          <button
+            type="button"
+            onClick={onEdit}
+            title="Edit test run"
+            className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-3 hover:bg-surface-2 hover:text-text"
+          >
+            <i className="ti ti-pencil text-[12px]" />
+          </button>
+        </div>
       </div>
 
       <div className="mb-1.5 flex items-center justify-between text-[11.5px] text-text-3">
@@ -393,7 +448,11 @@ function QuickLogRow({ log, onEdit }: { log: TestCycle; onEdit: () => void }) {
   });
   const code = `QL-${log.id.slice(-4).toUpperCase()}`;
   const scopePath =
-    [log.moduleName, log.featureName].filter(Boolean).join(' → ') || log.portalName || 'Unscoped';
+    [log.portalName, log.moduleName, log.featureName].filter(Boolean).join(' → ') || 'Unscoped';
+  // A log whose module/feature only ever got typed as free text (no real
+  // scopeId resolved) doesn't feed the Stability report -- flagged here so
+  // that's visible instead of silently invisible.
+  const unmapped = !log.scopeId && (log.moduleName || log.featureName);
   const tags = [
     log.cycleCategory,
     log.environment,
@@ -401,15 +460,36 @@ function QuickLogRow({ log, onEdit }: { log: TestCycle; onEdit: () => void }) {
     log.version ? `v${log.version.replace(/^v\s*/i, '')}` : null,
   ].filter((t): t is string => !!t);
 
+  const issueCount = log.issueCount ?? 0;
+  const wasTracked = (log.doneCount ?? 0) > 0 || (log.remainingCount ?? 0) > 0;
+  const done = log.doneCount ?? 0;
+  const percent = issueCount === 0 ? 0 : Math.round((done / issueCount) * 100);
+  const severities: { label: string; value: number; dot: string; text: string }[] = [
+    { label: 'Critical', value: log.criticalCount ?? 0, dot: 'bg-danger', text: 'text-danger' },
+    { label: 'Major', value: log.majorCount ?? 0, dot: 'bg-warning', text: 'text-warning' },
+    { label: 'Minor', value: log.minorCount ?? 0, dot: 'bg-text-3', text: 'text-text-2' },
+  ].filter(s => s.value > 0);
+
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface px-4 py-3">
-      <div className="min-w-0 flex-1">
+    <div
+      className={cn(
+        'flex items-center justify-between gap-3 rounded-lg border-y border-l-4 border-r border-border bg-surface px-3.5 py-2.5',
+        point.pass ? 'border-l-success' : 'border-l-danger',
+      )}
+    >
+      <div className="min-w-0 max-w-[58%] flex-shrink-0">
         <div className="flex items-center gap-2">
           <span className="flex-shrink-0 font-mono text-[11px] text-text-3">{code}</span>
           <span className="truncate text-[13px] font-medium text-text">{scopePath}</span>
+          {unmapped && (
+            <span className="flex-shrink-0 rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] text-text-3">
+              Unmapped suite
+            </span>
+          )}
         </div>
-        {(tags.length > 0 || log.ticketLink) && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+
+        {tags.length > 0 && (
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
             {tags.map((t, i) => (
               <span
                 key={i}
@@ -426,28 +506,78 @@ function QuickLogRow({ log, onEdit }: { log: TestCycle; onEdit: () => void }) {
             )}
           </div>
         )}
+
+        {issueCount === 0 ? (
+          <p className="mt-1 flex items-center gap-1.5 text-[12px] text-success">
+            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-success" />
+            No issues
+          </p>
+        ) : (
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {severities.map(s => (
+              <span
+                key={s.label}
+                className={cn('inline-flex items-center gap-1.5 text-[12px] font-medium', s.text)}
+              >
+                <span className={cn('h-1.5 w-1.5 flex-shrink-0 rounded-full', s.dot)} />
+                {s.value} {s.label}
+              </span>
+            ))}
+            {!wasTracked ? (
+              <span className="text-[11.5px] text-text-3">Not yet tracked</span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <span className="h-1.5 w-24 flex-shrink-0 overflow-hidden rounded-full bg-surface-3">
+                  <span
+                    className={cn(
+                      'block h-full rounded-full',
+                      percent === 100 ? 'bg-success' : 'bg-primary',
+                    )}
+                    style={{ width: `${percent}%` }}
+                  />
+                </span>
+                <span className="flex-shrink-0 text-[11px] text-text-3">
+                  {done}/{issueCount} resolved {percent}%
+                </span>
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="flex-shrink-0 text-right">
-        <p
-          className={cn('text-[12.5px] font-semibold', point.pass ? 'text-success' : 'text-danger')}
+      <div className="flex flex-shrink-0 items-center gap-3">
+        <div className="text-right">
+          <span
+            className={cn(
+              'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
+              point.pass ? 'bg-success-bg text-success-text' : 'bg-danger-bg text-danger-text',
+            )}
+          >
+            {point.pass ? 'Passed' : 'Failed'}
+          </span>
+          <p className="mt-1 flex items-center justify-end gap-1.5 text-[11px] text-text-3">
+            <span
+              className={cn(
+                'flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[8px] font-bold',
+                avatarColour(log.loggedBy || 'Unattributed'),
+              )}
+            >
+              {initials(log.loggedBy || 'Unattributed')}
+            </span>
+            {log.loggedBy || 'Unattributed'} ·{' '}
+            {localDateStr(new Date(log.completedAt ?? log.createdAt))}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onEdit}
+          className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-1.5 text-[12px] text-text transition-colors hover:bg-surface-2"
         >
-          {point.detail}
-        </p>
-        <p className="text-[11px] text-text-3">
-          by {log.loggedBy || 'Unattributed'} ·{' '}
-          {localDateStr(new Date(log.completedAt ?? log.createdAt))}
-        </p>
+          <i className={cn('ti text-[13px]', issueCount === 0 ? 'ti-flag' : 'ti-refresh')} />
+          {issueCount === 0 ? 'Track' : 'Reopen / Update'}
+        </button>
       </div>
-
-      <button
-        type="button"
-        onClick={onEdit}
-        className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-1.5 text-[12px] text-text transition-colors hover:bg-surface-2"
-      >
-        <i className="ti ti-refresh text-[13px]" />
-        Reopen / Update
-      </button>
     </div>
   );
 }

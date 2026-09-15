@@ -11,6 +11,12 @@ const config: Config = {
     './pages/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
     './app/**/*.{js,ts,jsx,tsx,mdx}',
+    // severityBadge/priorityBadge/typeBadge/statusBadge (lib/utils.ts) build
+    // Tailwind class strings dynamically -- without this, any color combo
+    // that isn't ALSO coincidentally typed out in an already-scanned file
+    // never gets its CSS generated at all (not overridden -- just absent),
+    // which is exactly how e.g. text-green-800 silently vanished here.
+    './lib/**/*.{js,ts,jsx,tsx,mdx}',
   ],
   theme: {
     extend: {

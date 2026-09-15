@@ -79,6 +79,7 @@ interface DashboardProps {
   onShowTestRuns: () => void;
   onOpenCycle?: (id: string) => void;
   onShowReports?: () => void;
+  onShowStabilityReport?: () => void;
   projectId: string | null;
   userName?: string | null;
 }
@@ -87,6 +88,7 @@ export function Dashboard({
   onShowTestRuns,
   onOpenCycle,
   onShowReports,
+  onShowStabilityReport,
   projectId,
   userName,
 }: DashboardProps) {
@@ -151,14 +153,10 @@ export function Dashboard({
     return total === 0 ? 0 : Math.round((w.pass / total) * 100);
   });
 
-  // Case-based cycles only -- a quick log has no per-case runs to
-  // distribute, so it can't feed a Pass/Fail/Blocked/Not-run breakdown.
-  const distributionCycles = data.recentCycles.filter(c => c.mode !== 'Manual');
-
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div className="flex-1 overflow-y-auto px-44 py-6">
         <div className="mb-5">
           <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
             Dashboard
@@ -219,7 +217,7 @@ export function Dashboard({
             <TrendChart weekly={data.weeklyRuns} />
           </Panel>
 
-          <CycleDistributionPanel cycles={distributionCycles} />
+          <ResultDistributionPanel data={data} />
         </div>
 
         {/* Coverage by module — full-width table, worst-covered first */}
@@ -228,10 +226,10 @@ export function Dashboard({
             title="Coverage by Module"
             secondary="Worst-covered first"
             action={
-              onShowReports && (
+              onShowStabilityReport && (
                 <button
                   type="button"
-                  onClick={onShowReports}
+                  onClick={onShowStabilityReport}
                   className="text-[12px] font-medium text-primary-text hover:underline"
                 >
                   Full stability report →
@@ -242,7 +240,7 @@ export function Dashboard({
             {data.moduleStability.length === 0 ? (
               <p className="text-[12.5px] text-text-3">No module activity yet.</p>
             ) : (
-              <CoverageTable modules={data.moduleStability} />
+              <CoverageTable modules={data.moduleStability} limit={5} />
             )}
           </Panel>
         </div>
@@ -251,8 +249,16 @@ export function Dashboard({
         <div className="mb-4">
           <Panel
             title="Recent test runs"
-            secondary={
-              data.recentCycles.length > 0 ? `${data.recentCycles.length} recent` : undefined
+            action={
+              onShowTestRuns && (
+                <button
+                  type="button"
+                  onClick={onShowTestRuns}
+                  className="text-[12px] font-medium text-primary-text hover:underline"
+                >
+                  View all test runs →
+                </button>
+              )
             }
           >
             {data.recentCycles.length === 0 ? (
@@ -264,7 +270,7 @@ export function Dashboard({
                 to get started.
               </p>
             ) : (
-              <RecentRunsTable cycles={data.recentCycles} onOpen={onOpenCycle} />
+              <RecentRunsTable cycles={data.recentCycles.slice(0, 4)} onOpen={onOpenCycle} />
             )}
           </Panel>
         </div>
@@ -598,54 +604,54 @@ function SummaryRow({ color, label, value }: { color: string; label: string; val
 
 // ─── Cycle-wise test distribution ─────────────────────────
 
-function CycleDistributionPanel({ cycles }: { cycles: RecentCycle[] }) {
-  const [selectedId, setSelectedId] = useState('');
-  const selected = cycles.find(c => c.id === selectedId) ?? cycles[0] ?? null;
+// Overall Passed/Failed/Blocked mix over the last 30 days -- blended
+// CaseBased + quick-log counts, same 30d window and numbers already shown
+// in the KPI row above, just visualized as a share of the whole instead of
+// three separate cards. Not run/skipped aren't a verdict, so they're left
+// out of the denominator (same convention as the KPI row's own pass rate).
+function ResultDistributionPanel({ data }: { data: DashboardData }) {
+  const passed = data.passed30d.total;
+  const failed = data.failed30d.total;
+  const blocked = data.blocked30d.total;
+  const total = passed + failed + blocked;
+  const pctOf = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
 
-  if (cycles.length === 0) {
+  if (total === 0) {
     return (
-      <Panel title="Cycle-wise Test Distribution">
-        <p className="text-[12.5px] text-text-3">No test runs yet.</p>
+      <Panel title="Result Distribution" secondary="Last 30 days">
+        <p className="text-[12.5px] text-text-3">No results in the last 30 days.</p>
       </Panel>
     );
   }
 
-  const { counts } = selected!;
-  const total = counts.Passed + counts.Failed + counts.Blocked + counts.NotRun + counts.Skipped;
-  const pctOf = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
-
   return (
-    <Panel
-      title="Cycle-wise Test Distribution"
-      secondary={
-        <select
-          value={selected!.id}
-          onChange={e => setSelectedId(e.target.value)}
-          className="rounded border border-border bg-surface px-2 py-1 text-[11.5px] text-text outline-none focus:border-primary"
-        >
-          {cycles.map(c => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      }
-    >
+    <Panel title="Result Distribution" secondary="Last 30 days">
       <div className="flex flex-col items-center gap-4">
         <DonutChart
-          pass={pctOf(counts.Passed)}
-          fail={pctOf(counts.Failed)}
-          block={pctOf(counts.Blocked)}
-          value={`${pctOf(counts.Passed)}%`}
+          pass={pctOf(passed)}
+          fail={pctOf(failed)}
+          block={pctOf(blocked)}
+          value={`${pctOf(passed)}%`}
         />
-        <div className="flex w-full flex-col gap-2 text-[13px]">
-          <SummaryRow color="#16A34A" label="Passed" value={counts.Passed} />
-          <SummaryRow color="#DC2626" label="Failed" value={counts.Failed} />
-          <SummaryRow color="#D97706" label="Blocked" value={counts.Blocked} />
-          <SummaryRow color="#A8A29E" label="Not run" value={counts.NotRun} />
+        <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-[13px]">
+          <LegendItem color="#16A34A" label="Passed" value={passed} />
+          <LegendItem color="#DC2626" label="Failed" value={failed} />
+          <LegendItem color="#D97706" label="Blocked" value={blocked} />
         </div>
       </div>
     </Panel>
+  );
+}
+
+function LegendItem({ color, label, value }: { color: string; label: string; value: number }) {
+  return (
+    <span className="flex items-center gap-1.5 text-text-2">
+      <span
+        className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
+        style={{ background: color }}
+      />
+      {label} <span className="font-mono tabular-nums text-text">{value.toLocaleString()}</span>
+    </span>
   );
 }
 
@@ -739,10 +745,11 @@ function ActivityFeed({ events }: { events: ActivityEvent[] }) {
 
 // ─── Coverage by module (full table) ──────────────────────
 
-function CoverageTable({ modules }: { modules: ModuleStabilityRow[] }) {
-  const rows = [...modules]
+function CoverageTable({ modules, limit }: { modules: ModuleStabilityRow[]; limit?: number }) {
+  const sorted = [...modules]
     .filter(m => m.passRate !== null)
     .sort((a, b) => (a.passRate ?? 0) - (b.passRate ?? 0));
+  const rows = limit ? sorted.slice(0, limit) : sorted;
   const labelTone: Record<ModuleStabilityRow['label'], string> = {
     Stable: 'text-success',
     'At Risk': 'text-warning',

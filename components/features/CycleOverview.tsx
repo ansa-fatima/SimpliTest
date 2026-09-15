@@ -78,7 +78,7 @@ export function CycleOverview({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div className="flex-1 overflow-y-auto px-44 py-6">
         <button
           type="button"
           onClick={onBack}

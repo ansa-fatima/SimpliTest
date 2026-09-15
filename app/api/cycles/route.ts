@@ -73,6 +73,7 @@ export async function GET(req: Request) {
     const moduleNameById = new Map(modulesById.map(m => [m.id, m.name]));
     const modulePortalNameById = new Map(modulesById.map(m => [m.id, m.portal.name]));
     const suiteNameById = new Map(suitesById.map(s => [s.id, `${s.module.name} / ${s.name}`]));
+    const suiteRawNameById = new Map(suitesById.map(s => [s.id, s.name]));
     const suiteModuleNameById = new Map(suitesById.map(s => [s.id, s.module.name]));
     const suitePortalNameById = new Map(suitesById.map(s => [s.id, s.module.portal.name]));
 
@@ -127,14 +128,16 @@ export async function GET(req: Request) {
       else if (c.scopeType === 'Suite' && c.scopeId)
         scopeName = suiteNameById.get(c.scopeId) ?? null;
 
-      // Portal/module name, resolved for BOTH modes. CaseBased cycles never
-      // have these as DB fields, so they're always derived from scope. Manual
-      // quick logs carry them as free text from the picker, but the picker
-      // lets a module/suite be picked without its portal, so fall back to
-      // deriving from scope there too whenever the free-text field is blank —
-      // otherwise those logs silently drop out of "sort/filter by portal".
+      // Portal/module/suite name, resolved for BOTH modes. CaseBased cycles
+      // never have these as DB fields, so they're always derived from scope.
+      // Manual quick logs carry them as free text from the picker, but the
+      // picker lets a module/suite be picked without its portal, so fall back
+      // to deriving from scope there too whenever the free-text field is
+      // blank — otherwise those logs silently drop out of "sort/filter by
+      // portal".
       let portalName = c.portalName;
       let moduleName = c.moduleName;
+      let featureName = c.featureName;
       if (c.mode !== 'Manual' || !portalName || !moduleName) {
         if (c.scopeType === 'Portal' && c.scopeId) {
           portalName = portalName ?? portalNameById.get(c.scopeId) ?? null;
@@ -144,6 +147,7 @@ export async function GET(req: Request) {
         } else if (c.scopeType === 'Suite' && c.scopeId) {
           moduleName = moduleName ?? suiteModuleNameById.get(c.scopeId) ?? null;
           portalName = portalName ?? suitePortalNameById.get(c.scopeId) ?? null;
+          featureName = featureName ?? suiteRawNameById.get(c.scopeId) ?? null;
         }
       }
 
@@ -151,6 +155,7 @@ export async function GET(req: Request) {
         ...rest,
         portalName,
         moduleName,
+        featureName,
         scopeName,
         tester,
         summary: { total, done, percent, counts, severity, issuesFound, issuesResolved },
@@ -326,6 +331,7 @@ export async function POST(req: Request) {
         environment: body.environment?.trim() || null,
         platform: body.platform?.trim() || null,
         version: body.version?.trim() || null,
+        cycleCategory: body.cycleCategory?.trim() || null,
         ticketLink: body.ticketLink?.trim() || null,
         runs: {
           create: caseIds.map(testCaseId => ({ testCaseId })),

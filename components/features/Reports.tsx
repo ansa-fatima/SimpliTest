@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/client';
-import { avatarColour, cn, initials, relativeTime } from '@/lib/utils';
-import { Portal } from '@/types';
+import { avatarColour, cn, initials, relativeTime, severityBadge } from '@/lib/utils';
+import { Portal, RunResult, Severity } from '@/types';
 
 interface ReportsProps {
   projectId: string | null;
@@ -11,6 +11,8 @@ interface ReportsProps {
   portals: Portal[];
   /** Opens a cycle's detail view — used by the Stability report's log drill-down. */
   onOpenCycle?: (cycleId: string) => void;
+  /** Opens straight into this report instead of the tile picker (e.g. Dashboard's "Full stability report" link). */
+  initialTab?: 'stability' | 'cycleHistory' | null;
 }
 
 type Period = 'today' | '7d' | '30d' | 'sprint' | 'all';
@@ -52,6 +54,7 @@ interface Filters {
   portalId: string; // '' = all
   moduleId: string; // '' = all (within the selected portal, if any)
   suiteId: string; // '' = all (within the selected module, if any) — "Feature" in the UI
+  version: string; // '' = all — matches TestCycle.version
   tester: string; // '' = all — matches TestRun.executedBy; quick logs aren't attributed yet
   period: Period;
   // Only meaningful when period === 'sprint'. 0 = current sprint, -1 =
@@ -64,6 +67,7 @@ const DEFAULT_FILTERS: Filters = {
   portalId: '',
   moduleId: '',
   suiteId: '',
+  version: '',
   tester: '',
   period: 'all',
   sprintOffset: 0,
@@ -76,6 +80,16 @@ interface ScopeModule {
   suites: { id: string; name: string }[];
 }
 
+interface OverviewPayload {
+  completedCycles: number;
+  avgPassRate: number;
+  avgExecutionRate: number;
+  avgModuleStability: number;
+  openQuickLogIssues: number;
+  recurringIssuesTotal: number;
+  totalLoggedEntries: number;
+}
+
 // Report types available as clickable tiles — the pre-cleanup landing page
 // had one tile per report (Execution / Release / Stability); Execution and
 // Release were removed as report *content* since Stability (module/feature
@@ -83,40 +97,69 @@ interface ScopeModule {
 // actually gets used day to day, but the tile-grid pattern stays: adding a
 // report type back later is just another entry here, not a page rebuild.
 interface ReportTypeMeta {
-  key: 'stability' | 'cycleHistory';
+  key: 'stability' | 'cycleHistory' | 'recurringIssues';
   label: string;
   sub: string;
+  description: string;
   icon: string;
   iconColor: string;
 }
 const REPORT_TYPES: ReportTypeMeta[] = [
   {
     key: 'stability',
-    label: 'Stability',
+    label: 'Product Stability',
     sub: 'Module & feature health',
-    icon: 'ti-activity-heartbeat',
-    iconColor: 'bg-rose-100 text-rose-700',
+    description:
+      'Is the product actually getting more stable, module by module? Blends case runs and quick logs into one score.',
+    icon: 'ti-shield-check',
+    iconColor: 'bg-indigo-100 text-indigo-700',
+  },
+  {
+    key: 'recurringIssues',
+    label: 'Recurring Issues',
+    sub: 'The stuff that keeps coming back',
+    description:
+      'What keeps coming back instead of getting fixed for good — repeat failures and repeat quick logs.',
+    icon: 'ti-repeat',
+    iconColor: 'bg-amber-100 text-amber-700',
   },
   {
     key: 'cycleHistory',
     label: 'Cycle History',
     sub: 'Every cycle, filterable',
+    description:
+      'Every case-based run and quick log, in one filterable log — replaces the old Execution and Release reports.',
     icon: 'ti-list-details',
-    iconColor: 'bg-indigo-100 text-indigo-700',
+    iconColor: 'bg-blue-100 text-blue-700',
   },
 ];
 
-export function Reports({ projectId, projectName, portals, onOpenCycle }: ReportsProps) {
+export function Reports({
+  projectId,
+  projectName,
+  portals,
+  onOpenCycle,
+  initialTab,
+}: ReportsProps) {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   // Nothing selected on arrival — the tiles are a picker, not a tab bar that
   // has to always show something, so landing on Reports shows the choice
-  // first and only opens a report once one is actually clicked.
-  const [activeTab, setActiveTab] = useState<ReportTypeMeta['key'] | null>(null);
+  // first and only opens a report once one is actually clicked. A caller
+  // can skip straight past the picker by passing initialTab (e.g. Dashboard's
+  // "Full stability report" link).
+  const [activeTab, setActiveTab] = useState<ReportTypeMeta['key'] | null>(initialTab ?? null);
 
-  // Feeds the Module/Feature cascade and the Tester dropdown — fetched once
-  // per project, independent of the Stability report's own data fetch.
+  // The active report's CSV export lives in a ref, not state -- each report
+  // component registers its own handler (it owns the data the export needs)
+  // on every render; a ref lets that happen without bouncing this parent
+  // through a re-render loop the way lifting it into state would.
+  const csvHandlerRef = useRef<() => void>(() => {});
+
+  // Feeds the Module/Feature cascade and the Tester/Version dropdowns —
+  // fetched once per project, independent of each report's own data fetch.
   const [modules, setModules] = useState<ScopeModule[]>([]);
   const [testers, setTesters] = useState<string[]>([]);
+  const [versions, setVersions] = useState<string[]>([]);
   useEffect(() => {
     if (!projectId) return;
     api
@@ -127,6 +170,25 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
       .get<{ items: { name: string; username: string }[] }>(`/api/members?projectId=${projectId}`)
       .then(({ items }) => setTesters(items.map(m => m.name || m.username).filter(Boolean)))
       .catch(e => console.error('[reports members]', e));
+    api
+      .get<{ version: string | null }[]>(`/api/cycles?projectId=${projectId}`)
+      .then(cycles =>
+        setVersions(
+          Array.from(new Set(cycles.map(c => c.version).filter((v): v is string => !!v))),
+        ),
+      )
+      .catch(e => console.error('[reports versions]', e));
+  }, [projectId]);
+
+  // Landing-page "At a Glance" numbers + each report card's highlight stat —
+  // fetched once per project, independent of which report (if any) is open.
+  const [overview, setOverview] = useState<OverviewPayload | null>(null);
+  useEffect(() => {
+    if (!projectId) return;
+    api
+      .get<OverviewPayload>(`/api/reports/overview?projectId=${projectId}`)
+      .then(setOverview)
+      .catch(e => console.error('[reports overview]', e));
   }, [projectId]);
 
   const visibleModules = filters.portalId
@@ -138,179 +200,281 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      <div className="flex-1 overflow-y-auto px-8 py-6">
-        {/* Header */}
-        <div className="mb-5">
-          <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
-            Reports
-          </h1>
-          <p className="text-[13px] text-text-2">Generate and share QA reports.</p>
-        </div>
-
-        {/* Report type tiles */}
-        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          {REPORT_TYPES.map(rt => (
-            <ReportTypeCard
-              key={rt.key}
-              meta={rt}
-              active={rt.key === activeTab}
-              onClick={() => setActiveTab(rt.key)}
-            />
-          ))}
-        </div>
-
-        {/* Filters + Report body */}
+      <div className="flex-1 overflow-y-auto px-44 py-6">
         {activeTab === null ? (
-          <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-surface py-16 text-text-3">
-            <i className="ti ti-click text-[28px] opacity-50" />
-            <p className="text-[13px]">Select a report above to view it.</p>
-          </div>
+          <>
+            {/* Header */}
+            <div className="mb-5">
+              <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
+                Reports &amp; Analytics
+              </h1>
+              <p className="text-[13px] text-text-2">
+                Three reports cover it all: is the product stable, what keeps coming back, and what
+                happened along the way.
+              </p>
+            </div>
+
+            {/* At a Glance */}
+            <p className="mb-2 text-[12.5px] font-semibold text-text">At a Glance</p>
+            <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              <GlanceCard
+                icon="ti-rotate-clockwise"
+                iconColor="bg-indigo-100 text-indigo-700"
+                value={overview?.completedCycles ?? 0}
+                label="Completed Cycles"
+              />
+              <GlanceCard
+                icon="ti-circle-check"
+                iconColor="bg-emerald-100 text-emerald-700"
+                value={`${overview?.avgPassRate ?? 0}%`}
+                label="Avg Pass Rate"
+              />
+              <GlanceCard
+                icon="ti-player-play"
+                iconColor="bg-primary-light text-primary-text"
+                value={`${overview?.avgExecutionRate ?? 0}%`}
+                label="Avg Execution Rate"
+              />
+              <GlanceCard
+                icon="ti-shield-check"
+                iconColor="bg-blue-100 text-blue-700"
+                value={`${overview?.avgModuleStability ?? 0}%`}
+                label="Avg Module Stability"
+              />
+              <GlanceCard
+                icon="ti-alert-circle"
+                iconColor="bg-red-100 text-red-700"
+                value={overview?.openQuickLogIssues ?? 0}
+                label="Open Quick-Log Issues"
+              />
+              <GlanceCard
+                icon="ti-repeat"
+                iconColor="bg-amber-100 text-amber-700"
+                value={overview?.recurringIssuesTotal ?? 0}
+                label="Recurring Issues"
+              />
+            </div>
+
+            {/* Jump to a Report */}
+            <p className="mb-2 text-[12.5px] font-semibold text-text">Jump to a Report</p>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {REPORT_TYPES.map(rt => (
+                <ReportJumpCard
+                  key={rt.key}
+                  meta={rt}
+                  statValue={
+                    rt.key === 'stability'
+                      ? `${overview?.avgModuleStability ?? 0}%`
+                      : rt.key === 'recurringIssues'
+                        ? String(overview?.recurringIssuesTotal ?? 0)
+                        : String(overview?.totalLoggedEntries ?? 0)
+                  }
+                  statLabel={
+                    rt.key === 'stability'
+                      ? 'avg. module stability'
+                      : rt.key === 'recurringIssues'
+                        ? 'recurring cases + suites'
+                        : 'total logged entries'
+                  }
+                  onClick={() => setActiveTab(rt.key)}
+                />
+              ))}
+            </div>
+          </>
         ) : (
-          <div className="flex items-start gap-5">
+          <div className="flex flex-col gap-4">
+            {/* Breadcrumb */}
+            <div className="flex items-center gap-1.5 text-[12px] text-text-3">
+              <button type="button" onClick={() => setActiveTab(null)} className="hover:text-text">
+                Reports
+              </button>
+              <span>/</span>
+              <span className="font-medium text-text">
+                {REPORT_TYPES.find(rt => rt.key === activeTab)?.label}
+              </span>
+            </div>
+
+            {/* Report name heading */}
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h1 className="m-0 text-[22px] font-semibold tracking-[-0.01em] text-text">
+                  {REPORT_TYPES.find(rt => rt.key === activeTab)?.label}
+                </h1>
+                <p className="mt-1 text-[13px] text-text-2">
+                  {REPORT_TYPES.find(rt => rt.key === activeTab)?.description}
+                </p>
+              </div>
+              <ExportButtons onCsv={() => csvHandlerRef.current()} />
+            </div>
+
             {/* Filters card */}
-            <aside className="w-[240px] flex-shrink-0 rounded-lg border border-border bg-surface p-3">
-              <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-text-3">
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <div className="mb-3 flex items-center gap-1.5 text-[12.5px] font-semibold text-text">
+                <i className="ti ti-filter text-[14px] text-text-3" />
                 Filters
               </div>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+                <FilterField label="Portal">
+                  <select
+                    value={filters.portalId}
+                    onChange={e =>
+                      // Changing Portal drops Module/Feature — they're only
+                      // ever options *within* a portal, so keeping a stale
+                      // selection from a different one would silently scope
+                      // the report to a module that isn't even shown as picked.
+                      setFilters(f => ({
+                        ...f,
+                        portalId: e.target.value,
+                        moduleId: '',
+                        suiteId: '',
+                      }))
+                    }
+                    className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                  >
+                    <option value="">All Portals</option>
+                    {portals.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </FilterField>
 
-              <FilterField label="Period">
-                <select
-                  value={filters.period}
-                  onChange={e =>
-                    setFilters(f => ({
-                      ...f,
-                      period: e.target.value as Period,
-                      sprintOffset: 0,
-                    }))
-                  }
-                  className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
-                >
-                  {PERIOD_OPTIONS.map(o => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
+                <FilterField label="Module">
+                  <select
+                    value={filters.moduleId}
+                    onChange={e =>
+                      setFilters(f => ({ ...f, moduleId: e.target.value, suiteId: '' }))
+                    }
+                    className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                  >
+                    <option value="">All Modules</option>
+                    {visibleModules.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </FilterField>
+
+                <FilterField label="Feature / Suite">
+                  <select
+                    value={filters.suiteId}
+                    onChange={e => setFilters(f => ({ ...f, suiteId: e.target.value }))}
+                    disabled={!filters.moduleId}
+                    className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light disabled:bg-surface-2 disabled:text-text-3"
+                  >
+                    <option value="">
+                      {filters.moduleId ? 'All Suites' : 'Pick a module first'}
                     </option>
-                  ))}
-                </select>
-                {filters.period === 'sprint' && (
-                  <div className="mt-1.5 flex items-center justify-between gap-1 rounded border border-border bg-surface-2 px-1.5 py-1">
-                    <button
-                      type="button"
-                      title="Previous sprint"
-                      onClick={() => setFilters(f => ({ ...f, sprintOffset: f.sprintOffset - 1 }))}
-                      className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-2 hover:bg-surface-3"
-                    >
-                      <i className="ti ti-chevron-left text-[13px]" />
-                    </button>
-                    <span
-                      className="truncate text-[11.5px] font-medium text-text"
-                      title={formatSprintRange(filters.sprintOffset)}
-                    >
-                      {formatSprintRange(filters.sprintOffset)}
-                      {filters.sprintOffset === 0 && (
-                        <span className="ml-1 font-normal text-text-3">(current)</span>
-                      )}
-                    </span>
-                    <button
-                      type="button"
-                      title="Next sprint"
-                      disabled={filters.sprintOffset >= 0}
-                      onClick={() =>
-                        setFilters(f => ({ ...f, sprintOffset: Math.min(0, f.sprintOffset + 1) }))
-                      }
-                      className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-2 hover:bg-surface-3 disabled:opacity-30 disabled:hover:bg-transparent"
-                    >
-                      <i className="ti ti-chevron-right text-[13px]" />
-                    </button>
-                  </div>
-                )}
-              </FilterField>
+                    {visibleSuites.map(s => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </FilterField>
 
-              <FilterField label="Portal">
-                <select
-                  value={filters.portalId}
-                  onChange={e =>
-                    // Changing Portal drops Module/Feature — they're only
-                    // ever options *within* a portal, so keeping a stale
-                    // selection from a different one would silently scope
-                    // the report to a module that isn't even shown as picked.
-                    setFilters(f => ({ ...f, portalId: e.target.value, moduleId: '', suiteId: '' }))
-                  }
-                  className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
-                >
-                  <option value="">All portals</option>
-                  {portals.map(p => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </FilterField>
+                <FilterField label="Version">
+                  <select
+                    value={filters.version}
+                    onChange={e => setFilters(f => ({ ...f, version: e.target.value }))}
+                    className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                  >
+                    <option value="">All Versions</option>
+                    {versions.map(v => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                </FilterField>
 
-              <FilterField label="Module">
-                <select
-                  value={filters.moduleId}
-                  onChange={e => setFilters(f => ({ ...f, moduleId: e.target.value, suiteId: '' }))}
-                  className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
-                >
-                  <option value="">All modules</option>
-                  {visibleModules.map(m => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </FilterField>
-
-              <FilterField label="Feature">
-                <select
-                  value={filters.suiteId}
-                  onChange={e => setFilters(f => ({ ...f, suiteId: e.target.value }))}
-                  disabled={!filters.moduleId}
-                  className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light disabled:bg-surface-2 disabled:text-text-3"
-                >
-                  <option value="">
-                    {filters.moduleId ? 'All features' : 'Pick a module first'}
-                  </option>
-                  {visibleSuites.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </FilterField>
-
-              {/* Tester only applies to Cycle History — module/feature
-                  health is meant to read the same no matter who's looking,
-                  but "who logged this" is the whole point of a history log. */}
-              {activeTab === 'cycleHistory' && (
                 <FilterField label="Tester">
                   <select
                     value={filters.tester}
                     onChange={e => setFilters(f => ({ ...f, tester: e.target.value }))}
                     className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
                   >
-                    <option value="">All testers</option>
+                    <option value="">Everyone</option>
                     {testers.map(t => (
                       <option key={t} value={t}>
                         {t}
                       </option>
                     ))}
                   </select>
-                  <div className="mt-1 text-[10.5px] text-text-3">
-                    Quick logs from before this filter existed aren&apos;t attributed to anyone, so
-                    they won&apos;t match a specific tester.
-                  </div>
                 </FilterField>
-              )}
 
-              <button
-                type="button"
-                onClick={() => setFilters(DEFAULT_FILTERS)}
-                className="mt-2 w-full rounded border border-dashed border-border px-2 py-1 text-[11px] text-text-3 hover:bg-surface-2"
-              >
-                Reset filters
-              </button>
-            </aside>
+                <FilterField label="Date Range">
+                  <select
+                    value={filters.period}
+                    onChange={e =>
+                      setFilters(f => ({
+                        ...f,
+                        period: e.target.value as Period,
+                        sprintOffset: 0,
+                      }))
+                    }
+                    className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                  >
+                    {PERIOD_OPTIONS.map(o => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  {filters.period === 'sprint' && (
+                    <div className="mt-1.5 flex items-center justify-between gap-1 rounded border border-border bg-surface-2 px-1.5 py-1">
+                      <button
+                        type="button"
+                        title="Previous sprint"
+                        onClick={() =>
+                          setFilters(f => ({ ...f, sprintOffset: f.sprintOffset - 1 }))
+                        }
+                        className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-2 hover:bg-surface-3"
+                      >
+                        <i className="ti ti-chevron-left text-[13px]" />
+                      </button>
+                      <span
+                        className="truncate text-[11.5px] font-medium text-text"
+                        title={formatSprintRange(filters.sprintOffset)}
+                      >
+                        {formatSprintRange(filters.sprintOffset)}
+                        {filters.sprintOffset === 0 && (
+                          <span className="ml-1 font-normal text-text-3">(current)</span>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        title="Next sprint"
+                        disabled={filters.sprintOffset >= 0}
+                        onClick={() =>
+                          setFilters(f => ({ ...f, sprintOffset: Math.min(0, f.sprintOffset + 1) }))
+                        }
+                        className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-2 hover:bg-surface-3 disabled:opacity-30 disabled:hover:bg-transparent"
+                      >
+                        <i className="ti ti-chevron-right text-[13px]" />
+                      </button>
+                    </div>
+                  )}
+                </FilterField>
+              </div>
+
+              {(filters.portalId ||
+                filters.moduleId ||
+                filters.suiteId ||
+                filters.version ||
+                filters.tester ||
+                filters.period !== 'all') && (
+                <button
+                  type="button"
+                  onClick={() => setFilters(DEFAULT_FILTERS)}
+                  className="mt-3 rounded border border-dashed border-border px-2 py-1 text-[11px] text-text-3 hover:bg-surface-2"
+                >
+                  Reset filters
+                </button>
+              )}
+            </div>
 
             {/* Report content */}
             <section className="min-w-0 flex-1">
@@ -318,17 +482,31 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
                 <StabilityReport
                   projectId={projectId}
                   projectName={projectName}
-                  portals={portals}
                   filters={filters}
                   onOpenCycle={onOpenCycle}
+                  onCsvReady={fn => {
+                    csvHandlerRef.current = fn;
+                  }}
                 />
               )}
               {activeTab === 'cycleHistory' && (
                 <CycleHistoryReport
                   projectId={projectId}
-                  portals={portals}
                   filters={filters}
                   onOpenCycle={onOpenCycle}
+                  onCsvReady={fn => {
+                    csvHandlerRef.current = fn;
+                  }}
+                />
+              )}
+              {activeTab === 'recurringIssues' && (
+                <RecurringIssuesReport
+                  projectId={projectId}
+                  filters={filters}
+                  onOpenCycle={onOpenCycle}
+                  onCsvReady={fn => {
+                    csvHandlerRef.current = fn;
+                  }}
                 />
               )}
             </section>
@@ -339,43 +517,68 @@ export function Reports({ projectId, projectName, portals, onOpenCycle }: Report
   );
 }
 
-// ─── Report type tile ───────────────────────────────────────
+// ─── Reports landing page ────────────────────────────────────
 
-function ReportTypeCard({
+function GlanceCard({
+  icon,
+  iconColor,
+  value,
+  label,
+}: {
+  icon: string;
+  iconColor: string;
+  value: number | string;
+  label: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-surface p-4">
+      <span
+        className={cn(
+          'mb-2.5 inline-flex h-8 w-8 items-center justify-center rounded-lg',
+          iconColor,
+        )}
+      >
+        <i className={cn('ti', icon, 'text-[16px]')} />
+      </span>
+      <p className="text-[20px] font-semibold leading-tight text-text">{value}</p>
+      <p className="mt-0.5 text-[11.5px] text-text-3">{label}</p>
+    </div>
+  );
+}
+
+function ReportJumpCard({
   meta,
-  active,
+  statValue,
+  statLabel,
   onClick,
 }: {
   meta: ReportTypeMeta;
-  active: boolean;
+  statValue: string;
+  statLabel: string;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={cn(
-        'group flex items-start gap-3 rounded-lg border bg-surface p-3 text-left transition-all',
-        active
-          ? 'border-primary shadow-sm ring-2 ring-primary-light'
-          : 'border-border hover:border-border-strong hover:bg-surface-2',
-      )}
+      className="group flex flex-col rounded-lg border border-border bg-surface p-5 text-left transition-colors hover:border-primary hover:shadow-sm"
     >
-      <span
-        className={cn(
-          'flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md',
-          meta.iconColor,
-        )}
-      >
-        <i className={cn('ti', meta.icon, 'text-[18px]')} />
-      </span>
-      <div className="min-w-0">
-        <div
-          className={cn('text-[13px] font-semibold', active ? 'text-primary-text' : 'text-text')}
+      <div className="mb-3 flex items-start justify-between">
+        <span
+          className={cn(
+            'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg',
+            meta.iconColor,
+          )}
         >
-          {meta.label}
-        </div>
-        <div className="text-[11px] text-text-3">{meta.sub}</div>
+          <i className={cn('ti', meta.icon, 'text-[20px]')} />
+        </span>
+        <i className="ti ti-chevron-right flex-shrink-0 text-[16px] text-text-3 transition-transform group-hover:translate-x-0.5" />
+      </div>
+      <h3 className="text-[15px] font-semibold text-text">{meta.label}</h3>
+      <p className="mt-1 text-[12.5px] leading-relaxed text-text-3">{meta.description}</p>
+      <div className="mt-4 border-t border-border pt-3">
+        <span className="text-[15px] font-semibold text-primary-text">{statValue}</span>
+        <span className="ml-1.5 text-[11.5px] text-text-3">{statLabel}</span>
       </div>
     </button>
   );
@@ -385,8 +588,10 @@ function ReportTypeCard({
 
 function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="mb-3">
-      <label className="mb-1 block text-[11px] font-medium text-text-3">{label}</label>
+    <div className="min-w-0">
+      <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-3">
+        {label}
+      </label>
       {children}
     </div>
   );
@@ -394,56 +599,38 @@ function FilterField({ label, children }: { label: string; children: React.React
 
 // ─── Report header (title strip + CSV/PDF/Share) ────────────
 
-function ReportHeader({
-  title,
-  subtitle,
-  onCsv,
-  onPdf,
-  onShare,
-}: {
-  title: string;
-  subtitle: string;
-  onCsv: () => void;
-  onPdf: () => void;
-  onShare: () => void;
-}) {
+function ExportButtons({ onCsv }: { onCsv: () => void }) {
   const [shared, setShared] = useState(false);
   return (
-    <div className="mb-4 flex items-start justify-between gap-4">
-      <div>
-        <h2 className="text-[16px] font-semibold text-text">{title}</h2>
-        <p className="mt-0.5 text-[12px] text-text-3">{subtitle}</p>
-      </div>
-      <div className="flex flex-shrink-0 items-center gap-2">
-        <button
-          type="button"
-          onClick={onCsv}
-          className="inline-flex items-center gap-1 rounded-[7px] border border-border bg-surface px-2.5 py-1.5 text-[12px] text-text transition-colors hover:bg-surface-2"
-        >
-          <i className="ti ti-file-spreadsheet text-[14px]" />
-          CSV
-        </button>
-        <button
-          type="button"
-          onClick={onPdf}
-          className="inline-flex items-center gap-1 rounded-[7px] border border-border bg-surface px-2.5 py-1.5 text-[12px] text-text transition-colors hover:bg-surface-2"
-        >
-          <i className="ti ti-file-text text-[14px]" />
-          PDF
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            onShare();
-            setShared(true);
-            setTimeout(() => setShared(false), 1800);
-          }}
-          className="inline-flex items-center gap-1 rounded-[7px] bg-primary px-2.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-primary-hover"
-        >
-          <i className={cn('ti', shared ? 'ti-check' : 'ti-share', 'text-[14px]')} />
-          {shared ? 'Copied!' : 'Share'}
-        </button>
-      </div>
+    <div className="flex flex-shrink-0 items-center gap-2">
+      <button
+        type="button"
+        onClick={onCsv}
+        className="inline-flex items-center gap-1 rounded-[7px] border border-border bg-surface px-2.5 py-1.5 text-[12px] text-text transition-colors hover:bg-surface-2"
+      >
+        <i className="ti ti-file-spreadsheet text-[14px]" />
+        CSV
+      </button>
+      <button
+        type="button"
+        onClick={() => window.print()}
+        className="inline-flex items-center gap-1 rounded-[7px] border border-border bg-surface px-2.5 py-1.5 text-[12px] text-text transition-colors hover:bg-surface-2"
+      >
+        <i className="ti ti-file-text text-[14px]" />
+        PDF
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          navigator.clipboard?.writeText(window.location.href);
+          setShared(true);
+          setTimeout(() => setShared(false), 1800);
+        }}
+        className="inline-flex items-center gap-1 rounded-[7px] bg-primary px-2.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-primary-hover"
+      >
+        <i className={cn('ti', shared ? 'ti-check' : 'ti-share', 'text-[14px]')} />
+        {shared ? 'Copied!' : 'Share'}
+      </button>
     </div>
   );
 }
@@ -495,15 +682,15 @@ interface StabilityPayload {
 function StabilityReport({
   projectId,
   projectName,
-  portals,
   filters,
   onOpenCycle,
+  onCsvReady,
 }: {
   projectId: string | null;
   projectName: string;
-  portals: Portal[];
   filters: Filters;
   onOpenCycle?: (cycleId: string) => void;
+  onCsvReady: (fn: () => void) => void;
 }) {
   const [data, setData] = useState<StabilityPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -520,6 +707,7 @@ function StabilityReport({
     if (filters.portalId) params.set('portalId', filters.portalId);
     if (filters.moduleId) params.set('moduleId', filters.moduleId);
     if (filters.suiteId) params.set('suiteId', filters.suiteId);
+    if (filters.version) params.set('version', filters.version);
     if (filters.tester) params.set('tester', filters.tester);
     setLoading(true);
     api
@@ -534,6 +722,7 @@ function StabilityReport({
     filters.portalId,
     filters.moduleId,
     filters.suiteId,
+    filters.version,
     filters.tester,
   ]);
 
@@ -619,67 +808,14 @@ function StabilityReport({
     downloadCsv(`stability-${projectName.toLowerCase().replace(/\s+/g, '-')}.csv`, rows);
   };
 
-  const portalName = filters.portalId
-    ? (portals.find(p => p.id === filters.portalId)?.name ?? 'Selected portal')
-    : 'All portals';
-  // Module/Feature names come from the already-scoped response rather than
-  // a separate lookup list, since the server only ever returns the modules
-  // and suites that survive the filter — whatever's in `data` IS the scope.
-  const moduleName = filters.moduleId
-    ? (data?.portals.flatMap(p => p.modules).find(m => m.id === filters.moduleId)?.name ?? null)
-    : null;
-  const suiteName = filters.suiteId
-    ? (data?.portals
-        .flatMap(p => p.modules)
-        .flatMap(m => m.suites)
-        .find(s => s.id === filters.suiteId)?.name ?? null)
-    : null;
-  const scopeLabel = [portalName, moduleName, suiteName].filter(Boolean).join(' › ');
-  const testerLabel = filters.tester ? ` · Tester: ${filters.tester}` : '';
-  const periodLabel =
-    filters.period === 'sprint'
-      ? `Sprint: ${formatSprintRange(filters.sprintOffset)}${filters.sprintOffset === 0 ? ' (current)' : ''}`
-      : (PERIOD_OPTIONS.find(o => o.value === filters.period)?.label ?? 'All time');
+  useEffect(() => {
+    onCsvReady(onCsv);
+  });
 
   return (
     <div>
-      <ReportHeader
-        title="Stability report"
-        subtitle={`${scopeLabel}${testerLabel} · ${periodLabel} · how stable each module & feature is, from quick logs and test runs`}
-        onCsv={onCsv}
-        onPdf={() => window.print()}
-        onShare={() => navigator.clipboard?.writeText(window.location.href)}
-      />
-
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiCard
-          label="Data points"
-          value={data?.totals.totalDataPoints ?? 0}
-          tone="neutral"
-          meta="quick logs + test runs"
-        />
-        <KpiCard
-          label="Overall pass rate"
-          value={`${data?.totals.overallPassRate ?? 0}%`}
-          tone={(data?.totals.overallPassRate ?? 0) >= 80 ? 'success' : 'warning'}
-          meta={`${totalPassed} passed of ${totalPassed + totalFailed}`}
-        />
-        <KpiCard
-          label="At risk modules"
-          value={data?.totals.modules.atRisk ?? 0}
-          tone="warning"
-          meta="70–89% pass rate"
-        />
-        <KpiCard
-          label="Unstable modules"
-          value={data?.totals.modules.unstable ?? 0}
-          tone="danger"
-          meta="below 70% pass rate"
-        />
-      </div>
-
       {!loading && totalPassed + totalFailed > 0 && (
-        <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1.15fr_1fr]">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.15fr_1fr]">
           <div className="rounded-lg border border-border bg-surface p-4">
             <h3 className="text-[13.5px] font-semibold text-text">Coverage by module</h3>
             <p className="mb-3.5 mt-0.5 text-[11.5px] text-text-3">
@@ -824,7 +960,6 @@ function StabilityReport({
           breadcrumb={panelFor.breadcrumb}
           node={panelFor.node}
           onClose={() => setPanelFor(null)}
-          onOpenCycle={onOpenCycle}
         />
       )}
     </div>
@@ -851,12 +986,10 @@ function StabilityDrilldownPanel({
   breadcrumb,
   node,
   onClose,
-  onOpenCycle,
 }: {
   breadcrumb: string;
   node: StabilityNode;
   onClose: () => void;
-  onOpenCycle?: (cycleId: string) => void;
 }) {
   const trendPoints = useMemo(() => bucketPassRates(node.logs), [node.logs]);
 
@@ -1040,16 +1173,7 @@ function StabilityDrilldownPanel({
             </p>
           ) : (
             cyclesList.map(g => (
-              <button
-                key={g.cycleId}
-                type="button"
-                disabled={!onOpenCycle}
-                onClick={() => {
-                  onOpenCycle?.(g.cycleId);
-                  onClose();
-                }}
-                className="flex w-full items-center gap-2.5 px-5 py-2.5 text-left hover:bg-surface-2 disabled:cursor-default disabled:hover:bg-transparent"
-              >
+              <div key={g.cycleId} className="flex w-full items-center gap-2.5 px-5 py-2.5">
                 <i
                   className={cn(
                     'flex-shrink-0 text-[15px]',
@@ -1083,10 +1207,7 @@ function StabilityDrilldownPanel({
                 <span className="flex-shrink-0 text-[10.5px] text-text-3">
                   {relativeTime(g.latestTs)}
                 </span>
-                {onOpenCycle && (
-                  <i className="ti ti-arrow-up-right flex-shrink-0 text-[13px] text-primary" />
-                )}
-              </button>
+              </div>
             ))
           )}
         </div>
@@ -1189,14 +1310,14 @@ interface CycleHistoryPayload {
 
 function CycleHistoryReport({
   projectId,
-  portals,
   filters,
   onOpenCycle,
+  onCsvReady,
 }: {
   projectId: string | null;
-  portals: Portal[];
   filters: Filters;
   onOpenCycle?: (cycleId: string) => void;
+  onCsvReady: (fn: () => void) => void;
 }) {
   const [data, setData] = useState<CycleHistoryPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1209,6 +1330,7 @@ function CycleHistoryReport({
     if (filters.portalId) params.set('portalId', filters.portalId);
     if (filters.moduleId) params.set('moduleId', filters.moduleId);
     if (filters.suiteId) params.set('suiteId', filters.suiteId);
+    if (filters.version) params.set('version', filters.version);
     if (filters.tester) params.set('tester', filters.tester);
     setLoading(true);
     api
@@ -1223,17 +1345,9 @@ function CycleHistoryReport({
     filters.portalId,
     filters.moduleId,
     filters.suiteId,
+    filters.version,
     filters.tester,
   ]);
-
-  const portalName = filters.portalId
-    ? (portals.find(p => p.id === filters.portalId)?.name ?? 'Selected portal')
-    : 'All portals';
-  const periodLabel =
-    filters.period === 'sprint'
-      ? `Sprint: ${formatSprintRange(filters.sprintOffset)}${filters.sprintOffset === 0 ? ' (current)' : ''}`
-      : (PERIOD_OPTIONS.find(o => o.value === filters.period)?.label ?? 'All time');
-  const testerLabel = filters.tester ? ` · Tester: ${filters.tester}` : '';
 
   const onCsv = () => {
     if (!data) return;
@@ -1258,33 +1372,22 @@ function CycleHistoryReport({
 
   const maxModuleCount = data?.cyclesPerModule[0]?.count ?? 1;
 
+  useEffect(() => {
+    onCsvReady(onCsv);
+  });
+
   return (
     <div>
-      <ReportHeader
-        title="Cycle History"
-        subtitle={`${portalName}${testerLabel} · ${periodLabel} · every quick log and test run, filterable`}
-        onCsv={onCsv}
-        onPdf={() => window.print()}
-        onShare={() => navigator.clipboard?.writeText(window.location.href)}
-      />
-
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiCard label="Cycles" value={data?.totals.totalCycles ?? 0} tone="neutral" />
-        <KpiCard label="Issues logged" value={data?.totals.totalIssues ?? 0} tone="danger" />
-        <KpiCard label="Quick logs" value={data?.totals.quickLogCount ?? 0} tone="neutral" />
-        <KpiCard label="Test runs" value={data?.totals.testRunCount ?? 0} tone="neutral" />
-      </div>
-
       {loading && !data ? (
-        <div className="mt-4 rounded-lg border border-border bg-surface p-8 text-center text-text-3">
+        <div className="rounded-lg border border-border bg-surface p-8 text-center text-text-3">
           Loading…
         </div>
       ) : !data || data.cycles.length === 0 ? (
-        <div className="mt-4 rounded-lg border border-dashed border-border bg-surface p-8 text-center text-text-3">
+        <div className="rounded-lg border border-dashed border-border bg-surface p-8 text-center text-text-3">
           No cycles match these filters.
         </div>
       ) : (
-        <div className="mt-4 grid grid-cols-[220px_1fr] gap-3">
+        <div className="grid grid-cols-[220px_1fr] gap-3">
           <div className="rounded-lg border border-border bg-surface p-3">
             <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-text-3">
               Cycles per module
@@ -1389,6 +1492,171 @@ function CycleHistoryReport({
   );
 }
 
+// ─── Recurring Issues report ──────────────────────────────────
+
+interface RecurringCaseCycle {
+  id: string;
+  name: string;
+  result: RunResult;
+  ts: string;
+}
+interface RecurringCaseRow {
+  id: string;
+  caseNum: number;
+  title: string;
+  severity: Severity;
+  moduleName: string;
+  scopePath: string;
+  ownerName: string | null;
+  cycles: RecurringCaseCycle[];
+}
+interface RecurringIssuesPayload {
+  cases: RecurringCaseRow[];
+}
+
+function RecurringIssuesReport({
+  projectId,
+  filters,
+  onOpenCycle,
+  onCsvReady,
+}: {
+  projectId: string | null;
+  filters: Filters;
+  onOpenCycle?: (cycleId: string) => void;
+  onCsvReady: (fn: () => void) => void;
+}) {
+  const [data, setData] = useState<RecurringIssuesPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (projectId) params.set('projectId', projectId);
+    if (filters.portalId) params.set('portalId', filters.portalId);
+    if (filters.moduleId) params.set('moduleId', filters.moduleId);
+    if (filters.suiteId) params.set('suiteId', filters.suiteId);
+    if (filters.version) params.set('version', filters.version);
+    if (filters.tester) params.set('tester', filters.tester);
+    params.set('period', filters.period);
+    if (filters.period === 'sprint') params.set('sprintOffset', String(filters.sprintOffset));
+    setLoading(true);
+    api
+      .get<RecurringIssuesPayload>(`/api/reports/recurring-issues?${params.toString()}`)
+      .then(setData)
+      .catch(e => console.error('[recurring issues report]', e))
+      .finally(() => setLoading(false));
+  }, [
+    projectId,
+    filters.portalId,
+    filters.moduleId,
+    filters.suiteId,
+    filters.version,
+    filters.tester,
+    filters.period,
+    filters.sprintOffset,
+  ]);
+
+  const onCsv = () => {
+    if (!data) return;
+    const rows: (string | number)[][] = [
+      ['Case', 'Module → Suite', 'Severity', 'Owner', 'Recurred in'],
+    ];
+    for (const c of data.cases) {
+      rows.push([
+        `TC-${String(c.caseNum).padStart(4, '0')} ${c.title}`,
+        c.scopePath,
+        c.severity,
+        c.ownerName ?? 'Unassigned',
+        c.cycles.map(cy => cy.name).join('; '),
+      ]);
+    }
+    downloadCsv('recurring-issues.csv', rows);
+  };
+
+  useEffect(() => {
+    onCsvReady(onCsv);
+  });
+
+  return (
+    <div>
+      {loading && !data ? (
+        <div className="mt-2 rounded-lg border border-border bg-surface p-8 text-center text-text-3">
+          Loading…
+        </div>
+      ) : !data || data.cases.length === 0 ? (
+        <div className="mt-2 rounded-lg border border-dashed border-border bg-surface p-8 text-center text-text-3">
+          No test case keeps failing across separate cycles right now.
+        </div>
+      ) : (
+        <div className="mt-2 rounded-lg border border-border bg-surface">
+          <div className="border-b border-border px-4 py-3">
+            <p className="text-[11.5px] text-text-3">
+              {data.cases.length} case{data.cases.length === 1 ? '' : 's'} · worst offenders first
+            </p>
+          </div>
+          <div className="divide-y divide-border">
+            {data.cases.map(c => (
+              <div key={c.id} className="px-4 py-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-mono text-[10.5px] text-text-3">
+                        TC-{String(c.caseNum).padStart(4, '0')}
+                      </span>
+                      <span
+                        className={cn(
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium',
+                          severityBadge(c.severity),
+                        )}
+                      >
+                        {c.severity}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[13px] font-medium text-text">{c.title}</p>
+                    <p className="text-[11.5px] text-text-3">
+                      {c.scopePath}
+                      {c.ownerName && ` · ${c.ownerName}`}
+                    </p>
+                  </div>
+                  <span className="flex-shrink-0 text-[11px] font-medium text-danger">
+                    {c.cycles.length}x
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10.5px] uppercase tracking-wide text-text-3">
+                    Recurred in
+                  </span>
+                  {c.cycles.map(cy => (
+                    <button
+                      key={cy.id}
+                      type="button"
+                      disabled={!onOpenCycle}
+                      onClick={() => onOpenCycle?.(cy.id)}
+                      title={`${cy.result} · ${relativeTime(cy.ts)}`}
+                      className={cn(
+                        'inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[11px] text-text-2 transition-colors',
+                        onOpenCycle &&
+                          'cursor-pointer hover:border-primary hover:text-primary-text',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'h-1.5 w-1.5 flex-shrink-0 rounded-full',
+                          cy.result === 'Failed' ? 'bg-danger' : 'bg-warning',
+                        )}
+                      />
+                      {cy.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Th({ children, align }: { children: React.ReactNode; align?: 'right' | 'left' }) {
   return (
     <th
@@ -1399,45 +1667,6 @@ function Th({ children, align }: { children: React.ReactNode; align?: 'right' | 
     >
       {children}
     </th>
-  );
-}
-
-// ─── Reusable bits ───────────────────────────────────────────
-
-function KpiCard({
-  label,
-  value,
-  tone,
-  meta,
-}: {
-  label: string;
-  value: number | string;
-  tone: 'neutral' | 'success' | 'danger' | 'warning';
-  meta?: string;
-}) {
-  const cls =
-    tone === 'success'
-      ? 'text-emerald-700'
-      : tone === 'danger'
-        ? 'text-red-700'
-        : tone === 'warning'
-          ? 'text-amber-700'
-          : 'text-text';
-  const accentBg =
-    tone === 'success'
-      ? 'bg-emerald-500'
-      : tone === 'danger'
-        ? 'bg-red-500'
-        : tone === 'warning'
-          ? 'bg-amber-500'
-          : 'bg-border-strong';
-  return (
-    <div className="relative overflow-hidden rounded-lg border border-border bg-surface px-4 py-3">
-      <div className={cn('absolute inset-x-0 top-0 h-[3px]', accentBg)} />
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-text-3">{label}</p>
-      <p className={cn('mt-0.5 text-[22px] font-semibold leading-tight', cls)}>{value}</p>
-      {meta && <p className="mt-0.5 text-[11px] text-text-3">{meta}</p>}
-    </div>
   );
 }
 

@@ -68,7 +68,7 @@ export function Profile({ currentUser, onUpdated }: ProfileProps) {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div className="flex-1 overflow-y-auto px-44 py-6">
         <div className="mb-6">
           <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
             Your profile

@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { TestCycle, CycleStatus, CycleMode, Module } from '@/types';
+import { TestCycle, CycleStatus, Module } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { NewCycleModal, CycleFormPayload } from './NewCycleModal';
 import { CycleReportModal } from './CycleReportModal';
 import { ManualCycleSummaryModal } from './ManualCycleSummaryModal';
+import { UpdateQuickLogModal } from './QuickLogModal';
 import { avatarColour, cn, initials, localDateStr } from '@/lib/utils';
 
 interface CyclesListProps {
@@ -18,14 +19,6 @@ interface CyclesListProps {
   onDelete: (id: string) => void;
   onCreate: (input: CycleFormPayload) => Promise<void>;
   onUpdate?: (id: string, patch: Record<string, unknown>) => Promise<void>;
-}
-
-// A cycle named "Sanity Cycle 15" gets a short "C15" code from its trailing
-// number -- purely a display nicety, so a name with no trailing number
-// simply gets no code rather than a made-up one.
-function cycleCode(name: string): string | null {
-  const m = name.match(/(\d+)\s*$/);
-  return m ? `C${m[1]}` : null;
 }
 
 function isoDate(iso: string | null | undefined): string {
@@ -55,7 +48,6 @@ export function CyclesList({
   onOpen,
   onArchive,
   onDelete,
-  onCreate,
   onUpdate,
 }: CyclesListProps) {
   const [filter, setFilter] = useState<CycleStatus | 'All'>('All');
@@ -64,10 +56,10 @@ export function CyclesList({
   // spot with no extra step — it's just where a fresh `cycles` array sorts to.
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [createMode, setCreateMode] = useState<CycleMode | null>(null);
   const [editingCycle, setEditingCycle] = useState<TestCycle | null>(null);
   const [reportFor, setReportFor] = useState<string | null>(null);
   const [summaryFor, setSummaryFor] = useState<TestCycle | null>(null);
+  const [retestFor, setRetestFor] = useState<TestCycle | null>(null);
 
   const filtered = cycles.filter(c => {
     if (filter !== 'All' && c.status !== filter) return false;
@@ -121,36 +113,15 @@ export function CyclesList({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div className="flex-1 overflow-y-auto px-44 py-6">
         {/* Header */}
-        <div className="mb-5 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
-              Test Cycles
-            </h1>
-            <p className="text-[13px] text-text-2">
-              Case-based regression, sanity, and quick-log cycles across this workspace.
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setCreateMode('Manual')}
-              className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2"
-              title="Log a cycle by aggregate counts (no test cases required)"
-            >
-              <i className="ti ti-clipboard-plus text-[15px]" />
-              Quick log
-            </button>
-            <button
-              type="button"
-              onClick={() => setCreateMode('CaseBased')}
-              className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-[7px] text-[13px] font-medium text-white shadow-sm transition-all hover:bg-primary-hover"
-            >
-              <i className="ti ti-plus text-[15px]" />
-              New Cycle
-            </button>
-          </div>
+        <div className="mb-5">
+          <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
+            Test Cycles
+          </h1>
+          <p className="text-[13px] text-text-2">
+            Case-based regression, sanity, and quick-log cycles across this workspace.
+          </p>
         </div>
 
         {/* Tabs */}
@@ -248,26 +219,27 @@ export function CyclesList({
             <table className="w-full table-fixed border-collapse text-[12.5px]">
               <thead className="bg-surface-2">
                 <tr>
+                  <Th width="78px">Date</Th>
                   <Th width="150px">Cycle</Th>
-                  <Th width="185px">Scope</Th>
-                  <Th width="60px">Version</Th>
+                  <Th width="100px">Portal</Th>
+                  <Th width="110px">Module</Th>
+                  <Th width="110px">Suite</Th>
+                  <Th width="68px">Version</Th>
                   <Th width="85px">Environment</Th>
-                  <Th width="78px">Start</Th>
-                  <Th width="78px">End</Th>
-                  <Th width="48px" align="right">
+                  <Th width="52px" align="right">
                     Total
                   </Th>
-                  <Th width="42px" align="right">
+                  <Th width="50px" align="right">
                     Crit
                   </Th>
-                  <Th width="42px" align="right">
+                  <Th width="50px" align="right">
                     Major
                   </Th>
-                  <Th width="42px" align="right">
+                  <Th width="50px" align="right">
                     Minor
                   </Th>
-                  <Th width="100px">Tester</Th>
-                  <Th width="62px">Ticket</Th>
+                  <Th width="112px">Tester</Th>
+                  <Th width="68px">Ticket</Th>
                   <Th width="80px">Status</Th>
                   <th className="w-[80px] border-b border-border px-2 py-2.5" />
                 </tr>
@@ -276,7 +248,13 @@ export function CyclesList({
                 {sorted.map(c => {
                   const isManual = (c.mode ?? 'CaseBased') === 'Manual';
                   const status = cycleStatusTone(c);
-                  const code = cycleCode(c.name);
+                  // Real id-based code for every cycle, matching the Test Runs
+                  // card and the Update modal's title -- a name-derived code
+                  // would come up blank for most names, which don't happen to
+                  // end in a number.
+                  const code = isManual
+                    ? `QL-${c.id.slice(-4).toUpperCase()}`
+                    : `C-${c.id.slice(-4).toUpperCase()}`;
                   const summary = c.summary;
 
                   // Manual cycles have no per-case "total" the way a case-based
@@ -303,58 +281,70 @@ export function CyclesList({
                   const tester = isManual ? c.loggedBy || null : (c.tester ?? null);
 
                   const start = isoDate(c.createdAt);
-                  const end = isoDate(isManual ? c.completedAt : (c.completedAt ?? c.targetDate));
-
-                  const scopeLabel =
-                    c.scopeName === 'All test cases'
-                      ? 'All cases'
-                      : (c.scopeName ?? c.moduleName ?? c.portalName ?? null);
 
                   return (
                     <tr
                       key={c.id}
                       onClick={() => {
-                        if (isManual) setSummaryFor(c);
+                        if (isManual) setRetestFor(c);
                         else onOpen(c.id);
                       }}
                       className="group cursor-pointer border-b border-border transition-colors last:border-b-0 hover:bg-surface-2"
                     >
-                      <td className="overflow-hidden px-3 py-2.5 align-middle">
+                      <td className="whitespace-nowrap px-3 py-2.5 align-middle text-text-2">
+                        {start}
+                      </td>
+                      <td className="overflow-hidden px-2 py-2.5 align-middle">
                         <p className="truncate font-medium text-text" title={c.name}>
                           {c.name}
                         </p>
                         {code && <p className="font-mono text-[10.5px] text-text-3">{code}</p>}
                       </td>
-                      <td className="px-2 py-2.5 align-middle">
-                        <Chip color="slate" text={scopeLabel} />
+                      <td
+                        className="truncate px-2 py-2.5 align-middle text-text-2"
+                        title={c.portalName || undefined}
+                      >
+                        {c.portalName || <span className="text-text-3">—</span>}
                       </td>
-                      <td className="truncate px-2 py-2.5 align-middle font-mono text-[11.5px] text-text-2">
+                      <td
+                        className="truncate px-2 py-2.5 align-middle text-text-2"
+                        title={c.moduleName || undefined}
+                      >
+                        {c.moduleName || <span className="text-text-3">—</span>}
+                      </td>
+                      <td
+                        className="truncate px-2 py-2.5 align-middle text-text-2"
+                        title={c.featureName || undefined}
+                      >
+                        {c.featureName || <span className="text-text-3">—</span>}
+                      </td>
+                      <td
+                        className="truncate px-2 py-2.5 align-middle font-mono text-[11.5px] text-text-2"
+                        title={c.version || undefined}
+                      >
                         {c.version || <span className="text-text-3">—</span>}
                       </td>
-                      <td className="truncate px-2 py-2.5 align-middle text-text-2">
+                      <td
+                        className="truncate px-2 py-2.5 align-middle text-text-2"
+                        title={c.environment || undefined}
+                      >
                         {c.environment || <span className="text-text-3">—</span>}
                       </td>
-                      <td className="whitespace-nowrap px-2 py-2.5 align-middle text-text-2">
-                        {start}
+                      <td className="px-3 py-2.5 text-right align-middle font-medium tabular-nums text-text">
+                        {total || <span className="font-normal text-text-3">—</span>}
                       </td>
-                      <td className="whitespace-nowrap px-2 py-2.5 align-middle text-text-2">
-                        {end}
-                      </td>
-                      <td className="px-2 py-2.5 text-right align-middle tabular-nums text-text">
-                        {total || <span className="text-text-3">—</span>}
-                      </td>
-                      <td className="px-2 py-2.5 text-right align-middle tabular-nums text-danger">
+                      <td className="px-3 py-2.5 text-right align-middle tabular-nums text-danger">
                         {critical || <span className="text-text-3">—</span>}
                       </td>
-                      <td className="px-2 py-2.5 text-right align-middle tabular-nums text-warning">
+                      <td className="px-3 py-2.5 text-right align-middle tabular-nums text-warning">
                         {major || <span className="text-text-3">—</span>}
                       </td>
-                      <td className="px-2 py-2.5 text-right align-middle tabular-nums text-text-2">
+                      <td className="px-3 py-2.5 text-right align-middle tabular-nums text-text-2">
                         {minor || <span className="text-text-3">—</span>}
                       </td>
                       <td className="overflow-hidden px-2 py-2.5 align-middle">
                         {tester ? (
-                          <span className="flex items-center gap-1.5">
+                          <span className="flex items-center gap-1.5" title={tester}>
                             <span
                               className={cn(
                                 'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[8.5px] font-bold',
@@ -369,7 +359,10 @@ export function CyclesList({
                           <span className="text-text-3">Unattributed</span>
                         )}
                       </td>
-                      <td className="overflow-hidden px-2 py-2.5 align-middle text-[11.5px]">
+                      <td
+                        className="overflow-hidden px-2 py-2.5 align-middle text-[11.5px]"
+                        title={c.ticketLink || undefined}
+                      >
                         {c.ticketLink ? (
                           <span className="flex max-w-full items-center gap-1">
                             <i className="ti ti-brand-jira flex-shrink-0 text-[13px] text-text-3" />
@@ -449,20 +442,6 @@ export function CyclesList({
         )}
       </div>
 
-      {/* Create modal */}
-      {createMode && (
-        <NewCycleModal
-          modules={modules}
-          projectId={projectId}
-          defaultMode={createMode}
-          onClose={() => setCreateMode(null)}
-          onSave={async input => {
-            await onCreate(input);
-            setCreateMode(null);
-          }}
-        />
-      )}
-
       {/* Edit modal (Manual cycles only) */}
       {editingCycle && (
         <NewCycleModal
@@ -488,6 +467,18 @@ export function CyclesList({
           onEdit={() => {
             setEditingCycle(summaryFor);
             setSummaryFor(null);
+          }}
+        />
+      )}
+
+      {retestFor && (
+        <UpdateQuickLogModal
+          log={retestFor}
+          onClose={() => setRetestFor(null)}
+          onSave={async patch => {
+            if (!onUpdate) return;
+            await onUpdate(retestFor.id, patch);
+            setRetestFor(null);
           }}
         />
       )}
@@ -551,38 +542,6 @@ function Th({
     >
       {children}
     </th>
-  );
-}
-
-// Pill-style chip used for the Module / Feature / Environment / Platform columns
-// to match the spreadsheet's coloured rounded tags.
-function Chip({
-  color,
-  text,
-}: {
-  color: 'emerald' | 'red-50' | 'green-50' | 'yellow' | 'slate';
-  text: string | null | undefined;
-}) {
-  if (!text) return <span className="text-text-3">—</span>;
-  const cls =
-    color === 'emerald'
-      ? 'bg-emerald-100 text-emerald-800'
-      : color === 'red-50'
-        ? 'bg-red-50 text-red-700'
-        : color === 'green-50'
-          ? 'bg-green-50 text-green-700'
-          : color === 'yellow'
-            ? 'bg-amber-50 text-amber-700'
-            : 'bg-slate-100 text-slate-600';
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium',
-        cls,
-      )}
-    >
-      {text}
-    </span>
   );
 }
 

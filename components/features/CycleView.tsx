@@ -1,20 +1,34 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { TestCycle, ApiTestRun, CycleSummary, RunResult } from '@/types';
+import { TestCycle, ApiTestRun, CycleSummary, RunResult, Module } from '@/types';
+import { api } from '@/lib/client';
 import { exportCycleResults } from '@/lib/export';
 import { CycleReportModal } from './CycleReportModal';
-import { avatarColour, cn, initials, priorityBadge, severityBadge, typeBadge } from '@/lib/utils';
+import { NewCycleModal } from './NewCycleModal';
+import {
+  avatarColour,
+  cn,
+  initials,
+  priorityBadge,
+  relativeTime,
+  resultTone,
+  severityBadge,
+  typeBadge,
+} from '@/lib/utils';
 
 interface CycleViewProps {
   cycle: TestCycle;
   runs: ApiTestRun[];
   summary: CycleSummary | null;
   loading: boolean;
+  modules: Module[];
+  projectId: string | null;
   onBack: () => void;
   onSubmitResult: (runId: string, result: RunResult, notes?: string) => Promise<void>;
   onCloseRun?: (cycleId: string) => void;
   onRegenerate?: (cycleId: string) => void;
+  onUpdate: (id: string, patch: Record<string, unknown>) => Promise<void>;
 }
 
 const RESULTS: RunResult[] = ['Passed', 'Failed', 'Blocked', 'Skipped'];
@@ -27,20 +41,71 @@ const RESULT_BTN: Record<RunResult, string> = {
   Skipped: 'border-slate-300 text-slate-600 hover:bg-slate-50',
 };
 
+type FilterTab = 'All' | RunResult | 'Recurring';
+
+interface RecurringItem {
+  id: string;
+  title: string;
+  caseNum: number;
+  severity: string;
+  scopeName: string;
+  occurrences: number;
+  cycleCount: number;
+  lastSeen: string;
+}
+
+// A case attaches to a portal, module, or suite directly -- this walks
+// whichever's populated so grouping/display never depends on scope mode.
+function caseModuleName(run: ApiTestRun): string {
+  const tc = run.testCase;
+  return tc.suite?.module.name ?? tc.module?.name ?? tc.portal?.name ?? 'Unscoped';
+}
+function caseScopePath(run: ApiTestRun): string {
+  const tc = run.testCase;
+  if (tc.suite) return `${tc.suite.module.name} → ${tc.suite.name}`;
+  return caseModuleName(run);
+}
+
 export function CycleView({
   cycle,
   runs,
   summary,
   loading,
+  modules,
+  projectId,
   onBack,
   onSubmitResult,
   onCloseRun,
   onRegenerate,
+  onUpdate,
 }: CycleViewProps) {
-  const [filter, setFilter] = useState<RunResult | 'All'>('All');
+  const [filter, setFilter] = useState<FilterTab>('All');
+  const [moduleFilter, setModuleFilter] = useState('');
+  const [search, setSearch] = useState('');
+  const [showEdit, setShowEdit] = useState(false);
   const [showReport, setShowReport] = useState(false);
-  // Track which run row is selected (drives the right-side panel).
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // Only a recurring-issue row expands — the chevron there opens its cross-cycle history.
+  const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
+  const [recurring, setRecurring] = useState<RecurringItem[] | null>(null);
+
+  // Same "failed here and failed/blocked in 2+ distinct cycles" rule as the
+  // Cycle Overview screen -- fetched from the same endpoint so the two
+  // screens can't disagree about what counts as recurring.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<{ recurringIssues: { items: RecurringItem[] } }>(`/api/cycles/${cycle.id}/overview`)
+      .then(d => {
+        if (!cancelled) setRecurring(d.recurringIssues.items);
+      })
+      .catch(() => {
+        if (!cancelled) setRecurring([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cycle.id]);
 
   // Default-select first failed run so the failure panel is visible on open (matches design).
   useEffect(() => {
@@ -50,10 +115,51 @@ export function CycleView({
     setSelectedRunId(firstFail?.id ?? runs[0].id);
   }, [runs, selectedRunId]);
 
-  const filteredRuns = useMemo(
-    () => (filter === 'All' ? runs : runs.filter(r => r.result === filter)),
-    [filter, runs],
-  );
+  const recurringIds = useMemo(() => new Set((recurring ?? []).map(r => r.id)), [recurring]);
+
+  const moduleGroups = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        name: string;
+        total: number;
+        executed: number;
+        passed: number;
+        failed: number;
+        blocked: number;
+      }
+    >();
+    for (const r of runs) {
+      const name = caseModuleName(r);
+      if (!map.has(name))
+        map.set(name, { name, total: 0, executed: 0, passed: 0, failed: 0, blocked: 0 });
+      const g = map.get(name)!;
+      g.total++;
+      if (r.result !== 'NotRun') g.executed++;
+      if (r.result === 'Passed') g.passed++;
+      if (r.result === 'Failed') g.failed++;
+      if (r.result === 'Blocked') g.blocked++;
+    }
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [runs]);
+
+  const filteredRuns = useMemo(() => {
+    let list = runs;
+    if (moduleFilter) list = list.filter(r => caseModuleName(r) === moduleFilter);
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        r =>
+          r.testCase.title.toLowerCase().includes(q) ||
+          String(r.testCase.caseNum).includes(q) ||
+          `tc-${r.testCase.caseNum}`.includes(q),
+      );
+    }
+    if (filter === 'Recurring') return list.filter(r => recurringIds.has(r.testCaseId));
+    if (filter === 'All') return list;
+    return list.filter(r => r.result === filter);
+  }, [runs, moduleFilter, search, filter, recurringIds]);
+
   const selectedRun = useMemo(
     () => runs.find(r => r.id === selectedRunId) ?? null,
     [runs, selectedRunId],
@@ -64,260 +170,254 @@ export function CycleView({
   const done = summary?.done ?? total - counts.NotRun;
   const percent = summary?.percent ?? (total === 0 ? 0 : Math.round((done / total) * 100));
 
-  // Retest tracking, against a fixed baseline — every run ever marked
-  // Failed/Blocked (the sticky wasEverIssue flag), not the live Failed
-  // count, which would otherwise shrink "how many issues were found" every
-  // time one gets fixed. Done = that baseline now Passed; Remaining = the
-  // rest of it (Failed, Blocked, or Skipped-after-once-failing all still
-  // count as open) — so Done + Remaining always equals the baseline, same
-  // invariant a quick log's Done + Remaining = Total issues already has.
-  const retestDone = useMemo(
-    () => runs.filter(r => r.wasEverIssue && r.result === 'Passed').length,
-    [runs],
-  );
-  const retestRemaining = useMemo(
-    () => runs.filter(r => r.wasEverIssue && r.result !== 'Passed').length,
-    [runs],
-  );
-  const failureSeverity = useMemo(() => {
-    const tally = { Critical: 0, Major: 0, Minor: 0 };
-    for (const r of runs) {
-      if (!r.wasEverIssue || r.result === 'Passed') continue;
-      const sev = r.testCase.severity;
-      if (sev in tally) tally[sev as keyof typeof tally]++;
-    }
-    return tally;
-  }, [runs]);
-
-  // Distinct executor names → avatar stack (max 3 + “+N”).
-  const executors = useMemo(() => {
-    const seen = new Set<string>();
-    const list: string[] = [];
-    for (const r of runs) {
-      const name = (r.executedBy || '').trim();
-      if (!name || seen.has(name)) continue;
-      seen.add(name);
-      list.push(name);
-    }
-    return list;
-  }, [runs]);
-
-  const subtitle = buildSubtitle(cycle, total);
   const statusTone =
     cycle.status === 'Completed'
-      ? 'bg-blue-50 text-blue-700 ring-blue-200'
-      : 'bg-amber-50 text-amber-700 ring-amber-200';
-  const statusLabel = cycle.status === 'Active' ? 'Open to do' : cycle.status;
+      ? { label: 'Completed', dot: 'bg-success', text: 'text-success' }
+      : cycle.status === 'Archived'
+        ? { label: 'Archived', dot: 'bg-text-3', text: 'text-text-3' }
+        : { label: 'In Progress', dot: 'bg-primary', text: 'text-primary-text' };
+
+  const subtitleParts = [
+    cycle.version ? `v${cycle.version.replace(/^v\s*/i, '')}` : null,
+    cycle.environment,
+    cycle.scopeName ? `Scope: ${cycle.scopeName}` : null,
+  ].filter(Boolean);
+
+  const TABS: { key: FilterTab; label: string; count: number }[] = [
+    { key: 'All', label: 'All', count: runs.length },
+    { key: 'Passed', label: 'Passed', count: counts.Passed },
+    { key: 'Failed', label: 'Failed', count: counts.Failed },
+    { key: 'Blocked', label: 'Blocked', count: counts.Blocked },
+    { key: 'NotRun', label: 'Not Run', count: counts.NotRun },
+    { key: 'Recurring', label: 'Recurring Issues', count: recurring?.length ?? 0 },
+  ];
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      <div className="flex-1 overflow-y-auto px-8 py-6">
-        {/* Breadcrumb — surfaces the Portal / Module / Feature scope so the user
-            can see at a glance what this run is targeting. */}
-        <div className="mb-2 flex items-center gap-1.5 text-[12px] text-text-3">
-          <button onClick={onBack} className="hover:text-text">
-            Test runs
+      <div className="flex-1 overflow-y-auto px-44 py-6">
+        {/* Breadcrumb */}
+        <div className="mb-3 flex items-center gap-1.5 text-[12px] text-text-3">
+          <button type="button" onClick={onBack} className="hover:text-text">
+            Test Runs
           </button>
-          <span className="text-text-3">/</span>
-          <span className="font-medium text-text">{shortRunCode(cycle)}</span>
-          {(() => {
-            const segments = cycleScopeSegments(cycle);
-            if (segments.length === 0) return null;
-            return (
-              <>
-                <span className="text-text-3">·</span>
-                {segments.map((seg, i) => (
-                  <span key={i} className="inline-flex items-center gap-1.5">
-                    {i > 0 && <span className="text-text-3">›</span>}
-                    <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-text-2">
-                      {seg}
-                    </span>
-                  </span>
-                ))}
-              </>
-            );
-          })()}
+          <span>/</span>
+          <span className="font-medium text-text">Execution</span>
         </div>
 
-        {/* Header strip */}
-        <div className="mb-6 flex items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <h1 className="m-0 text-[22px] font-semibold tracking-[-0.01em] text-text">
-                {cycle.name}
-              </h1>
+        {/* Header */}
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center gap-1.5">
               <span
                 className={cn(
-                  'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ring-1',
-                  statusTone,
+                  'inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] font-medium',
+                  statusTone.text,
                 )}
               >
-                {statusLabel}
+                <span className={cn('h-1.5 w-1.5 flex-shrink-0 rounded-full', statusTone.dot)} />
+                {statusTone.label}
               </span>
-            </div>
-            <p className="mt-1 text-[13px] text-text-2">{subtitle}</p>
-          </div>
-
-          <div className="flex flex-shrink-0 items-center gap-3">
-            {executors.length > 0 && (
-              <div className="flex -space-x-1.5">
-                {executors.slice(0, 3).map(name => (
-                  <span
-                    key={name}
-                    title={name}
-                    className={cn(
-                      'inline-flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-semibold ring-2 ring-surface',
-                      avatarColour(name),
-                    )}
-                  >
-                    {initials(name)}
-                  </span>
-                ))}
-                {executors.length > 3 && (
-                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-surface-2 text-[10px] font-semibold text-text-2 ring-2 ring-surface">
-                    +{executors.length - 3}
-                  </span>
-                )}
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => exportCycleResults(cycle, runs)}
-              className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2"
-            >
-              <i className="ti ti-download text-[15px]" />
-              Export
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowReport(true)}
-              className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2"
-              title="Open the shareable summary report"
-            >
-              <i className="ti ti-clipboard-text text-[15px]" />
-              Summary
-            </button>
-            {onCloseRun && cycle.status === 'Active' && counts.NotRun === 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (
-                    confirm(
-                      `Close run "${cycle.name}"? It will be marked Completed and become read-only.`,
-                    )
-                  ) {
-                    onCloseRun(cycle.id);
-                  }
-                }}
-                className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-[7px] text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-primary-hover"
-              >
-                <i className="ti ti-flag-check text-[15px]" />
-                Close run
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Progress widget */}
-        <div className="mb-5 rounded-lg border border-border bg-surface px-5 py-4">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="text-[13px] font-semibold text-text">Progress</div>
-            <div className="text-[13px] text-text-2">
-              <span className="font-semibold text-text">
-                {done} of {total}
-              </span>{' '}
-              · {percent}% complete
-            </div>
-          </div>
-          <SegmentedProgressBar counts={counts} total={total} height={10} />
-          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[12px]">
-            <LegendDot
-              color="bg-emerald-500"
-              label="passed"
-              value={counts.Passed}
-              valueClass="text-emerald-700"
-            />
-            <LegendDot
-              color="bg-red-500"
-              label="failed"
-              value={counts.Failed}
-              valueClass="text-red-700"
-            />
-            <LegendDot
-              color="bg-amber-500"
-              label="blocked"
-              value={counts.Blocked}
-              valueClass="text-amber-700"
-            />
-            <LegendDot
-              color="bg-slate-400"
-              label="skipped"
-              value={counts.Skipped}
-              valueClass="text-slate-700"
-            />
-            <LegendDot
-              color="bg-slate-200"
-              label="remaining"
-              value={counts.NotRun}
-              valueClass="text-slate-500"
-            />
-          </div>
-
-          {(retestDone > 0 || retestRemaining > 0) && (
-            <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-border pt-3 text-[12px]">
-              <span className="font-medium text-text-2">
-                Retest: <span className="font-semibold text-emerald-700">{retestDone} done</span> ·{' '}
-                <span className="font-semibold text-red-700">{retestRemaining} remaining</span>
-              </span>
-              {retestRemaining > 0 && (
-                <span className="flex items-center gap-3 text-text-2">
-                  <span className="text-text-3">Open failures by severity:</span>
-                  <SeverityDot
-                    color="bg-red-600"
-                    label="Critical"
-                    value={failureSeverity.Critical}
-                  />
-                  <SeverityDot color="bg-orange-500" label="Major" value={failureSeverity.Major} />
-                  <SeverityDot color="bg-yellow-500" label="Minor" value={failureSeverity.Minor} />
+              {cycle.cycleCategory && (
+                <span className="rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-2">
+                  {cycle.cycleCategory}
+                </span>
+              )}
+              {cycle.ticketLink && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-2">
+                  <i className="ti ti-brand-jira text-[12px] text-text-3" />
+                  {cycle.ticketLink.replace(/^https?:\/\//, '')}
                 </span>
               )}
             </div>
-          )}
+            <h1 className="truncate text-[22px] font-semibold tracking-[-0.01em] text-text">
+              {cycle.name}
+            </h1>
+            {subtitleParts.length > 0 && (
+              <p className="mt-1 text-[12.5px] text-text-3">{subtitleParts.join(' · ')}</p>
+            )}
+          </div>
+
+          <div className="flex flex-shrink-0 flex-col items-end gap-2">
+            <div className="flex items-center gap-2">
+              <div className="relative w-[220px]">
+                <i className="ti ti-search pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-text-3" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search case ID or title…"
+                  className="w-full rounded-[7px] border border-border bg-surface py-1.5 pl-8 pr-3 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
+                />
+              </div>
+              {moduleGroups.length > 1 && (
+                <select
+                  value={moduleFilter}
+                  onChange={e => setModuleFilter(e.target.value)}
+                  className="rounded-[7px] border border-border bg-surface px-2.5 py-1.5 text-[12.5px] text-text outline-none focus:border-primary"
+                >
+                  <option value="">All Modules in Scope</option>
+                  {moduleGroups.map(m => (
+                    <option key={m.name} value={m.name}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowEdit(true)}
+                className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2"
+                title="Edit test run"
+              >
+                <i className="ti ti-pencil text-[15px]" />
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => exportCycleResults(cycle, runs)}
+                className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2"
+              >
+                <i className="ti ti-download text-[15px]" />
+                Export
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowReport(true)}
+                className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2"
+                title="Open the shareable summary report"
+              >
+                <i className="ti ti-clipboard-text text-[15px]" />
+                Summary
+              </button>
+              {onCloseRun && cycle.status === 'Active' && counts.NotRun === 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (
+                      confirm(
+                        `Close run "${cycle.name}"? It will be marked Completed and become read-only.`,
+                      )
+                    ) {
+                      onCloseRun(cycle.id);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-[7px] text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-primary-hover"
+                >
+                  <i className="ti ti-flag-check text-[15px]" />
+                  Close run
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* KPI cards */}
+        <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <KpiCard label="Executed" value={done} meta={`${percent}% of ${total}`} />
+          <KpiCard label="Passed" value={counts.Passed} tone="success" />
+          <KpiCard label="Failed" value={counts.Failed} tone="danger" />
+          <KpiCard label="Blocked" value={counts.Blocked} tone="warning" />
+        </div>
+
+        {/* Progress bar */}
+        <div className="mb-4 rounded-lg border border-border bg-surface px-5 py-4">
+          <div className="mb-2 flex items-center justify-between text-[13px] text-text-2">
+            <span>
+              <span className="font-semibold text-text">
+                {done} / {total}
+              </span>{' '}
+              executed
+            </span>
+            <span className="font-semibold text-text">{percent}%</span>
+          </div>
+          <SegmentedProgressBar counts={counts} total={total} height={8} />
+        </div>
+
+        {/* Module Breakdown */}
+        <div className="mb-4 rounded-lg border border-border bg-surface p-4">
+          <p className="text-[14px] font-semibold text-text">Module Breakdown</p>
+          <p className="mb-3 text-[11.5px] text-text-3">
+            {moduleGroups.length <= 1
+              ? `This run is scoped to ${moduleGroups[0]?.name ?? 'one module'} — nothing else is in play`
+              : 'Click a module to filter the list below to just that module'}
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[12.5px]">
+              <thead>
+                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-text-3">
+                  <th className="border-b border-border pb-2 pr-3">Module</th>
+                  <th className="border-b border-border pb-2 pr-3">Executed</th>
+                  <th className="border-b border-border pb-2 pr-3">Pass Rate</th>
+                  <th className="border-b border-border pb-2 pr-3">Failed</th>
+                  <th className="border-b border-border pb-2">Blocked</th>
+                </tr>
+              </thead>
+              <tbody>
+                {moduleGroups.map(m => {
+                  const passRate =
+                    m.executed === 0 ? null : Math.round((m.passed / m.executed) * 100);
+                  const clickable = moduleGroups.length > 1;
+                  return (
+                    <tr
+                      key={m.name}
+                      onClick={() =>
+                        clickable && setModuleFilter(f => (f === m.name ? '' : m.name))
+                      }
+                      className={cn(
+                        'border-b border-border last:border-b-0',
+                        clickable && 'cursor-pointer hover:bg-surface-2',
+                        moduleFilter === m.name && 'bg-primary-light/50',
+                      )}
+                    >
+                      <td className="py-2.5 pr-3 font-medium text-text">{m.name}</td>
+                      <td className="py-2.5 pr-3 text-text-2">
+                        {m.executed} / {m.total}
+                      </td>
+                      <td className="py-2.5 pr-3 font-medium text-warning">
+                        {passRate === null ? '—' : `${passRate}%`}
+                      </td>
+                      <td className="py-2.5 pr-3 text-danger">{m.failed || '—'}</td>
+                      <td className="py-2.5 text-warning">{m.blocked || '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Filter tabs */}
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          {TABS.map(t => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setFilter(t.key)}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] transition-colors',
+                filter === t.key
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'border border-border bg-surface text-text-2 hover:bg-surface-2',
+              )}
+            >
+              {t.label}
+              <span
+                className={cn(
+                  'rounded-full px-1.5 text-[10px]',
+                  filter === t.key ? 'bg-white/20' : 'bg-surface-2 text-text-3',
+                )}
+              >
+                {t.count}
+              </span>
+            </button>
+          ))}
         </div>
 
         {/* Two-column body */}
         <div className="flex items-start gap-5">
-          {/* LEFT — filter chips + run list */}
           <section className="min-w-0 flex-1">
-            <div className="mb-3 flex flex-wrap items-center gap-1.5">
-              {(['All', 'NotRun', 'Passed', 'Failed', 'Blocked', 'Skipped'] as const).map(r => {
-                const c = r === 'All' ? runs.length : (counts[r as RunResult] ?? 0);
-                return (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => setFilter(r)}
-                    className={cn(
-                      'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] transition-colors',
-                      filter === r
-                        ? 'bg-primary text-white shadow-sm'
-                        : 'border border-border bg-surface text-text-2 hover:bg-surface-2',
-                    )}
-                  >
-                    {r === 'NotRun' ? 'Not run' : r}
-                    <span
-                      className={cn(
-                        'rounded-full px-1.5 text-[10px]',
-                        filter === r ? 'bg-white/20' : 'bg-surface-2 text-text-3',
-                      )}
-                    >
-                      {c}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
             {loading ? (
               <EmptyState icon="ti-loader-2" title="Loading runs…" body="" spin />
             ) : filteredRuns.length === 0 ? (
@@ -333,61 +433,113 @@ export function CycleView({
               ) : (
                 <EmptyState
                   icon="ti-list-check"
-                  title="No runs match this filter"
-                  body="Try the All tab."
+                  title={
+                    filter === 'Recurring'
+                      ? 'No recurring issues here'
+                      : 'No runs match this filter'
+                  }
+                  body={
+                    filter === 'Recurring'
+                      ? 'Nothing in this run has failed before.'
+                      : 'Try the All tab.'
+                  }
                 />
               )
             ) : (
-              <div className="overflow-hidden rounded-lg border border-border bg-surface">
-                <table className="w-full border-collapse text-[13px]">
-                  <thead className="bg-surface-2">
-                    <tr>
-                      <th className="w-[36px] border-b border-border px-2 py-2.5" />
-                      <th className="w-[100px] border-b border-border px-4 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.04em] text-text-3">
-                        ID
-                      </th>
-                      <th className="border-b border-border px-4 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.04em] text-text-3">
-                        Title
-                      </th>
-                      <th className="w-[180px] border-b border-border px-4 py-2.5 text-right text-[11px] font-medium uppercase tracking-[0.04em] text-text-3">
-                        Result
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredRuns.map(run => {
-                      const isSel = run.id === selectedRunId;
-                      return (
-                        <tr
-                          key={run.id}
-                          onClick={() => setSelectedRunId(run.id)}
-                          className={cn(
-                            'cursor-pointer border-b border-border transition-colors last:border-b-0',
-                            isSel ? 'bg-primary-light/70' : 'hover:bg-surface-2',
-                          )}
+              <div className="flex flex-col gap-2">
+                {filteredRuns.map(run => {
+                  const isSel = run.id === selectedRunId;
+                  const tc = run.testCase;
+                  const isRecurring = recurringIds.has(run.testCaseId);
+                  const isExpanded = expandedCaseId === run.testCaseId;
+                  return (
+                    <div key={run.id} className="flex flex-col gap-1.5">
+                      <div
+                        onClick={() => setSelectedRunId(run.id)}
+                        className={cn(
+                          'flex cursor-pointer items-center justify-between gap-3 rounded-lg border-y border-l-4 border-r border-border bg-surface px-3.5 py-2.5 transition-colors',
+                          resultBorderTone(run.result),
+                          isSel ? 'bg-primary-light/40' : 'hover:bg-surface-2',
+                        )}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="flex-shrink-0 font-mono text-[11px] text-text-3">
+                              TC-{String(tc.caseNum).padStart(2, '0')}
+                            </span>
+                            <Pill className={priorityBadge(tc.priority)}>{tc.priority}</Pill>
+                            <span className="truncate text-[11px] text-text-3">
+                              {caseScopePath(run)}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 truncate text-[13px] font-medium text-text">
+                            {tc.title}
+                          </p>
+                        </div>
+
+                        <div
+                          className="flex flex-shrink-0 items-center gap-1"
+                          onClick={e => e.stopPropagation()}
                         >
-                          <td className="px-2 py-3 text-center">
-                            <ResultGlyph result={run.result} />
-                          </td>
-                          <td className="px-4 py-3 font-mono text-[12px] text-text-3">
-                            TC-{String(run.testCase.caseNum).padStart(2, '0')}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="block max-w-[420px] truncate font-medium text-text">
-                              {run.testCase.title}
-                            </span>
-                            <span className="block max-w-[420px] truncate text-[11px] text-text-3">
-                              {run.testCase.feature?.module.name} · {run.testCase.feature?.name}
-                            </span>
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-right">
-                            <ResultChip run={run} />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                          <QuickAction
+                            icon="ti-check"
+                            active={run.result === 'Passed'}
+                            tone="success"
+                            onClick={() => onSubmitResult(run.id, 'Passed')}
+                            title="Mark Passed"
+                          />
+                          <QuickAction
+                            icon="ti-x"
+                            active={run.result === 'Failed'}
+                            tone="danger"
+                            onClick={() => onSubmitResult(run.id, 'Failed')}
+                            title="Mark Failed"
+                          />
+                          <QuickAction
+                            icon="ti-alert-triangle"
+                            active={run.result === 'Blocked'}
+                            tone="warning"
+                            onClick={() => onSubmitResult(run.id, 'Blocked')}
+                            title="Mark Blocked"
+                          />
+                          <QuickAction
+                            icon="ti-player-skip-forward"
+                            active={run.result === 'Skipped'}
+                            tone="muted"
+                            onClick={() => onSubmitResult(run.id, 'Skipped')}
+                            title="Skip"
+                          />
+                        </div>
+
+                        <div className="flex flex-shrink-0 items-center gap-2">
+                          <ResultChip run={run} />
+                          {isRecurring && (
+                            <button
+                              type="button"
+                              title="Show history across cycles"
+                              onClick={e => {
+                                e.stopPropagation();
+                                setExpandedCaseId(isExpanded ? null : run.testCaseId);
+                              }}
+                              className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-3 hover:bg-surface-2 hover:text-text"
+                            >
+                              <i
+                                className={cn(
+                                  'ti ti-chevron-down text-[13px] transition-transform',
+                                  isExpanded && 'rotate-180',
+                                )}
+                              />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {isRecurring && isExpanded && (
+                        <RecurringHistoryPanel testCaseId={run.testCaseId} />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -397,9 +549,6 @@ export function CycleView({
             <SelectedCasePanel
               key={selectedRun.id}
               run={selectedRun}
-              // Always editable, even once the cycle is Completed — retesting a
-              // previously-failed case (e.g. marking it Passed once fixed) needs
-              // to work without reopening the whole cycle first.
               readOnly={false}
               onSubmitResult={onSubmitResult}
             />
@@ -407,8 +556,174 @@ export function CycleView({
         </div>
       </div>
 
-      {/* Summary modal — preserved */}
       {showReport && <CycleReportModal cycleId={cycle.id} onClose={() => setShowReport(false)} />}
+
+      {showEdit && (
+        <NewCycleModal
+          modules={modules}
+          projectId={projectId}
+          initial={cycle}
+          onClose={() => setShowEdit(false)}
+          onSave={async input => {
+            // Scope/mode aren't editable here — this run's cases were already
+            // generated against the original scope, and changing it here
+            // wouldn't regenerate them, so it'd just leave scope and actual
+            // runs disagreeing. Repopulate is the supported way to change
+            // what a run covers.
+            const { mode: _mode, scopeType: _scopeType, scopeId: _scopeId, ...patch } = input;
+            await onUpdate(cycle.id, patch);
+            setShowEdit(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── KPI card ───────────────────────────────────────────────
+
+function KpiCard({
+  label,
+  value,
+  meta,
+  tone,
+}: {
+  label: string;
+  value: number;
+  meta?: string;
+  tone?: 'success' | 'danger' | 'warning';
+}) {
+  const toneCls =
+    tone === 'success'
+      ? 'text-success'
+      : tone === 'danger'
+        ? 'text-danger'
+        : tone === 'warning'
+          ? 'text-warning'
+          : 'text-text';
+  return (
+    <div className="rounded-lg border border-border bg-surface p-4">
+      <p className="text-[11px] text-text-3">{label}</p>
+      <p className={cn('mt-1 text-[22px] font-bold tabular-nums', toneCls)}>{value}</p>
+      {meta && <p className="mt-0.5 text-[11px] text-text-3">{meta}</p>}
+    </div>
+  );
+}
+
+// ─── Quick inline action button ─────────────────────────────
+
+function QuickAction({
+  icon,
+  active,
+  tone,
+  onClick,
+  title,
+}: {
+  icon: string;
+  active: boolean;
+  tone: 'success' | 'danger' | 'warning' | 'muted';
+  onClick: () => void;
+  title: string;
+}) {
+  const activeCls =
+    tone === 'success'
+      ? 'border-success bg-success-bg text-success-text'
+      : tone === 'danger'
+        ? 'border-danger bg-danger-bg text-danger-text'
+        : tone === 'warning'
+          ? 'border-warning bg-warning-bg text-warning-text'
+          : 'border-border-strong bg-surface-2 text-text';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={cn(
+        'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md border transition-colors',
+        active ? activeCls : 'border-border text-text-3 hover:bg-surface-2',
+      )}
+    >
+      <i className={cn('ti', icon, 'text-[13px]')} />
+    </button>
+  );
+}
+
+function resultBorderTone(result: RunResult): string {
+  if (result === 'Passed') return 'border-l-success';
+  if (result === 'Failed') return 'border-l-danger';
+  if (result === 'Blocked') return 'border-l-warning';
+  if (result === 'Skipped') return 'border-l-text-3';
+  return 'border-l-border';
+}
+
+// ─── Recurring issue history (expands under a recurring row) ──
+
+interface RunHistoryItem {
+  id: string;
+  result: RunResult;
+  ts: string;
+  cycleId: string;
+  cycleName: string;
+}
+
+// Reuses the same case-history endpoint TestCaseView's "Execution History"
+// card already fetches from -- one real run log, no separate recurring-only
+// data path to keep in sync.
+function RecurringHistoryPanel({ testCaseId }: { testCaseId: string }) {
+  const [runs, setRuns] = useState<RunHistoryItem[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRuns(null);
+    api
+      .get<{ items: RunHistoryItem[] }>(`/api/test-cases/${testCaseId}/runs`)
+      .then(d => {
+        if (!cancelled) setRuns(d.items);
+      })
+      .catch(() => {
+        if (!cancelled) setRuns([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [testCaseId]);
+
+  return (
+    <div className="ml-4 rounded-lg border border-dashed border-border bg-surface-2/40 px-3.5 py-2.5">
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-3">
+        History across cycles
+      </p>
+      {runs === null ? (
+        <p className="text-[12px] text-text-3">Loading…</p>
+      ) : runs.length === 0 ? (
+        <p className="text-[12px] text-text-3">No prior runs recorded.</p>
+      ) : (
+        <div className="flex flex-col divide-y divide-border">
+          {runs.map(r => {
+            const t = resultTone(r.result === 'NotRun' ? null : r.result);
+            return (
+              <div
+                key={r.id}
+                className="flex items-center justify-between gap-3 py-1.5 first:pt-0 last:pb-0"
+              >
+                <span className="min-w-0 truncate text-[12.5px] text-text">{r.cycleName}</span>
+                <span className="flex flex-shrink-0 items-center gap-3">
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1.5 text-[12px] font-medium',
+                      t.text,
+                    )}
+                  >
+                    <span className={cn('h-1.5 w-1.5 flex-shrink-0 rounded-full', t.dot)} />
+                    {t.label}
+                  </span>
+                  <span className="text-[10.5px] text-text-3">{relativeTime(r.ts)}</span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -482,9 +797,7 @@ function SelectedCasePanel({
           TC-{String(tc.caseNum).padStart(2, '0')}
         </div>
         <h3 className="mt-0.5 text-[14px] font-semibold leading-snug text-text">{tc.title}</h3>
-        <p className="mt-1 text-[11px] text-text-3">
-          {tc.feature?.module.name} · {tc.feature?.name}
-        </p>
+        <p className="mt-1 text-[11px] text-text-3">{caseScopePath(run)}</p>
 
         <div className="mt-2 flex flex-wrap gap-1">
           <Pill className={priorityBadge(tc.priority)}>{tc.priority}</Pill>
@@ -578,36 +891,6 @@ function SelectedCasePanel({
 
 // ─── Visual atoms ──────────────────────────────────────────
 
-function ResultGlyph({ result }: { result: RunResult }) {
-  if (result === 'Passed')
-    return (
-      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-        <i className="ti ti-check text-[12px]" />
-      </span>
-    );
-  if (result === 'Failed')
-    return (
-      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-700">
-        <i className="ti ti-x text-[12px]" />
-      </span>
-    );
-  if (result === 'Blocked')
-    return (
-      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-amber-700">
-        <i className="ti ti-player-pause text-[12px]" />
-      </span>
-    );
-  if (result === 'Skipped')
-    return (
-      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-slate-600">
-        <i className="ti ti-player-skip-forward text-[12px]" />
-      </span>
-    );
-  return (
-    <span className="inline-block h-3.5 w-3.5 rounded-full border-[1.5px] border-border-strong" />
-  );
-}
-
 function ResultChip({ run }: { run: ApiTestRun }) {
   if (run.result === 'NotRun') {
     return <span className="text-[12px] text-text-3">—</span>;
@@ -620,19 +903,9 @@ function ResultChip({ run }: { run: ApiTestRun }) {
         : run.result === 'Blocked'
           ? 'text-amber-700'
           : 'text-slate-600';
-  const symbol =
-    run.result === 'Passed'
-      ? '✓'
-      : run.result === 'Failed'
-        ? '✗'
-        : run.result === 'Blocked'
-          ? '‖'
-          : '↷';
   return (
-    <span className={cn('inline-flex items-center gap-1 text-[12.5px] font-medium', baseColor)}>
-      <span>{symbol}</span>
-      <span>{run.result}</span>
-      {run.executedAt && <span className="text-text-3">· {timeAgo(run.executedAt)}</span>}
+    <span className={cn('whitespace-nowrap text-[12.5px] font-medium', baseColor)}>
+      {run.result}
     </span>
   );
 }
@@ -646,36 +919,6 @@ function Pill({ children, className }: { children: React.ReactNode; className: s
       )}
     >
       {children}
-    </span>
-  );
-}
-
-function SeverityDot({ color, label, value }: { color: string; label: string; value: number }) {
-  return (
-    <span className="flex items-center gap-1 text-text-2">
-      <span className={cn('inline-block h-2 w-2 rounded-full', color)} />
-      <span className="font-semibold text-text">{value}</span>
-      <span>{label}</span>
-    </span>
-  );
-}
-
-function LegendDot({
-  color,
-  label,
-  value,
-  valueClass,
-}: {
-  color: string;
-  label: string;
-  value: number;
-  valueClass?: string;
-}) {
-  return (
-    <span className="flex items-center gap-1.5 text-text-2">
-      <span className={cn('inline-block h-2 w-2 rounded-full', color)} />
-      <span className={cn('font-semibold', valueClass)}>{value}</span>
-      <span>{label}</span>
     </span>
   );
 }
@@ -783,40 +1026,6 @@ export function SegmentedProgressBar({ counts, total, height = 6 }: SegBarProps)
 
 // ─── helpers ───────────────────────────────────────────────
 
-// Returns the Portal / Module / Feature segments worth surfacing in the breadcrumb.
-// CaseBased cycles derive these from scopeType + scopeName ("Portal" → just the name;
-// "Module" → portal info isn't carried, so we just show the module; "Suite" →
-// scopeName already encodes "ModuleName / SuiteName"). Manual cycles use the
-// free-text portalName / moduleName / featureName entered at quick-log time.
-function cycleScopeSegments(cycle: TestCycle): string[] {
-  const isManual = (cycle.mode ?? 'CaseBased') === 'Manual';
-  if (isManual) {
-    return [cycle.portalName, cycle.moduleName, cycle.featureName].filter(
-      (s): s is string => !!s && s.trim().length > 0,
-    );
-  }
-  if (cycle.scopeType === 'Portal' && cycle.scopeName) return [cycle.scopeName];
-  if (cycle.scopeType === 'Module' && cycle.scopeName) return [cycle.scopeName];
-  if (cycle.scopeType === 'Suite' && cycle.scopeName) {
-    // "Module / Suite" — split for breadcrumb display
-    return cycle.scopeName.split(' / ').filter(Boolean);
-  }
-  return [];
-}
-
-function buildSubtitle(cycle: TestCycle, total: number): string {
-  const parts: string[] = [];
-  parts.push(`${total} case${total === 1 ? '' : 's'}`);
-  parts.push(`started ${timeAgo(cycle.createdAt)}`);
-  if (cycle.targetDate) parts.push(`due ${dueLabel(cycle.targetDate)}`);
-  if (cycle.scopeName) parts.push(cycle.scopeName);
-  // Run context (only added if set)
-  if (cycle.environment) parts.push(cycle.environment.toUpperCase());
-  if (cycle.platform) parts.push(cycle.platform);
-  if (cycle.version) parts.push(`v${cycle.version.replace(/^v\s*/i, '')}`);
-  return parts.join(' · ');
-}
-
 function timeAgo(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   const min = Math.floor(ms / 60_000);
@@ -827,23 +1036,4 @@ function timeAgo(iso: string): string {
   const d = Math.floor(hr / 24);
   if (d < 30) return `${d}d ago`;
   return new Date(iso).toLocaleDateString();
-}
-
-function dueLabel(iso: string): string {
-  const due = new Date(iso);
-  const now = new Date();
-  const sameDay = due.toDateString() === now.toDateString();
-  if (sameDay) return 'today';
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  if (due.toDateString() === tomorrow.toDateString()) return 'tomorrow';
-  return due.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-}
-
-function shortRunCode(cycle: TestCycle): string {
-  const d = new Date(cycle.createdAt);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `R-${y}-${m}-${day}`;
 }
