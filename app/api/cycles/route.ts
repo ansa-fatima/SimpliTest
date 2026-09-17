@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { Prisma, CycleScopeType, CycleStatus, CycleMode } from '@prisma/client';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
+import { loadRunResultClassMap } from '@/lib/options';
 
 const SCOPE_TYPES: CycleScopeType[] = ['All', 'Portal', 'Module', 'Suite', 'Custom'];
 const MODES: CycleMode[] = ['CaseBased', 'Manual'];
@@ -29,13 +30,18 @@ export async function GET(req: Request) {
         runs: {
           select: {
             result: true,
+            customResultId: true,
             wasEverIssue: true,
             executedBy: true,
-            testCase: { select: { severity: true } },
+            testCase: { select: { severity: true, customSeverityId: true } },
           },
         },
       },
     });
+    // Only needed when scoping to one workspace (list view can also run
+    // unscoped across every project) -- a custom result's PassLike/FailLike
+    // classification is workspace-specific, see lib/options.ts.
+    const resultClassMap = projectId ? await loadRunResultClassMap(projectId) : new Map();
 
     // Resolve scope names (portal / module / suite) in batch
     const portalIds = cycles
@@ -97,8 +103,18 @@ export async function GET(req: Request) {
         counts[r.result]++;
         if (r.wasEverIssue) {
           issuesFound++;
-          if (r.result === 'Passed') issuesResolved++;
-          if (r.testCase.severity in severity) {
+          const isPassLike = r.customResultId
+            ? resultClassMap.get(r.customResultId) === 'PassLike'
+            : r.result === 'Passed';
+          if (isPassLike) issuesResolved++;
+          // A case with a custom severity override has ITS legacy `severity`
+          // column set to an unrelated placeholder (see lib/options.ts) --
+          // counting it here by that placeholder would misattribute it to
+          // the wrong bucket, so it's excluded rather than miscounted. A
+          // custom severity can never be misnamed "Critical"/"Major"/"Minor"
+          // (those names already belong to the built-ins), so this fixed
+          // 3-bucket breakdown only ever needs the built-in values anyway.
+          if (!r.testCase.customSeverityId && r.testCase.severity in severity) {
             severity[r.testCase.severity as keyof typeof severity]++;
           }
         }
@@ -196,6 +212,8 @@ export async function POST(req: Request) {
       version?: string;
       cycleCategory?: string;
       ticketLink?: string;
+      jiraStatus?: string;
+      jiraSyncedAt?: string | null;
       loggedBy?: string;
       issueCount?: number;
       criticalCount?: number;
@@ -247,6 +265,8 @@ export async function POST(req: Request) {
           version: body.version?.trim() || null,
           cycleCategory: body.cycleCategory?.trim() || null,
           ticketLink: body.ticketLink?.trim() || null,
+          jiraStatus: body.jiraStatus?.trim() || null,
+          jiraSyncedAt: body.jiraSyncedAt ? new Date(body.jiraSyncedAt) : null,
           loggedBy: body.loggedBy?.trim() || '',
           issueCount: nz(body.issueCount),
           criticalCount: nz(body.criticalCount),

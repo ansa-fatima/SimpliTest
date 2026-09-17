@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
+import { ActivityEvent } from '@/lib/activity';
 import { avatarColour, cn, initials, relativeTime } from '@/lib/utils';
+import { ActivityFeed } from './ActivityFeed';
 
 interface RecentCycle {
   id: string;
@@ -46,18 +48,6 @@ interface RecurringIssue {
   cycleCount: number;
   lastSeen: string;
 }
-
-type ActivityEvent =
-  | {
-      kind: 'run';
-      actor: string;
-      verb: string;
-      caseLabel: string;
-      result: string;
-      cycleName: string;
-      ts: string;
-    }
-  | { kind: 'quicklog'; actor: string; scopeName: string; ts: string };
 
 interface DashboardData {
   totalCases: number;
@@ -690,53 +680,6 @@ function RecurringIssuesList({ items }: { items: RecurringIssue[] }) {
             <div className="text-[12.5px] font-semibold text-danger">{i.cycleCount}× cycles</div>
             <div className="text-[10.5px] text-text-3">{relativeTime(i.lastSeen)}</div>
           </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ─── Recent activity ───────────────────────────────────────
-
-function ActivityFeed({ events }: { events: ActivityEvent[] }) {
-  return (
-    <div className="flex flex-col divide-y divide-border">
-      {events.map((e, i) => (
-        <div key={i} className="flex items-start gap-2.5 py-2 first:pt-0 last:pb-0">
-          <span
-            className={cn(
-              'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[9.5px] font-bold',
-              avatarColour(e.actor),
-            )}
-          >
-            {initials(e.actor)}
-          </span>
-          <div className="min-w-0 flex-1 text-[12.5px] text-text-2">
-            <b className="font-semibold text-text">{e.actor}</b>{' '}
-            {e.kind === 'run' ? (
-              <>
-                marked <span className="font-mono text-[11.5px]">{e.caseLabel}</span> as{' '}
-                <span
-                  className={
-                    e.result === 'Passed'
-                      ? 'font-semibold text-success'
-                      : e.result === 'Failed'
-                        ? 'font-semibold text-danger'
-                        : 'font-semibold text-warning'
-                  }
-                >
-                  {e.result}
-                </span>{' '}
-                in {e.cycleName}
-              </>
-            ) : (
-              <>
-                logged a quick log against{' '}
-                <span className="font-medium text-text">{e.scopeName}</span>
-              </>
-            )}
-          </div>
-          <span className="flex-shrink-0 text-[11px] text-text-3">{relativeTime(e.ts)}</span>
         </div>
       ))}
     </div>

@@ -1,25 +1,30 @@
 import { prisma } from '@/lib/db';
 import { RunResult } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
+import { resolveCaseOption } from '@/lib/testCaseOptions';
 
 interface Ctx {
   params: { id: string };
 }
 
-const RESULTS: RunResult[] = ['NotRun', 'Passed', 'Failed', 'Blocked', 'Skipped'];
+const runInclude = {
+  testCase: {
+    include: {
+      suite: { include: { module: { select: { id: true, name: true } } } },
+      customPriority: { select: { name: true, color: true } },
+      customSeverity: { select: { name: true, color: true } },
+      customType: { select: { name: true, color: true } },
+    },
+  },
+  customResult: { select: { name: true, color: true } },
+} as const;
 
 // GET /api/runs/:id  — single run with full test case
 export async function GET(_req: Request, { params }: Ctx) {
   try {
     const run = await prisma.testRun.findUnique({
       where: { id: params.id },
-      include: {
-        testCase: {
-          include: {
-            suite: { include: { module: { select: { id: true, name: true } } } },
-          },
-        },
-      },
+      include: runInclude,
     });
     if (!run) return notFound('Run not found');
     return ok(run);
@@ -29,15 +34,18 @@ export async function GET(_req: Request, { params }: Ctx) {
 }
 
 // PATCH /api/runs/:id
-// Body: { result?: RunResult, notes?: string, executedBy?: string }
-// Setting result automatically updates executedAt (or clears it for NotRun).
+// Body: { result?: string, notes?: string, executedBy?: string }
+// `result` is a category KEY (see lib/options.ts) -- a built-in enum
+// literal or a custom RunResult WorkspaceOption.id. Setting it automatically
+// updates executedAt (or clears it for true "Not run") and wasEverIssue.
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
-    const body = await parseJson<{ result?: RunResult; notes?: string; executedBy?: string }>(req);
+    const body = await parseJson<{ result?: string; notes?: string; executedBy?: string }>(req);
     if (!body) return bad('invalid JSON body');
 
     const data: {
       result?: RunResult;
+      customResultId?: string | null;
       notes?: string;
       executedBy?: string;
       executedAt?: Date | null;
@@ -45,16 +53,49 @@ export async function PATCH(req: Request, { params }: Ctx) {
     } = {};
 
     if (body.result !== undefined) {
-      if (!RESULTS.includes(body.result)) return bad('invalid result');
-      data.result = body.result;
-      data.executedAt = body.result === 'NotRun' ? null : new Date();
-      // Sticks at true the moment a run is ever marked Failed/Blocked, so a
-      // later Pass can be told apart from one that never had an issue at
-      // all. "Reset to Not run" is the one explicit way to clear it — that
-      // action means starting this case's execution over from scratch.
-      if (body.result === 'Failed' || body.result === 'Blocked') {
+      const existing = await prisma.testRun.findUnique({
+        where: { id: params.id },
+        select: { cycle: { select: { projectId: true } } },
+      });
+      if (!existing) return notFound('Run not found');
+
+      // A custom RunResult never means "not yet executed" -- that's a
+      // reserved meaning of the literal enum value alone (see
+      // prisma/schema.prisma's TestRun.customResultId comment), so the
+      // placeholder written to the legacy column when a custom option is
+      // chosen is deliberately NOT 'NotRun'.
+      const opt = await resolveCaseOption(
+        existing.cycle.projectId,
+        'RunResult',
+        body.result,
+        'Skipped',
+      );
+      if (!opt) return bad('invalid result');
+
+      data.result = opt.enumValue as RunResult;
+      data.customResultId = opt.customOptionId;
+
+      const isTrueNotRun = opt.enumValue === 'NotRun' && !opt.customOptionId;
+      data.executedAt = isTrueNotRun ? null : new Date();
+
+      // Sticks at true the moment a run is ever marked as a fail-like
+      // result, so a later Pass can be told apart from one that never had
+      // an issue at all. "Reset to Not run" is the one explicit way to
+      // clear it -- that action means starting this case's execution over
+      // from scratch.
+      let resultClass: 'PassLike' | 'FailLike' | 'Neutral' | null = null;
+      if (opt.customOptionId) {
+        const customOption = await prisma.workspaceOption.findUnique({
+          where: { id: opt.customOptionId },
+          select: { countsAs: true },
+        });
+        resultClass = customOption?.countsAs ?? 'Neutral';
+      } else if (opt.enumValue === 'Failed' || opt.enumValue === 'Blocked') {
+        resultClass = 'FailLike';
+      }
+      if (resultClass === 'FailLike') {
         data.wasEverIssue = true;
-      } else if (body.result === 'NotRun') {
+      } else if (isTrueNotRun) {
         data.wasEverIssue = false;
       }
     }
@@ -66,13 +107,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
     const run = await prisma.testRun.update({
       where: { id: params.id },
       data,
-      include: {
-        testCase: {
-          include: {
-            suite: { include: { module: { select: { id: true, name: true } } } },
-          },
-        },
-      },
+      include: runInclude,
     });
 
     // Auto-close the run the moment every case in it has a result — saves
@@ -80,9 +115,9 @@ export async function PATCH(req: Request, { params }: Ctx) {
     // nothing left "to do". Only fires forward (Active -> Completed); a
     // later "Reset to Not run" doesn't reopen it, since undoing one result
     // on an otherwise-finished run isn't the same as un-finishing it.
-    if (body.result !== undefined && body.result !== 'NotRun') {
+    if (body.result !== undefined && !(data.result === 'NotRun' && !data.customResultId)) {
       const stillNotRun = await prisma.testRun.count({
-        where: { cycleId: run.cycleId, result: 'NotRun' },
+        where: { cycleId: run.cycleId, result: 'NotRun', customResultId: null },
       });
       if (stillNotRun === 0) {
         await prisma.testCycle.updateMany({

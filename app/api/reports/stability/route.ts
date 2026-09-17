@@ -1,7 +1,9 @@
 import { prisma } from '@/lib/db';
+import { Prisma } from '@prisma/client';
 import { ok, serverError } from '@/lib/api';
 import { parsePeriodParams } from '@/lib/period';
 import { DataPoint, pointFromRun, pointFromQuickLog, stats } from '@/lib/stability';
+import { loadRunResultClassMap, stabilityResultWhereClause } from '@/lib/options';
 
 // GET /api/reports/stability
 //   ?projectId=...
@@ -64,6 +66,15 @@ export async function GET(req: Request) {
     const versionFilter = sp.get('version') || undefined;
     const testerFilter = sp.get('tester') || undefined;
 
+    // A run "counts" toward stability when it's PassLike or FailLike --
+    // Blocked/Skipped/NotRun (and a custom Neutral status) aren't a verdict,
+    // so they're excluded, same rule as before but now aware of custom
+    // RunResult options too (see lib/options.ts).
+    const resultClassFilter: Prisma.TestRunWhereInput = projectId
+      ? await stabilityResultWhereClause(projectId)
+      : { result: { in: ['Passed', 'Failed'] } };
+    const resultClassMap = projectId ? await loadRunResultClassMap(projectId) : new Map();
+
     const [portals, runs, quickLogs] = await Promise.all([
       prisma.portal.findMany({
         where: {
@@ -86,11 +97,12 @@ export async function GET(req: Request) {
             mode: 'CaseBased',
             ...(versionFilter ? { version: versionFilter } : {}),
           },
-          result: { in: ['Passed', 'Failed'] },
+          ...resultClassFilter,
           ...(testerFilter ? { executedBy: testerFilter } : {}),
         },
         select: {
           result: true,
+          customResultId: true,
           executedAt: true,
           updatedAt: true,
           cycleId: true,
@@ -131,7 +143,7 @@ export async function GET(req: Request) {
     };
 
     for (const r of runs) {
-      const point = pointFromRun(r);
+      const point = pointFromRun(r, resultClassMap);
       if (periodStart && point.ts < periodStart) continue;
       if (periodEnd && point.ts >= periodEnd) continue;
       if (r.testCase.suiteId) pushTo(suitePoints, r.testCase.suiteId, point);

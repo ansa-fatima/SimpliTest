@@ -1,14 +1,12 @@
 import { prisma } from '@/lib/db';
 import { Prisma, Priority, Severity, TestType, CaseStatus } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
+import { projectIdForCaseParent, resolveCaseOption } from '@/lib/testCaseOptions';
 
 interface Ctx {
   params: { id: string };
 }
 
-const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
-const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
-const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
 const STATUSES: CaseStatus[] = ['Active', 'Draft', 'Archived'];
 
 const MAX_ATTACHMENTS = 5;
@@ -59,6 +57,12 @@ const caseInclude = {
     },
   },
   owner: { select: ownerSelect },
+  // Only set when priority/severity/type is a custom option -- null
+  // otherwise, meaning "use the built-in badge for the enum column value"
+  // (see lib/utils.ts's priorityBadge/severityBadge/typeBadge).
+  customPriority: { select: { name: true, color: true } },
+  customSeverity: { select: { name: true, color: true } },
+  customType: { select: { name: true, color: true } },
 } as const;
 
 // GET /api/test-cases/:id
@@ -104,17 +108,54 @@ export async function PATCH(req: Request, { params }: Ctx) {
       data.attachments = cleanAttachments(body.attachments) as unknown as Prisma.InputJsonValue;
     }
 
-    if (body.priority !== undefined) {
-      if (!PRIORITIES.includes(body.priority as Priority)) return bad('invalid priority');
-      data.priority = body.priority as Priority;
-    }
-    if (body.severity !== undefined) {
-      if (!SEVERITIES.includes(body.severity as Severity)) return bad('invalid severity');
-      data.severity = body.severity as Severity;
-    }
-    if (body.type !== undefined) {
-      if (!TYPES.includes(body.type as TestType)) return bad('invalid type');
-      data.type = body.type as TestType;
+    if (body.priority !== undefined || body.severity !== undefined || body.type !== undefined) {
+      const current = await prisma.testCase.findUnique({
+        where: { id: params.id },
+        select: { portalId: true, moduleId: true, suiteId: true },
+      });
+      if (!current) return notFound('Test case not found');
+      const projectId = await projectIdForCaseParent(current);
+      if (!projectId) return bad('Parent not found');
+
+      if (body.priority !== undefined) {
+        const priorityOpt = await resolveCaseOption(
+          projectId,
+          'Priority',
+          body.priority as string,
+          'Medium',
+        );
+        if (!priorityOpt) return bad('invalid priority');
+        data.priority = priorityOpt.enumValue as Priority;
+        data.customPriority = priorityOpt.customOptionId
+          ? { connect: { id: priorityOpt.customOptionId } }
+          : { disconnect: true };
+      }
+      if (body.severity !== undefined) {
+        const severityOpt = await resolveCaseOption(
+          projectId,
+          'Severity',
+          body.severity as string,
+          'Minor',
+        );
+        if (!severityOpt) return bad('invalid severity');
+        data.severity = severityOpt.enumValue as Severity;
+        data.customSeverity = severityOpt.customOptionId
+          ? { connect: { id: severityOpt.customOptionId } }
+          : { disconnect: true };
+      }
+      if (body.type !== undefined) {
+        const typeOpt = await resolveCaseOption(
+          projectId,
+          'TestType',
+          body.type as string,
+          'Functional',
+        );
+        if (!typeOpt) return bad('invalid type');
+        data.type = typeOpt.enumValue as TestType;
+        data.customType = typeOpt.customOptionId
+          ? { connect: { id: typeOpt.customOptionId } }
+          : { disconnect: true };
+      }
     }
     if (body.status !== undefined) {
       if (!STATUSES.includes(body.status as CaseStatus)) return bad('invalid status');

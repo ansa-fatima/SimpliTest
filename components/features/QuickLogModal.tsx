@@ -60,6 +60,14 @@ export function NewQuickLogModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // ── Jira sync ────────────────────────────────────────────────
+  const [jiraConnected, setJiraConnected] = useState(false);
+  const [jiraStatus, setJiraStatus] = useState('');
+  const [jiraDone, setJiraDone] = useState<number | null>(null);
+  const [jiraRemaining, setJiraRemaining] = useState<number | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState('');
+
   useEffect(() => {
     const modUrl = projectId ? `/api/modules?projectId=${projectId}` : '/api/modules';
     api
@@ -71,8 +79,38 @@ export function NewQuickLogModal({
         .get<ApiPortal[]>(`/api/portals?projectId=${projectId}`)
         .then(setPortals)
         .catch(() => {});
+      api
+        .get<{ connected: boolean }>(`/api/projects/${projectId}/integrations/jira`)
+        .then(s => setJiraConnected(s.connected))
+        .catch(() => setJiraConnected(false));
     }
   }, [projectId]);
+
+  const syncFromJira = async () => {
+    if (!projectId || !ticketLink.trim()) return;
+    setSyncError('');
+    setSyncing(true);
+    try {
+      const result = await api.post<{
+        status: string;
+        criticalCount: number;
+        majorCount: number;
+        minorCount: number;
+        doneCount: number;
+        remainingCount: number;
+      }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: ticketLink.trim() });
+      setJiraStatus(result.status);
+      setCritical(result.criticalCount);
+      setMajor(result.majorCount);
+      setMinor(result.minorCount);
+      setJiraDone(result.doneCount);
+      setJiraRemaining(result.remainingCount);
+    } catch (e) {
+      setSyncError((e as Error).message);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const selectedModule = modules.find(m => m.id === moduleId) ?? null;
   const selectedPortal = portals.find(p => p.id === portalId) ?? null;
@@ -100,10 +138,14 @@ export function NewQuickLogModal({
         version: version.trim() || undefined,
         cycleCategory: category || undefined,
         ticketLink: ticketLink.trim() || undefined,
+        jiraStatus: jiraStatus || undefined,
+        jiraSyncedAt: jiraStatus ? new Date().toISOString() : undefined,
         issueCount: total,
         criticalCount: critical,
         majorCount: major,
         minorCount: minor,
+        doneCount: jiraDone ?? undefined,
+        remainingCount: jiraRemaining ?? undefined,
       });
     } catch (e) {
       setError((e as Error).message);
@@ -226,13 +268,39 @@ export function NewQuickLogModal({
           </div>
 
           <Field label="Ticket link (optional)">
-            <input
-              type="text"
-              value={ticketLink}
-              onChange={e => setTicketLink(e.target.value)}
-              placeholder="e.g. JIRA-1234"
-              className={inputCls}
-            />
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={ticketLink}
+                onChange={e => {
+                  setTicketLink(e.target.value);
+                  setJiraStatus('');
+                }}
+                placeholder="e.g. JIRA-1234"
+                className={cn(inputCls, 'flex-1')}
+              />
+              {jiraConnected && (
+                <button
+                  type="button"
+                  disabled={!ticketLink.trim() || syncing}
+                  onClick={syncFromJira}
+                  className="flex-shrink-0 whitespace-nowrap rounded-[7px] border border-border bg-surface px-3 py-2 text-[12px] font-medium text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {syncing ? (
+                    <i className="ti ti-loader-2 animate-spin text-[13px]" />
+                  ) : (
+                    'Sync from Jira'
+                  )}
+                </button>
+              )}
+            </div>
+            {syncError && <p className="mt-1 text-[11px] font-medium text-danger">{syncError}</p>}
+            {jiraStatus && (
+              <p className="mt-1 text-[11px] text-text-3">
+                Jira status: <span className="font-medium text-text-2">{jiraStatus}</span> —
+                Critical/Major/Minor filled in below
+              </p>
+            )}
           </Field>
 
           {error && <p className="text-[12px] text-danger">{error}</p>}
@@ -267,6 +335,7 @@ export function NewQuickLogModal({
 
 interface UpdateQuickLogModalProps {
   log: TestCycle;
+  projectId: string | null;
   onClose: () => void;
   onSave: (patch: Record<string, unknown>) => Promise<void>;
 }
@@ -274,12 +343,67 @@ interface UpdateQuickLogModalProps {
 // The retest workflow, isolated from everything else about the log --
 // nothing new is created here, Done/Remaining just move against the same
 // record (see lib/stability.ts's pointFromQuickLog for how that then reads
-// as Pass/Fail).
-export function UpdateQuickLogModal({ log, onClose, onSave }: UpdateQuickLogModalProps) {
-  const issueCount = log.issueCount ?? 0;
+// as Pass/Fail). Issue counts stay read-only UNLESS a "Sync from Jira"
+// pulls fresh ones from the linked ticket -- this is the one modal both the
+// Test Runs and Test Cycles listings converge on when you open an existing
+// quick log, so it's also the one place a Jira re-sync needs to live for it
+// to be reachable from either screen.
+export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQuickLogModalProps) {
   const wasTracked = (log.doneCount ?? 0) > 0 || (log.remainingCount ?? 0) > 0;
   const [done, setDone] = useState(wasTracked ? (log.doneCount ?? 0) : 0);
+  const [issueCount, setIssueCount] = useState(log.issueCount ?? 0);
+  const [critical, setCritical] = useState(log.criticalCount ?? 0);
+  const [major, setMajor] = useState(log.majorCount ?? 0);
+  const [minor, setMinor] = useState(log.minorCount ?? 0);
+  const [jiraStatus, setJiraStatus] = useState(log.jiraStatus ?? '');
+  const [jiraSyncedAt, setJiraSyncedAt] = useState(log.jiraSyncedAt ?? '');
+  const [synced, setSynced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  const [jiraConnected, setJiraConnected] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState('');
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    api
+      .get<{ connected: boolean }>(`/api/projects/${projectId}/integrations/jira`)
+      .then(s => !cancelled && setJiraConnected(s.connected))
+      .catch(() => !cancelled && setJiraConnected(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const syncFromJira = async () => {
+    if (!projectId || !log.ticketLink) return;
+    setSyncError('');
+    setSyncing(true);
+    try {
+      const result = await api.post<{
+        status: string;
+        issueCount: number;
+        criticalCount: number;
+        majorCount: number;
+        minorCount: number;
+        doneCount: number;
+        remainingCount: number;
+      }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: log.ticketLink });
+      setJiraStatus(result.status);
+      setJiraSyncedAt(new Date().toISOString());
+      setIssueCount(result.issueCount);
+      setCritical(result.criticalCount);
+      setMajor(result.majorCount);
+      setMinor(result.minorCount);
+      setDone(result.doneCount);
+      setSynced(true);
+    } catch (e) {
+      setSyncError((e as Error).message);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const remaining = Math.max(0, issueCount - done);
   const percent = issueCount === 0 ? 0 : Math.round((done / issueCount) * 100);
@@ -287,15 +411,24 @@ export function UpdateQuickLogModal({ log, onClose, onSave }: UpdateQuickLogModa
   const scopePath = [log.moduleName, log.featureName].filter(Boolean).join(' → ') || 'Unscoped';
 
   const severities: { label: string; value: number; dot: string; text: string }[] = [
-    { label: 'Critical', value: log.criticalCount ?? 0, dot: 'bg-danger', text: 'text-danger' },
-    { label: 'Major', value: log.majorCount ?? 0, dot: 'bg-warning', text: 'text-warning' },
-    { label: 'Minor', value: log.minorCount ?? 0, dot: 'bg-text-3', text: 'text-text-2' },
+    { label: 'Critical', value: critical, dot: 'bg-danger', text: 'text-danger' },
+    { label: 'Major', value: major, dot: 'bg-warning', text: 'text-warning' },
+    { label: 'Minor', value: minor, dot: 'bg-text-3', text: 'text-text-2' },
   ].filter(s => s.value > 0);
 
   const submit = async () => {
     setSubmitting(true);
     try {
-      await onSave({ doneCount: done, remainingCount: remaining });
+      const patch: Record<string, unknown> = { doneCount: done, remainingCount: remaining };
+      if (synced) {
+        patch.issueCount = issueCount;
+        patch.criticalCount = critical;
+        patch.majorCount = major;
+        patch.minorCount = minor;
+        patch.jiraStatus = jiraStatus;
+        patch.jiraSyncedAt = jiraSyncedAt;
+      }
+      await onSave(patch);
     } finally {
       setSubmitting(false);
     }
@@ -319,7 +452,8 @@ export function UpdateQuickLogModal({ log, onClose, onSave }: UpdateQuickLogModa
           <div className="rounded-lg border border-border bg-surface-2 px-3.5 py-3">
             <p className="text-[13.5px] font-semibold text-text">{scopePath}</p>
             <p className="mt-0.5 text-[11.5px] text-text-3">
-              {issueCount} issue{issueCount === 1 ? '' : 's'} originally found · logged{' '}
+              {issueCount} issue{issueCount === 1 ? '' : 's'}{' '}
+              {synced ? 'found' : 'originally found'} · logged{' '}
               {localDateStr(new Date(log.createdAt))} by {log.loggedBy || 'Unattributed'}
             </p>
             {severities.length > 0 && (
@@ -339,6 +473,42 @@ export function UpdateQuickLogModal({ log, onClose, onSave }: UpdateQuickLogModa
               </div>
             )}
           </div>
+
+          {log.ticketLink && (
+            <div className="rounded-lg border border-border bg-surface-2 px-3.5 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-text-2">
+                  <i className="ti ti-brand-jira flex-shrink-0 text-[13px] text-text-3" />
+                  <span className="truncate font-mono">
+                    {log.ticketLink.replace(/^https?:\/\//, '')}
+                  </span>
+                </span>
+                {jiraConnected && (
+                  <button
+                    type="button"
+                    disabled={syncing}
+                    onClick={syncFromJira}
+                    className="flex-shrink-0 whitespace-nowrap rounded-[7px] border border-border bg-surface px-2.5 py-1 text-[11.5px] font-medium text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {syncing ? (
+                      <i className="ti ti-loader-2 animate-spin text-[12px]" />
+                    ) : (
+                      'Sync from Jira'
+                    )}
+                  </button>
+                )}
+              </div>
+              {syncError && (
+                <p className="mt-1.5 text-[11px] font-medium text-danger">{syncError}</p>
+              )}
+              {jiraStatus && (
+                <p className="mt-1.5 text-[11px] text-text-3">
+                  Jira status: <span className="font-medium text-text-2">{jiraStatus}</span>
+                  {jiraSyncedAt && ` · synced ${new Date(jiraSyncedAt).toLocaleString()}`}
+                </p>
+              )}
+            </div>
+          )}
 
           <p className="text-[12px] text-text-3">
             Editing this is the retest — nothing new gets created, Done/Remaining just move.

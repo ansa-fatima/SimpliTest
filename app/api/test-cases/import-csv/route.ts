@@ -1,7 +1,12 @@
 import { prisma } from '@/lib/db';
-import { Prisma, Priority, Severity, TestType } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { ok, bad, parseJson, serverError } from '@/lib/api';
 import { parseCSV } from '@/lib/csv';
+import {
+  loadImportOptionResolver,
+  toCaseOptionWrite,
+  ImportOptionMatch,
+} from '@/lib/testCaseOptions';
 
 // POST /api/test-cases/import-csv
 //   Body: { projectId: string, csv: string }
@@ -12,10 +17,6 @@ import { parseCSV } from '@/lib/csv';
 //   • Imported test case IDs (e.g. "C2509") are discarded — caseNum is system-generated
 //
 // Returns a summary of what was created vs skipped, so the UI can show a confirmation.
-
-const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
-const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
-const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
 
 const MAX_ROWS = 10_000;
 const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -57,6 +58,16 @@ export async function POST(req: Request) {
     const rows = parseCSV(body.csv);
     if (rows.length < 2) return bad('CSV looks empty (no data rows)');
     if (rows.length - 1 > MAX_ROWS) return bad(`CSV exceeds ${MAX_ROWS} rows`);
+
+    // Case-insensitive name → option lookup across built-ins + this
+    // workspace's custom Priority/Severity/Test Type values (see
+    // lib/options.ts), checked before falling back to the fuzzy
+    // TestRail-synonym matching below.
+    const optionResolver = await loadImportOptionResolver(project.id, [
+      'Priority',
+      'Severity',
+      'TestType',
+    ]);
 
     const header = rows[0];
     // First-occurrence wins for duplicate column names (TestRail exports have
@@ -244,9 +255,9 @@ export async function POST(req: Request) {
       }
 
       // ── Build test case fields ──
-      const priority = mapPriority(r[col['Priority']]);
-      const severity = mapSeverity(r[col['Severity']]);
-      const type = mapType(r[col['Test Type']]);
+      const priority = mapPriority(r[col['Priority']], optionResolver.Priority);
+      const severity = mapSeverity(r[col['Severity']], optionResolver.Severity);
+      const type = mapType(r[col['Test Type']], optionResolver.TestType);
       const desc = (r[col['Description']] || '').trim();
       const expected = (r[col['Expected Result']] || '').trim();
       const stepsRaw =
@@ -265,9 +276,12 @@ export async function POST(req: Request) {
           preconditions,
           steps: steps as Prisma.InputJsonValue,
           expected,
-          priority,
-          severity,
-          type,
+          priority: priority.enumValue as Prisma.TestCaseCreateInput['priority'],
+          customPriorityId: priority.customOptionId,
+          severity: severity.enumValue as Prisma.TestCaseCreateInput['severity'],
+          customSeverityId: severity.customOptionId,
+          type: type.enumValue as Prisma.TestCaseCreateInput['type'],
+          customTypeId: type.customOptionId,
           status: 'Active',
           author,
           // Attach to the deepest level the row resolved to (suite > module > portal).
@@ -292,28 +306,43 @@ export async function POST(req: Request) {
 
 // ─── helpers ────────────────────────────────────────────────
 
-function mapPriority(p: string | undefined): Priority {
+// Each mapper checks the workspace's actual option names FIRST (built-in or
+// custom, exact case-insensitive match) before falling back to the fuzzy
+// TestRail-synonym guessing below -- a workspace that renamed or added a
+// value should have CSV imports resolve to it directly rather than only
+// ever landing on the 3 original built-ins.
+function mapPriority(p: string | undefined, byName: Map<string, ImportOptionMatch>) {
   const s = (p || '').trim().toLowerCase();
-  if (['critical', 'high', 'urgent'].includes(s)) return 'High';
-  if (['moderate', 'medium', 'normal'].includes(s)) return 'Medium';
-  if (['low', 'minor'].includes(s)) return 'Low';
-  return 'Medium';
+  const exact = byName.get(s);
+  if (exact) return toCaseOptionWrite(exact, 'Medium');
+  if (['critical', 'high', 'urgent'].includes(s))
+    return toCaseOptionWrite(byName.get('high'), 'High');
+  if (['moderate', 'medium', 'normal'].includes(s))
+    return toCaseOptionWrite(byName.get('medium'), 'Medium');
+  if (['low', 'minor'].includes(s)) return toCaseOptionWrite(byName.get('low'), 'Low');
+  return toCaseOptionWrite(byName.get('medium'), 'Medium');
 }
 
-function mapSeverity(s: string | undefined): Severity {
+function mapSeverity(s: string | undefined, byName: Map<string, ImportOptionMatch>) {
   const v = (s || '').trim().toLowerCase();
-  if (['critical', 'blocker'].includes(v)) return 'Critical';
-  if (['high', 'major'].includes(v)) return 'Major';
-  return 'Minor';
+  const exact = byName.get(v);
+  if (exact) return toCaseOptionWrite(exact, 'Minor');
+  if (['critical', 'blocker'].includes(v))
+    return toCaseOptionWrite(byName.get('critical'), 'Critical');
+  if (['high', 'major'].includes(v)) return toCaseOptionWrite(byName.get('major'), 'Major');
+  return toCaseOptionWrite(byName.get('minor'), 'Minor');
 }
 
-function mapType(t: string | undefined): TestType {
-  if (!t) return 'Functional';
-  const candidates = t.split(/[,\n/]+/).map(x => x.trim());
+function mapType(t: string | undefined, byName: Map<string, ImportOptionMatch>) {
+  if (!t) return toCaseOptionWrite(byName.get('functional'), 'Functional');
+  // byName already covers every built-in name too, so one pass over the
+  // comma/slash-separated candidates (TestRail sometimes lists several) is enough.
+  const candidates = t.split(/[,\n/]+/).map(x => x.trim().toLowerCase());
   for (const c of candidates) {
-    if (TYPES.includes(c as TestType)) return c as TestType;
+    const match = byName.get(c);
+    if (match) return toCaseOptionWrite(match, 'Functional');
   }
-  return 'Functional';
+  return toCaseOptionWrite(byName.get('functional'), 'Functional');
 }
 
 function parseSteps(stepsRaw: string): string[] {

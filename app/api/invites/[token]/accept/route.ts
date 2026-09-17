@@ -76,12 +76,20 @@ export async function POST(req: Request, { params }: Ctx) {
       setCookie = await createSession(userId);
     }
 
-    // Create or refresh the Membership atomically with marking the invite accepted.
+    // Create or refresh the Membership atomically with marking the invite
+    // accepted. Carries customRoleId through too when the invite was for a
+    // custom role (see lib/roles.ts) -- `invite.role` is just a placeholder
+    // in that case.
     await prisma.$transaction([
       prisma.membership.upsert({
         where: { userId_projectId: { userId, projectId: invite.projectId } },
-        update: { role: invite.role },
-        create: { userId, projectId: invite.projectId, role: invite.role },
+        update: { role: invite.role, customRoleId: invite.customRoleId },
+        create: {
+          userId,
+          projectId: invite.projectId,
+          role: invite.role,
+          customRoleId: invite.customRoleId,
+        },
       }),
       prisma.invite.update({
         where: { id: invite.id },

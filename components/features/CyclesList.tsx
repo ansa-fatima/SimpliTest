@@ -474,6 +474,7 @@ export function CyclesList({
       {retestFor && (
         <UpdateQuickLogModal
           log={retestFor}
+          projectId={projectId}
           onClose={() => setRetestFor(null)}
           onSave={async patch => {
             if (!onUpdate) return;

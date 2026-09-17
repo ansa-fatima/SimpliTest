@@ -2,6 +2,11 @@ import { prisma } from '@/lib/db';
 import { ok, notFound, serverError } from '@/lib/api';
 import { computeRecurringIssues, caseScopeName } from '@/lib/recurringIssues';
 import { pointFromRun, pointFromQuickLog, stats } from '@/lib/stability';
+import {
+  loadRunResultClassMap,
+  runResultClassWhereClause,
+  countsForStability,
+} from '@/lib/options';
 
 interface Ctx {
   params: { id: string };
@@ -11,6 +16,7 @@ interface Ctx {
 // exactly what the Dashboard/Stability report ask Prisma for.
 const runSelect = {
   result: true,
+  customResultId: true,
   executedAt: true,
   updatedAt: true,
   cycleId: true,
@@ -115,17 +121,18 @@ export async function GET(_req: Request, { params }: Ctx) {
         },
       });
       if (mod) {
+        const resultClassMap = await loadRunResultClassMap(cycle.projectId);
         const points = [
           ...mod.testCases.flatMap(tc =>
             tc.runs
-              .filter(r => r.result === 'Passed' || r.result === 'Failed')
-              .map(r => pointFromRun({ ...r, testCase: { title: tc.title } })),
+              .filter(r => countsForStability(r, resultClassMap))
+              .map(r => pointFromRun({ ...r, testCase: { title: tc.title } }, resultClassMap)),
           ),
           ...mod.suites.flatMap(s =>
             s.testCases.flatMap(tc =>
               tc.runs
-                .filter(r => r.result === 'Passed' || r.result === 'Failed')
-                .map(r => pointFromRun({ ...r, testCase: { title: tc.title } })),
+                .filter(r => countsForStability(r, resultClassMap))
+                .map(r => pointFromRun({ ...r, testCase: { title: tc.title } }, resultClassMap)),
             ),
           ),
         ];
@@ -169,8 +176,9 @@ export async function GET(_req: Request, { params }: Ctx) {
     // failed/blocked in at least one other cycle -- same "2+ distinct
     // cycles" rule the Dashboard's workspace-wide panel uses (see
     // lib/recurringIssues), just scoped down to this cycle's own failures.
+    const failLikeFilter = await runResultClassWhereClause(cycle.projectId, ['FailLike']);
     const failedHereRuns = await prisma.testRun.findMany({
-      where: { cycleId: cycle.id, result: { in: ['Failed', 'Blocked'] } },
+      where: { cycleId: cycle.id, ...failLikeFilter },
       select: { testCaseId: true },
     });
     const failedCaseIds = Array.from(new Set(failedHereRuns.map(r => r.testCaseId)));
@@ -179,7 +187,7 @@ export async function GET(_req: Request, { params }: Ctx) {
       ? await prisma.testRun.findMany({
           where: {
             testCaseId: { in: failedCaseIds },
-            result: { in: ['Failed', 'Blocked'] },
+            ...failLikeFilter,
             executedAt: { not: null },
           },
           select: {

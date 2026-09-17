@@ -4,6 +4,8 @@
 // the two places that show them. Extracted here the moment a second real
 // consumer needed the exact same rule (see lib/period.ts for the same
 // reasoning applied to period/sprint math).
+import { RunResultClass } from '@prisma/client';
+import { resultClassOf } from '@/lib/options';
 
 export type DataPoint = {
   pass: boolean;
@@ -20,17 +22,30 @@ export type DataPoint = {
   detail: string;
 };
 
-export function pointFromRun(r: {
-  result: string;
-  executedAt: Date | null;
-  updatedAt: Date;
-  cycleId: string;
-  cycle: { name: string };
-  testCase: { title: string };
-}): DataPoint {
+// `resultClassMap` resolves a custom RunResult override's countsAs (see
+// lib/options.ts) -- omit it when every run passed in is known to carry the
+// legacy enum value only (no customResultId), since the classification then
+// needs no lookup at all.
+export function pointFromRun(
+  r: {
+    result: string;
+    customResultId?: string | null;
+    executedAt: Date | null;
+    updatedAt: Date;
+    cycleId: string;
+    cycle: { name: string };
+    testCase: { title: string };
+  },
+  resultClassMap?: Map<string, RunResultClass>,
+): DataPoint {
+  const resultClass = resultClassOf(
+    { result: r.result, customResultId: r.customResultId ?? null },
+    resultClassMap ?? new Map(),
+  );
+  const pass = resultClass === 'PassLike';
   return {
-    pass: r.result === 'Passed',
-    score: r.result === 'Passed' ? 1 : 0,
+    pass,
+    score: pass ? 1 : 0,
     ts: r.executedAt ?? r.updatedAt,
     cycleId: r.cycleId,
     cycleName: r.cycle.name,

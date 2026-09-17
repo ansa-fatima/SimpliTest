@@ -94,6 +94,9 @@ export interface TestCycle {
   version?: string | null;
   cycleCategory?: string | null;
   ticketLink?: string | null;
+  /** The linked Jira ticket's own status, as of the last "Sync from Jira". */
+  jiraStatus?: string | null;
+  jiraSyncedAt?: string | null;
   /** Who logged this quick log (Manual mode only). */
   loggedBy?: string;
   issueCount?: number;
@@ -173,6 +176,15 @@ export interface ApiTestCase {
   priority: Priority;
   severity: Severity;
   type: TestType;
+  // Set only when priority/severity/type is a workspace-custom option (see
+  // lib/options.ts) -- null means "use the built-in badge for the enum
+  // column value above" (lib/utils.ts's priorityBadge/severityBadge/typeBadge).
+  customPriorityId?: string | null;
+  customPriority?: { name: string; color: string } | null;
+  customSeverityId?: string | null;
+  customSeverity?: { name: string; color: string } | null;
+  customTypeId?: string | null;
+  customType?: { name: string; color: string } | null;
   status: CaseStatus;
   featureId: string;
   suiteId?: string;
@@ -200,6 +212,11 @@ export interface ApiTestRun {
   cycleId: string;
   testCaseId: string;
   result: RunResult;
+  // Set only when the result is a workspace-custom status (see
+  // lib/options.ts) -- null means "use the built-in badge for the enum
+  // column value above" (lib/utils.ts's resultTone/resultToneDisplay).
+  customResultId?: string | null;
+  customResult?: { name: string; color: string } | null;
   // True once this run has ever been Failed or Blocked — lets a current
   // Pass be told apart from one that passed on the first try.
   wasEverIssue: boolean;
@@ -223,6 +240,11 @@ export interface TestCase {
   priority: Priority;
   severity: Severity;
   type: TestType;
+  // Set only when priority/severity/type is a workspace-custom option (see
+  // lib/options.ts) -- null means "use the built-in enum value above".
+  customPriorityId?: string | null;
+  customSeverityId?: string | null;
+  customTypeId?: string | null;
   /** Suite (feature) name -- kept as "feature" for back-compat with older call sites. */
   feature: string;
   /** Module and portal names -- derived from whichever level the case actually attaches to. */

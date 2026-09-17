@@ -1,6 +1,8 @@
 import { prisma } from '@/lib/db';
+import { Prisma } from '@prisma/client';
 import { ok, serverError } from '@/lib/api';
 import { parsePeriodParams } from '@/lib/period';
+import { runResultClassWhereClause } from '@/lib/options';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +17,9 @@ export const dynamic = 'force-dynamic';
 interface CaseCycle {
   id: string;
   name: string;
-  result: 'Failed' | 'Blocked';
+  // The resolved display name -- a built-in literal ("Failed"/"Blocked") or
+  // a custom FailLike RunResult option's own name (see lib/options.ts).
+  result: string;
   ts: string;
 }
 interface CaseRow {
@@ -55,6 +59,9 @@ export async function GET(req: Request) {
     const versionFilter = sp.get('version') || undefined;
     const testerFilter = sp.get('tester') || undefined;
     const { start: periodStart, end: periodEnd } = parsePeriodParams(sp);
+    const failLikeFilter: Prisma.TestRunWhereInput = projectId
+      ? await runResultClassWhereClause(projectId, ['FailLike'])
+      : { result: { in: ['Failed', 'Blocked'] } };
 
     // A test case's own portal/module/suite fields decide whether it's in
     // scope — same OR-cascade /api/test-cases uses, so "under this module"
@@ -75,7 +82,7 @@ export async function GET(req: Request) {
 
     const failedRuns = await prisma.testRun.findMany({
       where: {
-        result: { in: ['Failed', 'Blocked'] },
+        ...failLikeFilter,
         executedAt: {
           not: null,
           ...(periodStart ? { gte: periodStart } : {}),
@@ -92,6 +99,7 @@ export async function GET(req: Request) {
       select: {
         testCaseId: true,
         result: true,
+        customResult: { select: { name: true } },
         executedAt: true,
         cycle: { select: { id: true, name: true } },
         testCase: {
@@ -100,6 +108,7 @@ export async function GET(req: Request) {
             caseNum: true,
             title: true,
             severity: true,
+            customSeverity: { select: { name: true } },
             owner: { select: { name: true, username: true } },
             module: { select: { name: true } },
             suite: { select: { name: true, module: { select: { name: true } } } },
@@ -121,7 +130,7 @@ export async function GET(req: Request) {
       entry.cycles.set(r.cycle.id, {
         id: r.cycle.id,
         name: r.cycle.name,
-        result: r.result as 'Failed' | 'Blocked',
+        result: r.customResult?.name ?? r.result,
         ts: r.executedAt!.toISOString(),
       });
       byCase.set(r.testCaseId, entry);
@@ -135,7 +144,7 @@ export async function GET(req: Request) {
           id: tc.id,
           caseNum: tc.caseNum,
           title: tc.title,
-          severity: tc.severity,
+          severity: tc.customSeverity?.name ?? tc.severity,
           moduleName: caseModuleName(tc),
           scopePath: caseScopePath(tc),
           ownerName: tc.owner?.name || tc.owner?.username || null,

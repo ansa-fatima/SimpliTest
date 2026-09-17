@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 import { requireUser } from '@/lib/auth';
+import { seedWorkspaceDefaults } from '@/lib/seedWorkspaceDefaults';
 import { NextResponse } from 'next/server';
 
 function slugify(name: string): string {
@@ -75,6 +76,10 @@ export async function POST(req: Request) {
         },
       },
     });
+    // Materialize built-in roles/config options as real rows so they're
+    // listable/deletable the same way a custom role or option is -- see
+    // lib/seedWorkspaceDefaults.ts.
+    await seedWorkspaceDefaults(project.id);
     return ok(project, 201);
   } catch (e) {
     return prismaError(e) ?? serverError(e);

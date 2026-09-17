@@ -1,10 +1,7 @@
 import { prisma } from '@/lib/db';
-import { Prisma, Priority, Severity, TestType } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { ok, bad, parseJson, serverError } from '@/lib/api';
-
-const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
-const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
-const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
+import { loadImportOptionResolver, toCaseOptionWrite } from '@/lib/testCaseOptions';
 
 interface ImportRow {
   module?: string;
@@ -27,13 +24,6 @@ interface ImportBody {
   defaultModule?: string;
   defaultSuite?: string;
   defaultFeature?: string; // legacy alias for defaultSuite
-}
-
-// Normalize a freeform string against an allowed list (case-insensitive, returns canonical or null)
-function normalize<T extends string>(input: string | undefined, allowed: T[]): T | null {
-  if (!input) return null;
-  const lower = input.trim().toLowerCase();
-  return allowed.find(a => a.toLowerCase() === lower) ?? null;
 }
 
 // Parse steps from various sheet shapes:
@@ -91,6 +81,15 @@ export async function POST(req: Request) {
         portalId = created.id;
       }
     }
+
+    // Case-insensitive name → option lookup across built-ins + this
+    // workspace's custom Priority/Severity/Test Type values (see
+    // lib/options.ts), loaded once for the whole import.
+    const optionResolver = await loadImportOptionResolver(body.projectId, [
+      'Priority',
+      'Severity',
+      'TestType',
+    ]);
 
     // Cache modules + suites scoped to this portal so we don't re-hit DB per row
     const moduleByName = new Map<string, string>();
@@ -156,9 +155,18 @@ export async function POST(req: Request) {
         suiteByKey.set(suiteKey, suiteId);
       }
 
-      const priority = normalize(r.priority, PRIORITIES) ?? 'Medium';
-      const severity = normalize(r.severity, SEVERITIES) ?? 'Major';
-      const type = normalize(r.type, TYPES) ?? 'Functional';
+      const priorityMatch = r.priority
+        ? optionResolver.Priority.get(r.priority.trim().toLowerCase())
+        : undefined;
+      const severityMatch = r.severity
+        ? optionResolver.Severity.get(r.severity.trim().toLowerCase())
+        : undefined;
+      const typeMatch = r.type
+        ? optionResolver.TestType.get(r.type.trim().toLowerCase())
+        : undefined;
+      const priority = toCaseOptionWrite(priorityMatch, 'Medium');
+      const severity = toCaseOptionWrite(severityMatch, 'Major');
+      const type = toCaseOptionWrite(typeMatch, 'Functional');
 
       const steps = parseSteps(r.steps);
 
@@ -168,9 +176,12 @@ export async function POST(req: Request) {
         desc: r.desc ?? '',
         steps: steps as Prisma.InputJsonValue,
         expected: r.expected ?? '',
-        priority,
-        severity,
-        type,
+        priority: priority.enumValue as Prisma.TestCaseCreateManyInput['priority'],
+        customPriorityId: priority.customOptionId,
+        severity: severity.enumValue as Prisma.TestCaseCreateManyInput['severity'],
+        customSeverityId: severity.customOptionId,
+        type: type.enumValue as Prisma.TestCaseCreateManyInput['type'],
+        customTypeId: type.customOptionId,
         suiteId,
         author: r.author ?? 'Imported',
       });

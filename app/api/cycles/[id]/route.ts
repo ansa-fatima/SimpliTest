@@ -97,11 +97,17 @@ export async function PATCH(req: Request, { params }: Ctx) {
       'version',
       'cycleCategory',
       'ticketLink',
+      'jiraStatus',
     ] as const;
     for (const k of stringFields) {
       const v = body[k];
       if (v === null) data[k] = null;
       else if (typeof v === 'string') data[k] = v.trim() || null;
+    }
+
+    // Set by "Sync from Jira" alongside jiraStatus/the count fields above.
+    if (body.jiraSyncedAt !== undefined) {
+      data.jiraSyncedAt = body.jiraSyncedAt ? new Date(body.jiraSyncedAt as string) : null;
     }
 
     // Numeric counts (clamped to non-negative integers).

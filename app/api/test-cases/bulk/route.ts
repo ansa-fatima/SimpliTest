@@ -1,10 +1,7 @@
 import { prisma } from '@/lib/db';
 import { Prisma, Priority, Severity, TestType } from '@prisma/client';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
-
-const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
-const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
-const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
+import { projectIdForCaseParent, resolveCaseOption } from '@/lib/testCaseOptions';
 
 type BulkBody =
   | { action: 'delete'; ids: string[] }
@@ -39,22 +36,71 @@ export async function POST(req: Request) {
       }
 
       case 'update': {
-        const data: Prisma.TestCaseUpdateManyMutationInput = {};
         const p = body.patch ?? {};
-        if (p.priority !== undefined) {
-          if (!PRIORITIES.includes(p.priority as Priority)) return bad('invalid priority');
-          data.priority = p.priority as Priority;
-        }
-        if (p.severity !== undefined) {
-          if (!SEVERITIES.includes(p.severity as Severity)) return bad('invalid severity');
-          data.severity = p.severity as Severity;
-        }
-        if (p.type !== undefined) {
-          if (!TYPES.includes(p.type as TestType)) return bad('invalid type');
-          data.type = p.type as TestType;
+        // Prisma excludes a scalar FK from *UpdateInput whenever a @relation
+        // is declared on it (customPriorityId/customSeverityId/customTypeId
+        // here) -- and updateMany can't touch relations at all. So a custom-
+        // option change (connect/disconnect) always needs a per-row
+        // TestCaseUpdateInput; a plain enum-literal-only change can still
+        // use the cheaper updateMany.
+        const relationData: Pick<
+          Prisma.TestCaseUpdateInput,
+          'customPriority' | 'customSeverity' | 'customType'
+        > = {};
+        const data: Prisma.TestCaseUpdateManyMutationInput = {};
+        let touchesCustomOption = false;
+
+        if (p.priority !== undefined || p.severity !== undefined || p.type !== undefined) {
+          // Resolve custom option keys (see lib/options.ts) against whichever
+          // workspace the FIRST selected case belongs to -- bulk edit only
+          // ever operates on one screen's selection, always the same workspace.
+          const first = await prisma.testCase.findUnique({
+            where: { id: body.ids[0] },
+            select: { portalId: true, moduleId: true, suiteId: true },
+          });
+          if (!first) return bad('one or more ids not found', 404);
+          const projectId = await projectIdForCaseParent(first);
+          if (!projectId) return bad('Parent not found');
+
+          if (p.priority !== undefined) {
+            const opt = await resolveCaseOption(projectId, 'Priority', p.priority, 'Medium');
+            if (!opt) return bad('invalid priority');
+            data.priority = opt.enumValue as Priority;
+            relationData.customPriority = opt.customOptionId
+              ? { connect: { id: opt.customOptionId } }
+              : { disconnect: true };
+            touchesCustomOption = true;
+          }
+          if (p.severity !== undefined) {
+            const opt = await resolveCaseOption(projectId, 'Severity', p.severity, 'Minor');
+            if (!opt) return bad('invalid severity');
+            data.severity = opt.enumValue as Severity;
+            relationData.customSeverity = opt.customOptionId
+              ? { connect: { id: opt.customOptionId } }
+              : { disconnect: true };
+            touchesCustomOption = true;
+          }
+          if (p.type !== undefined) {
+            const opt = await resolveCaseOption(projectId, 'TestType', p.type, 'Functional');
+            if (!opt) return bad('invalid type');
+            data.type = opt.enumValue as TestType;
+            relationData.customType = opt.customOptionId
+              ? { connect: { id: opt.customOptionId } }
+              : { disconnect: true };
+            touchesCustomOption = true;
+          }
         }
         if (typeof p.author === 'string') data.author = p.author;
         if (Object.keys(data).length === 0) return bad('patch must contain at least one field');
+
+        if (touchesCustomOption) {
+          const rows = await prisma.$transaction(
+            body.ids.map(id =>
+              prisma.testCase.update({ where: { id }, data: { ...data, ...relationData } }),
+            ),
+          );
+          return ok({ updated: rows.length });
+        }
 
         const r = await prisma.testCase.updateMany({ where: { id: { in: body.ids } }, data });
         return ok({ updated: r.count });
@@ -99,8 +145,11 @@ export async function POST(req: Request) {
                 labels: s.labels,
                 attachments: s.attachments as Prisma.InputJsonValue,
                 priority: s.priority,
+                customPriorityId: s.customPriorityId,
                 severity: s.severity,
+                customSeverityId: s.customSeverityId,
                 type: s.type,
+                customTypeId: s.customTypeId,
                 portalId: target ? target.portalId : s.portalId,
                 moduleId: target ? target.moduleId : s.moduleId,
                 suiteId: target ? target.suiteId : s.suiteId,

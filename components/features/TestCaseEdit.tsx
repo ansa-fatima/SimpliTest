@@ -1,10 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { TestCase, Priority, Severity, TestType, CaseAttachment } from '@/types';
+import { TestCase, CaseAttachment } from '@/types';
 import { api } from '@/lib/client';
-import { cn } from '@/lib/utils';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { useCaseOptions, ClassificationField } from '@/components/features/CaseClassification';
 import { StepEditor } from '@/components/ui/StepEditor';
 import { AttachmentsField } from '@/components/ui/AttachmentsField';
 import { Button } from '@/components/ui/Button';
@@ -32,11 +31,20 @@ interface TestCaseEditProps {
   projectId: string | null;
   onBack: () => void;
   onSave: (
-    patch: Partial<TestCase> & { portalId?: string; moduleId?: string; suiteId?: string },
+    // priority/severity/type are category KEYS (see lib/options.ts) --
+    // either a built-in enum literal or a custom WorkspaceOption.id -- not
+    // narrowed to Priority/Severity/TestType like TestCase's own fields,
+    // since a custom selection isn't one of those literals.
+    patch: Omit<Partial<TestCase>, 'priority' | 'severity' | 'type'> & {
+      priority?: string;
+      severity?: string;
+      type?: string;
+      portalId?: string;
+      moduleId?: string;
+      suiteId?: string;
+    },
   ) => void;
 }
-
-const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
 
 // Flattens a suite tree into (id, label) pairs, indenting nested names for select display.
 function flattenSuites(suites: TreeSuite[], depth = 0): { id: string; label: string }[] {
@@ -56,11 +64,14 @@ export function TestCaseEdit({ tc, projectId, onBack, onSave }: TestCaseEditProp
   const [preconditions, setPreconditions] = useState(tc.preconditions ?? '');
   const [expected, setExpected] = useState(tc.expected);
   const [steps, setSteps] = useState<string[]>(tc.steps);
-  const [priority, setPriority] = useState<Priority>(tc.priority);
-  const [severity, setSeverity] = useState<Severity>(tc.severity);
-  const [type, setType] = useState<TestType>(tc.type);
+  // A custom override wins over the (possibly-placeholder) enum column --
+  // same resolution rule as lib/options.ts's optionKeyOf().
+  const [priority, setPriority] = useState(tc.customPriorityId ?? tc.priority);
+  const [severity, setSeverity] = useState(tc.customSeverityId ?? tc.severity);
+  const [type, setType] = useState(tc.customTypeId ?? tc.type);
   const [attachments, setAttachments] = useState<CaseAttachment[]>(tc.attachments ?? []);
   const [error, setError] = useState('');
+  const caseOptions = useCaseOptions(projectId ?? '');
 
   // Location — Portal → Module → Suite, fetched fresh from the API. The
   // legacy in-memory `TestCase` shape only carries a flattened `feature`
@@ -199,69 +210,21 @@ export function TestCaseEdit({ tc, projectId, onBack, onSave }: TestCaseEditProp
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <Field label="Priority" required>
-                <SegmentedControl
+                <ClassificationField
+                  options={caseOptions.priority}
                   value={priority}
-                  onChange={v => setPriority(v as Priority)}
-                  options={[
-                    {
-                      value: 'High',
-                      label: 'High',
-                      activeClass: 'bg-pill-high-bg text-pill-high-text',
-                    },
-                    {
-                      value: 'Medium',
-                      label: 'Med',
-                      activeClass: 'bg-pill-medium-bg text-pill-medium-text',
-                    },
-                    {
-                      value: 'Low',
-                      label: 'Low',
-                      activeClass: 'bg-pill-low-bg text-pill-low-text',
-                    },
-                  ]}
+                  onChange={setPriority}
                 />
               </Field>
               <Field label="Severity" required>
-                <SegmentedControl
+                <ClassificationField
+                  options={caseOptions.severity}
                   value={severity}
-                  onChange={v => setSeverity(v as Severity)}
-                  options={[
-                    {
-                      value: 'Critical',
-                      label: 'Critical',
-                      activeClass: 'bg-pill-high-bg text-pill-high-text',
-                    },
-                    {
-                      value: 'Major',
-                      label: 'Major',
-                      activeClass: 'bg-pill-medium-bg text-pill-medium-text',
-                    },
-                    {
-                      value: 'Minor',
-                      label: 'Minor',
-                      activeClass: 'bg-pill-low-bg text-pill-low-text',
-                    },
-                  ]}
+                  onChange={setSeverity}
                 />
               </Field>
               <Field label="Type" required>
-                <div className="flex flex-wrap gap-1">
-                  {TYPES.map(t => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setType(t)}
-                      className={cn(
-                        'cursor-pointer rounded border px-2 py-1 text-xs transition-all',
-                        type === t
-                          ? 'border-primary bg-primary-light font-semibold text-primary-text'
-                          : 'border-border bg-surface text-text-3 hover:bg-surface-2',
-                      )}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
+                <ClassificationField options={caseOptions.type} value={type} onChange={setType} />
               </Field>
             </div>
 

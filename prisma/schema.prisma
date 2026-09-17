@@ -26,27 +26,29 @@ enum UserRole {
 }
 
 model User {
-  id           String    @id @default(cuid())
-  username     String    @unique
-  email        String    @unique
-  passwordHash String?
-  name         String    @default("")
-  avatarUrl    String?
-  googleId     String?   @unique
-  microsoftId  String?   @unique
+  id                  String                   @id @default(cuid())
+  username            String                   @unique
+  email               String                   @unique
+  passwordHash        String?
+  name                String                   @default("")
+  avatarUrl           String?
+  googleId            String?                  @unique
+  microsoftId         String?                  @unique
   // Admin-mediated password reset — no email sending is configured, so an
   // admin generates this token from Members and shares the link manually
   // (same trust model as workspace invites). Cleared once used or expired.
-  resetToken           String?   @unique
-  resetTokenExpiresAt  DateTime?
-  role         UserRole   @default(Tester)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  sessions     Session[]
-  ownedCases   TestCase[]   @relation("OwnedTestCases")
-  memberships  Membership[]
-  sentInvites  Invite[]     @relation("SentInvites")
-  createdProjects Project[] @relation("CreatedProjects")
+  resetToken          String?                  @unique
+  resetTokenExpiresAt DateTime?
+  role                UserRole                 @default(Tester)
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  sessions            Session[]
+  ownedCases          TestCase[]               @relation("OwnedTestCases")
+  memberships         Membership[]
+  sentInvites         Invite[]                 @relation("SentInvites")
+  createdProjects     Project[]                @relation("CreatedProjects")
+  notificationPrefs   NotificationPreference[]
+  jiraConnections     JiraConnection[]
 
   @@map("users")
 }
@@ -72,36 +74,194 @@ model Session {
 // Top-level grouping — also doubles as the "workspace / team" the user signs into.
 // Members are users with a Membership row; invites are pending email-based joins.
 model Project {
-  id          String       @id @default(cuid())
-  name        String       @unique
-  slug        String       @unique
-  portals     Portal[]
-  cycles      TestCycle[]
-  memberships Membership[]
-  invites     Invite[]
+  id                 String                   @id @default(cuid())
+  name               String                   @unique
+  slug               String                   @unique
+  portals            Portal[]
+  cycles             TestCycle[]
+  memberships        Membership[]
+  invites            Invite[]
   // The user who created this workspace — distinct from being *a* SuperAdmin,
   // since a creator can promote others to SuperAdmin too. Nullable so a
   // deleted creator account doesn't take the workspace down with it.
-  createdById String?
-  createdBy   User?        @relation("CreatedProjects", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  createdById        String?
+  createdBy          User?                    @relation("CreatedProjects", fields: [createdById], references: [id], onDelete: SetNull)
+  // Per-workspace override of the Roles & Permissions matrix -- { [permissionKey]: roleKey[] }.
+  // A roleKey is either a built-in UserRole name or a WorkspaceRole.id. Null
+  // means "use the built-in defaults" (see lib/permissions.ts); only set
+  // once a SuperAdmin actually edits a checkmark, so most workspaces never
+  // touch this column at all.
+  permissions        Json?
+  roles              WorkspaceRole[]
+  options            WorkspaceOption[]
+  notificationPrefs  NotificationPreference[]
+  // Settings > General defaults -- prefill the Environment/Platform pickers
+  // in NewCycleModal/QuickLogModal for this workspace. Null means "no
+  // default", same as today.
+  defaultEnvironment String?
+  defaultPlatform    String?
+  // Settings > Integrations -- { slack, github: boolean }. No real OAuth/API
+  // integration exists for these two; Connect/Disconnect just flips this
+  // local state. Jira is real -- see JiraConnection below. Null means
+  // nothing has been toggled yet (all off).
+  integrations       Json?
+  jiraConnection     JiraConnection?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
 
   @@map("projects")
 }
 
-// User ↔ workspace link. `role` is the user's effective role inside this workspace.
-model Membership {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+// Settings > Notifications -- per-user, per-workspace toggle preferences.
+// No email/push sending exists anywhere in this app yet; these persist the
+// user's choice only, same caveat as Project.integrations.
+model NotificationPreference {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId       String
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  cycleCompletion Boolean  @default(true)
+  failedTests     Boolean  @default(true)
+  criticalDefects Boolean  @default(true)
+  reopenedDefects Boolean  @default(true)
+  recurringIssues Boolean  @default(false)
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, projectId])
+  @@map("notification_preferences")
+}
+
+// Settings > Integrations > Jira -- a real Jira Cloud connection, one per
+// workspace. Auth is HTTP Basic (email + API token, the standard Jira Cloud
+// REST API method -- see id.atlassian.com/manage-profile/security/api-tokens),
+// not OAuth 3LO, since that requires registering and getting Atlassian's
+// approval for a public OAuth app; an API token is the realistic option for
+// a self-hosted tool like this. `apiToken` is stored server-side only and
+// MUST never be included in any API response after the initial connect --
+// see lib/jira.ts and app/api/projects/[id]/integrations/jira/route.ts.
+model JiraConnection {
+  id            String   @id @default(cuid())
+  projectId     String   @unique
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // Jira Cloud site base URL, e.g. "https://your-team.atlassian.net" (no
+  // trailing slash).
+  siteUrl       String
+  email         String
+  apiToken      String
+  connectedAt   DateTime @default(now())
+  connectedById String?
+  connectedBy   User?    @relation(fields: [connectedById], references: [id], onDelete: SetNull)
+
+  @@map("jira_connections")
+}
+
+// A workspace role row -- either one of the 5 built-in UserRole values,
+// materialized so it can be listed/deleted/usage-checked like a custom role
+// (isBuiltin: true, builtinRole set), or a SuperAdmin-created custom role
+// (isBuiltin: false, builtinRole null). Scoped to one workspace; two
+// workspaces can each have their own "Product Manager" role, unrelated to
+// each other. Never referenced by User.role (that enum column is a
+// different, legacy concept -- see the Membership/Invite comments below) --
+// only by Membership.customRoleId / Invite.customRoleId. A built-in role is
+// still HELD via `role: UserRole, customRoleId: null` on Membership/Invite --
+// this row existing or not only controls whether that built-in is still
+// offered/deletable in this workspace, see lib/roles.ts.
+model WorkspaceRole {
+  id          String    @id @default(cuid())
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  // Tailwind color token used for the role's dot/pill (see lib/roles.ts's ROLE_COLOR list).
+  color       String    @default("slate")
+  isBuiltin   Boolean   @default(false)
+  builtinRole UserRole?
+  createdAt   DateTime  @default(now())
+
+  memberships Membership[]
+  invites     Invite[]
+
+  @@unique([projectId, name])
+  // TODO: add @@unique([projectId, builtinRole]) once the DB-level constraint
+  // can be applied (blocked on `prisma db push --accept-data-loss` needing
+  // explicit user approval -- see conversation). Uniqueness is enforced at
+  // the application layer for now by the seeding code being the only writer
+  // of isBuiltin rows.
+  @@index([projectId])
+  @@map("workspace_roles")
+}
+
+// Per-workspace configurable value lists -- Priority/Severity/TestType/
+// RunResult (each a legacy, mandatory Postgres enum on TestCase/TestRun) plus
+// Platform/Environment/Version (already free text). One polymorphic table
+// for all 7 categories, keeping the same shape roles already use: isBuiltin
+// rows materialize the legacy enum values so they can be listed/deleted/
+// usage-checked, custom rows are genuinely new values a SuperAdmin added.
+// See lib/options.ts's optionKeyOf() -- resolve a record's effective value
+// the same way roleKeyOf() resolves a membership's role, never read the
+// legacy enum column directly once a custom override is possible.
+model WorkspaceOption {
+  id        String          @id @default(cuid())
   projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  role      UserRole @default(Tester)
-  joinedAt  DateTime @default(now())
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category  OptionCategory
+  name      String
+  color     String          @default("slate")
+  order     Int             @default(0)
+  isBuiltin Boolean         @default(false)
+  // Only meaningful for category = RunResult. Backfilled for the 5 legacy
+  // values; required (API-validated) for any new custom RunResult option so
+  // pass/fail math (lib/stability.ts, dashboard, recurring issues) has a
+  // classification to key off instead of the literal string.
+  countsAs  RunResultClass?
+  createdAt DateTime        @default(now())
+
+  casesAsPriority TestCase[] @relation("CasePriorityOpt")
+  casesAsSeverity TestCase[] @relation("CaseSeverityOpt")
+  casesAsType     TestCase[] @relation("CaseTypeOpt")
+  runsAsResult    TestRun[]  @relation("RunResultOpt")
+
+  @@unique([projectId, category, name])
+  @@index([projectId, category])
+  @@map("workspace_options")
+}
+
+enum OptionCategory {
+  Priority
+  Severity
+  TestType
+  RunResult
+  Platform
+  Environment
+  Version
+}
+
+enum RunResultClass {
+  PassLike
+  FailLike
+  Neutral
+}
+
+// User ↔ workspace link. `role` is the user's effective role inside this
+// workspace WHEN customRoleId is null -- one of the 5 built-in UserRole
+// values. When customRoleId is set, it names a SuperAdmin-created
+// WorkspaceRole instead and `role` is ignored (left at its default so the
+// column stays non-null; nothing reads it in that case). Always resolve a
+// membership's real role via lib/roles.ts's roleKeyOf(), never `.role` directly.
+model Membership {
+  id           String         @id @default(cuid())
+  userId       String
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId    String
+  project      Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  role         UserRole       @default(Tester)
+  customRoleId String?
+  customRole   WorkspaceRole? @relation(fields: [customRoleId], references: [id], onDelete: SetNull)
+  joinedAt     DateTime       @default(now())
 
   @@unique([userId, projectId])
   @@index([projectId])
+  @@index([customRoleId])
   @@map("memberships")
 }
 
@@ -113,23 +273,27 @@ enum InviteStatus {
 }
 
 // Pending invitation. Token is the shareable acceptance URL fragment.
+// `role`/`customRoleId` follow the same convention as Membership above.
 model Invite {
-  id          String       @id @default(cuid())
-  projectId   String
-  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  email       String
-  role        UserRole     @default(Tester)
-  token       String       @unique
-  status      InviteStatus @default(Pending)
-  invitedById String
-  invitedBy   User         @relation("SentInvites", fields: [invitedById], references: [id])
-  acceptedAt  DateTime?
-  expiresAt   DateTime
-  createdAt   DateTime     @default(now())
+  id           String         @id @default(cuid())
+  projectId    String
+  project      Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  email        String
+  role         UserRole       @default(Tester)
+  customRoleId String?
+  customRole   WorkspaceRole? @relation(fields: [customRoleId], references: [id], onDelete: SetNull)
+  token        String         @unique
+  status       InviteStatus   @default(Pending)
+  invitedById  String
+  invitedBy    User           @relation("SentInvites", fields: [invitedById], references: [id])
+  acceptedAt   DateTime?
+  expiresAt    DateTime
+  createdAt    DateTime       @default(now())
 
   @@index([projectId])
   @@index([email])
   @@index([status])
+  @@index([customRoleId])
   @@map("invites")
 }
 
@@ -139,7 +303,7 @@ model Portal {
   id        String     @id @default(cuid())
   name      String
   slug      String?
-  icon      String?    // Tabler icon name, e.g. "ti-presentation"
+  icon      String? // Tabler icon name, e.g. "ti-presentation"
   // Manual drag-and-drop position among sibling portals in the same project.
   // Backfilled from creation order on migration; the API resorts every
   // portal in a project to a dense 0..N-1 sequence on every reorder.
@@ -236,47 +400,58 @@ enum CaseStatus {
 }
 
 model TestCase {
-  id            String     @id @default(cuid())
-  caseNum       Int        @unique @default(autoincrement())
-  title         String
-  sub           String     @default("")
-  desc          String     @default("")
-  preconditions String     @default("")
-  steps         Json
-  expected      String     @default("")
+  id               String           @id @default(cuid())
+  caseNum          Int              @unique @default(autoincrement())
+  title            String
+  sub              String           @default("")
+  desc             String           @default("")
+  preconditions    String           @default("")
+  steps            Json
+  expected         String           @default("")
   // Free-form tags (e.g. "@quiz", "@regression-suite") — no fixed vocabulary,
   // just labels the author attaches for their own search/grouping.
-  labels        String[]   @default([])
+  labels           String[]         @default([])
   // Small files (screenshots, spec snippets) stored inline as base64 data
   // URLs -- same pattern already used for User.avatarUrl, no separate blob
   // storage. Each entry: { name, dataUrl, size }. Client enforces a size cap
   // per file since this rides in a JSON column, not object storage.
-  attachments   Json       @default("[]")
-  priority      Priority
-  severity      Severity
-  type          TestType
-  status        CaseStatus @default(Active)
+  attachments      Json             @default("[]")
+  priority         Priority
+  severity         Severity
+  type             TestType
+  // Nullable overrides -- when set, this case's effective priority/severity/
+  // type is the custom WorkspaceOption instead of the legacy enum column
+  // above (which stays at its last value, unread once overridden). Always
+  // resolve via lib/options.ts's optionKeyOf(), never the enum column
+  // directly. See WorkspaceOption's schema comment.
+  customPriorityId String?
+  customPriority   WorkspaceOption? @relation("CasePriorityOpt", fields: [customPriorityId], references: [id], onDelete: SetNull)
+  customSeverityId String?
+  customSeverity   WorkspaceOption? @relation("CaseSeverityOpt", fields: [customSeverityId], references: [id], onDelete: SetNull)
+  customTypeId     String?
+  customType       WorkspaceOption? @relation("CaseTypeOpt", fields: [customTypeId], references: [id], onDelete: SetNull)
+  status           CaseStatus       @default(Active)
   // Manual drag-and-drop position among sibling cases attached to the same
   // Portal/Module/Suite node. Only meaningful when sorted by "order" — other
   // sort modes (title, date, caseNum) ignore it.
-  order         Int        @default(0)
+  order            Int              @default(0)
   // A test case attaches to exactly ONE of: Portal, Module, or Suite.
   // App-layer validation enforces "exactly one set" — Postgres can't express
   // an XOR constraint cleanly across three FKs without a CHECK constraint.
   // DB column is still named "featureId" (mapped) — Prisma model uses suiteId.
-  portal    Portal?    @relation(fields: [portalId], references: [id], onDelete: Cascade)
-  portalId  String?
-  module    Module?    @relation(fields: [moduleId], references: [id], onDelete: Cascade)
-  moduleId  String?
-  suite     Suite?     @relation(fields: [suiteId], references: [id], onDelete: Cascade)
-  suiteId   String?    @map("featureId")
-  author    String     @default("")
+  portal           Portal?          @relation(fields: [portalId], references: [id], onDelete: Cascade)
+  portalId         String?
+  module           Module?          @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  moduleId         String?
+  suite            Suite?           @relation(fields: [suiteId], references: [id], onDelete: Cascade)
+  suiteId          String?          @map("featureId")
+  author           String           @default("")
   // Optional assigned owner (a user) — shown as avatar in the OWNER column.
-  owner     User?      @relation("OwnedTestCases", fields: [ownerId], references: [id], onDelete: SetNull)
-  ownerId   String?
-  runs      TestRun[]
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  owner            User?            @relation("OwnedTestCases", fields: [ownerId], references: [id], onDelete: SetNull)
+  ownerId          String?
+  runs             TestRun[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
   @@index([portalId])
   @@index([moduleId])
@@ -286,6 +461,9 @@ model TestCase {
   @@index([type])
   @@index([status])
   @@index([ownerId])
+  @@index([customPriorityId])
+  @@index([customSeverityId])
+  @@index([customTypeId])
   @@map("test_cases")
 }
 
@@ -330,7 +508,7 @@ model TestCycle {
   status      CycleStatus    @default(Active)
   mode        CycleMode      @default(CaseBased)
   scopeType   CycleScopeType @default(All)
-  scopeId     String?        // moduleId or suiteId; null for All / Custom
+  scopeId     String? // moduleId or suiteId; null for All / Custom
   targetDate  DateTime?
   // When this cycle was actually executed. For Manual (quick-log) entries the
   // user picks it explicitly so back-dated cycles show up on the day they ran.
@@ -344,19 +522,31 @@ model TestCycle {
 
   // Manual-mode bookkeeping — free-text so users can record cycles before
   // defining the workspace's module/feature structure. Ignored for CaseBased cycles.
-  portalName     String?
-  moduleName     String?
-  featureName    String?
-  environment    String? // Production / QA / Staging / Dev
-  platform       String? // Android / iPhone / Web / All / Desktop
-  version        String? // app version under test
-  cycleCategory  String? // Stability / Regression / Functional / UI / Performance
-  ticketLink     String?
+  portalName    String?
+  moduleName    String?
+  featureName   String?
+  environment   String? // Production / QA / Staging / Dev
+  platform      String? // Android / iPhone / Web / All / Desktop
+  version       String? // app version under test
+  cycleCategory String? // Stability / Regression / Functional / UI / Performance
+  // Already doubled as a Jira ticket key/URL in practice (see the "JIRA-1234
+  // or a full URL" placeholder in NewCycleModal) -- "Sync from Jira" parses
+  // the issue key out of this field (see lib/jira.ts's parseIssueKey), no
+  // separate field needed. Requires the workspace to have a JiraConnection.
+  ticketLink    String?
+  // Jira sync result cache -- set once "Sync from Jira" has run: the
+  // ticket's own status, fetched sub-issues bucketed into the
+  // Critical/Major/Minor counts below by Jira priority, and done-vs-
+  // remaining by Jira's standardized statusCategory ('done' vs not) -- see
+  // lib/jira.ts. Overwrites the manual count fields below when synced; a
+  // cycle never synced keeps using manual entry exactly as before.
+  jiraStatus    String? // the linked ticket's own status name, as of last sync
+  jiraSyncedAt  DateTime?
   // Who logged this quick log — plain text like TestRun.executedBy, set
   // automatically from the session at creation time (not user-editable).
   // Lets Reports' Tester filter narrow quick logs the same way it already
   // narrows test runs. Existing rows predate this field and stay blank.
-  loggedBy       String  @default("")
+  loggedBy      String    @default("")
 
   // Aggregate counts for Manual cycles. CaseBased cycles derive these from runs[].
   issueCount     Int @default(0) // total defects found
@@ -376,25 +566,31 @@ model TestCycle {
 }
 
 model TestRun {
-  id         String    @id @default(cuid())
-  cycle      TestCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
-  cycleId    String
-  testCase   TestCase  @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
-  testCaseId String
-  result     RunResult @default(NotRun)
+  id             String           @id @default(cuid())
+  cycle          TestCycle        @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  cycleId        String
+  testCase       TestCase         @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+  testCaseId     String
+  result         RunResult        @default(NotRun)
+  // Nullable override -- when set, this run's effective result is the custom
+  // WorkspaceOption instead of the legacy `result` enum column above. See
+  // TestCase.customPriorityId's schema comment for the same convention.
+  customResultId String?
+  customResult   WorkspaceOption? @relation("RunResultOpt", fields: [customResultId], references: [id], onDelete: SetNull)
   // Sticks at true the first time this run is marked Failed or Blocked, and
   // stays true even after a later Pass — lets "retested and fixed" be told
   // apart from "passed on the first try", which the bare `result` field
   // alone can't do. Reset to false only by an explicit "Reset to Not run".
-  wasEverIssue Boolean @default(false)
-  notes      String    @default("")
-  executedAt DateTime?
-  executedBy String    @default("")
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  wasEverIssue   Boolean          @default(false)
+  notes          String           @default("")
+  executedAt     DateTime?
+  executedBy     String           @default("")
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   @@unique([cycleId, testCaseId])
   @@index([cycleId])
   @@index([result])
+  @@index([customResultId])
   @@map("test_runs")
 }

@@ -1,11 +1,30 @@
 import { prisma } from '@/lib/db';
-import { Prisma, Priority, Severity, TestType, CaseStatus } from '@prisma/client';
+import { Prisma, Priority, Severity, TestType, CaseStatus, OptionCategory } from '@prisma/client';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
+import { projectIdForCaseParent, resolveCaseOption } from '@/lib/testCaseOptions';
+import { isBuiltinOptionValue } from '@/lib/options';
 
-const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
-const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
-const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
 const STATUSES: CaseStatus[] = ['Active', 'Draft', 'Archived'];
+
+// Builds a Prisma OR clause matching a case's EFFECTIVE priority/severity/
+// type against a set of category keys (see lib/options.ts -- each key is
+// either a built-in enum literal or a custom WorkspaceOption.id). A legacy,
+// never-overridden case matches a built-in key via the enum column; a case
+// with a custom override matches only via the override id.
+function caseOptionWhereClause(
+  category: OptionCategory,
+  keys: string[],
+  enumField: 'priority' | 'severity' | 'type',
+  customField: 'customPriorityId' | 'customSeverityId' | 'customTypeId',
+): Prisma.TestCaseWhereInput | null {
+  if (keys.length === 0) return null;
+  const builtins = keys.filter(k => isBuiltinOptionValue(category, k));
+  const customs = keys.filter(k => !isBuiltinOptionValue(category, k));
+  const or: Prisma.TestCaseWhereInput[] = [];
+  if (builtins.length) or.push({ [customField]: null, [enumField]: { in: builtins } });
+  if (customs.length) or.push({ [customField]: { in: customs } });
+  return { OR: or };
+}
 
 // Attachments ride inline as base64 data URLs in a JSON column (same trick
 // as User.avatarUrl) -- no object storage. Capped modestly since this isn't
@@ -60,6 +79,12 @@ const caseInclude = {
     },
   },
   owner: { select: ownerSelect },
+  // Only set when priority/severity/type is a custom option -- null
+  // otherwise, meaning "use the built-in badge for the enum column value"
+  // (see lib/utils.ts's priorityBadge/severityBadge/typeBadge).
+  customPriority: { select: { name: true, color: true } },
+  customSeverity: { select: { name: true, color: true } },
+  customType: { select: { name: true, color: true } },
 } as const;
 
 // GET /api/test-cases
@@ -81,13 +106,12 @@ export async function GET(req: Request) {
     const moduleId = sp.get('moduleId') || undefined;
     const projectId = sp.get('projectId') || undefined;
 
-    const priorities = sp
-      .getAll('priority')
-      .filter((p): p is Priority => PRIORITIES.includes(p as Priority));
-    const severities = sp
-      .getAll('severity')
-      .filter((s): s is Severity => SEVERITIES.includes(s as Severity));
-    const types = sp.getAll('type').filter((t): t is TestType => TYPES.includes(t as TestType));
+    // Each value is a category KEY (see lib/options.ts) -- a built-in enum
+    // literal or a custom WorkspaceOption.id -- not narrowed to the enum
+    // type, since a custom selection isn't one of those literals.
+    const priorities = sp.getAll('priority');
+    const severities = sp.getAll('severity');
+    const types = sp.getAll('type');
     const statuses = sp
       .getAll('status')
       .filter((s): s is CaseStatus => STATUSES.includes(s as CaseStatus));
@@ -135,11 +159,25 @@ export async function GET(req: Request) {
         ],
       });
     }
+    const priorityClause = caseOptionWhereClause(
+      'Priority',
+      priorities,
+      'priority',
+      'customPriorityId',
+    );
+    if (priorityClause) ands.push(priorityClause);
+    const severityClause = caseOptionWhereClause(
+      'Severity',
+      severities,
+      'severity',
+      'customSeverityId',
+    );
+    if (severityClause) ands.push(severityClause);
+    const typeClause = caseOptionWhereClause('TestType', types, 'type', 'customTypeId');
+    if (typeClause) ands.push(typeClause);
+
     const where: Prisma.TestCaseWhereInput = ands.length ? { AND: ands } : {};
-    if (priorities.length) where.priority = { in: priorities };
-    if (severities.length) where.severity = { in: severities };
-    if (types.length) where.type = { in: types };
-    if (statuses.length) where.status = { in: statuses };
+    if (statuses.length) where.status = { in: statuses as CaseStatus[] };
     if (ownerIds.length) where.ownerId = { in: ownerIds };
 
     const [rows, total] = await Promise.all([
@@ -178,9 +216,10 @@ export async function POST(req: Request) {
       desc?: string;
       expected?: string;
       steps?: unknown;
-      priority?: Priority;
-      severity?: Severity;
-      type?: TestType;
+      /** A category KEY (see lib/options.ts) -- a built-in enum literal or a custom WorkspaceOption.id. */
+      priority?: string;
+      severity?: string;
+      type?: string;
       portalId?: string;
       moduleId?: string;
       suiteId?: string;
@@ -192,6 +231,7 @@ export async function POST(req: Request) {
       labels?: string[];
       attachments?: { name: string; dataUrl: string; size: number }[];
     }>(req);
+    if (!body) return bad('Invalid request body');
 
     const title = body?.title?.trim();
     const suiteId = body?.suiteId ?? body?.featureId ?? null;
@@ -203,12 +243,18 @@ export async function POST(req: Request) {
     if (!title) return bad('title is required');
     if (parentCount === 0) return bad('portalId, moduleId, or suiteId is required');
     if (parentCount > 1) return bad('only one of portalId / moduleId / suiteId may be set');
-    if (!body?.priority || !PRIORITIES.includes(body.priority))
-      return bad('priority must be High|Medium|Low');
-    if (!body?.severity || !SEVERITIES.includes(body.severity))
-      return bad('severity must be Critical|Major|Minor');
-    if (!body?.type || !TYPES.includes(body.type))
-      return bad('type must be Functional|Regression|Smoke|Sanity|UI|API');
+
+    const projectId = await projectIdForCaseParent({ portalId, moduleId, suiteId });
+    if (!projectId) return bad('Parent not found');
+
+    const priorityOpt = await resolveCaseOption(projectId, 'Priority', body?.priority, 'Medium');
+    if (!priorityOpt)
+      return bad('priority is required and must be a valid option for this workspace');
+    const severityOpt = await resolveCaseOption(projectId, 'Severity', body?.severity, 'Minor');
+    if (!severityOpt)
+      return bad('severity is required and must be a valid option for this workspace');
+    const typeOpt = await resolveCaseOption(projectId, 'TestType', body?.type, 'Functional');
+    if (!typeOpt) return bad('type is required and must be a valid option for this workspace');
 
     const status: CaseStatus =
       body?.status && STATUSES.includes(body.status) ? body.status : 'Active';
@@ -228,9 +274,12 @@ export async function POST(req: Request) {
         preconditions: body.preconditions ?? '',
         steps: (body.steps ?? []) as Prisma.InputJsonValue,
         expected: body.expected ?? '',
-        priority: body.priority,
-        severity: body.severity,
-        type: body.type,
+        priority: priorityOpt.enumValue as Priority,
+        customPriorityId: priorityOpt.customOptionId,
+        severity: severityOpt.enumValue as Severity,
+        customSeverityId: severityOpt.customOptionId,
+        type: typeOpt.enumValue as TestType,
+        customTypeId: typeOpt.customOptionId,
         status,
         portalId,
         moduleId,

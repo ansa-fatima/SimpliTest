@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { ok, serverError } from '@/lib/api';
 import { parsePeriodParams } from '@/lib/period';
+import { loadRunResultClassMap, resultClassOf } from '@/lib/options';
 
 // GET /api/reports/cycle-history
 //   ?projectId=&period=&sprintOffset=&portalId=&moduleId=&suiteId=&tester=
@@ -60,6 +61,14 @@ export async function GET(req: Request) {
     const suiteIdFilter = sp.get('suiteId') || undefined;
     const versionFilter = sp.get('version') || undefined;
     const testerFilter = sp.get('tester') || undefined;
+
+    // Effective FailLike classification per run -- covers a workspace-custom
+    // RunResult marked FailLike, not just the legacy Failed/Blocked literals
+    // (see lib/options.ts). Without a projectId there's no workspace to
+    // resolve custom options against, so only the legacy literals apply.
+    const resultClassMap = projectId ? await loadRunResultClassMap(projectId) : new Map();
+    const isFailLike = (r: { result: string; customResultId: string | null }) =>
+      resultClassOf(r, resultClassMap) === 'FailLike';
 
     // Resolve scope -> portal/module names once, the same way /api/cycles
     // does, so a cycle scoped to a Suite still knows which Portal/Module
@@ -128,7 +137,9 @@ export async function GET(req: Request) {
           scopeType: true,
           scopeId: true,
           createdAt: true,
-          runs: { select: { result: true, executedBy: true, wasEverIssue: true } },
+          runs: {
+            select: { result: true, customResultId: true, executedBy: true, wasEverIssue: true },
+          },
         },
       }),
       prisma.testCycle.findMany({
@@ -168,7 +179,7 @@ export async function GET(req: Request) {
       if (periodEnd && date >= periodEnd) continue;
 
       const issueCount = c.runs.filter(r => r.wasEverIssue).length;
-      const openIssues = c.runs.filter(r => r.result === 'Failed' || r.result === 'Blocked').length;
+      const openIssues = c.runs.filter(isFailLike).length;
       const status: Row['status'] =
         c.status === 'Active' ? 'Active' : openIssues === 0 ? 'Pass' : 'Fail';
 

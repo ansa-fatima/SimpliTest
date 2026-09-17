@@ -1,14 +1,20 @@
 import { prisma } from '@/lib/db';
 import { UserRole } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
-import { getCurrentUser, requireRole, hasRole, hashPassword, verifyPassword } from '@/lib/auth';
+import {
+  getCurrentUser,
+  requireRole,
+  requireWorkspacePermission,
+  hasRole,
+  hashPassword,
+  verifyPassword,
+} from '@/lib/auth';
+import { isBuiltinRole, roleKeyOf, getWorkspaceRoleKeys } from '@/lib/roles';
 import { NextResponse } from 'next/server';
 
 interface Ctx {
   params: { id: string };
 }
-
-const ROLES: UserRole[] = ['SuperAdmin', 'QAManager', 'Tester', 'Developer', 'Viewer'];
 
 // PATCH /api/users/:id — change role and/or display name.
 // Permission rules (privileges scale with role rank):
@@ -26,21 +32,11 @@ export async function PATCH(req: Request, { params }: Ctx) {
   if (!me) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   const isSelf = me.id === params.id;
-  // Non-self edits still need Manager+.
-  if (!isSelf) {
-    const guard = await requireRole('QAManager');
-    if (guard instanceof NextResponse) return guard;
-  }
 
   try {
-    const target = await prisma.user.findUnique({
-      where: { id: params.id },
-      select: { id: true, role: true, email: true, passwordHash: true },
-    });
-    if (!target) return notFound('User not found');
-
     const body = await parseJson<{
-      role?: UserRole;
+      /** A built-in role name or a custom WorkspaceRole.id (see lib/roles.ts). */
+      role?: string;
       name?: string;
       email?: string;
       avatarUrl?: string | null;
@@ -50,6 +46,25 @@ export async function PATCH(req: Request, { params }: Ctx) {
        *  workspace creator change their own role (see role-change block below). */
       projectId?: string;
     }>(req);
+
+    // Non-self edits (name/email/role of ANOTHER member) are "Manage Team &
+    // Roles" -- checked against this workspace's own Roles & Permissions
+    // matrix (SuperAdmin by default, but a SuperAdmin can grant it to
+    // another role from the Teams screen). Falls back to a bare SuperAdmin
+    // check when no workspace is given.
+    if (!isSelf) {
+      const guard = body?.projectId
+        ? await requireWorkspacePermission(body.projectId, 'manageTeamRoles')
+        : await requireRole('SuperAdmin');
+      if (guard instanceof NextResponse) return guard;
+    }
+
+    const target = await prisma.user.findUnique({
+      where: { id: params.id },
+      select: { id: true, role: true, email: true, passwordHash: true },
+    });
+    if (!target) return notFound('User not found');
+
     const data: {
       role?: UserRole;
       name?: string;
@@ -101,22 +116,26 @@ export async function PATCH(req: Request, { params }: Ctx) {
       data.passwordHash = await hashPassword(body.newPassword);
     }
 
-    // Role change — Manager+ only, scoped to the specific workspace this
-    // change applies to. Self-edit is blocked unless the caller is the
-    // creator of that workspace OR already holds SuperAdmin there — an
-    // existing workspace SuperAdmin gains nothing by self-editing that they
-    // couldn't already do by editing another account, so gating it just
-    // locks people out with no real security benefit. Everyone else (a
-    // lower-privileged invited member) still can't self-edit. Updates BOTH
-    // the workspace's Membership.role — the authoritative value the Members
-    // list and workspace-scoped RBAC read — and the legacy global User.role,
-    // kept in sync since the session/sidebar and most other authorization
-    // checks still read it.
+    // Role change — "Manage Team & Roles", scoped to the specific workspace
+    // this change applies to (a non-self edit already required that
+    // permission there via the guard above). `body.role` is either a
+    // built-in role name or a custom WorkspaceRole.id (see lib/roles.ts).
+    // Self-edit is blocked unless the caller is the creator of that
+    // workspace OR already holds SuperAdmin there — an existing workspace
+    // SuperAdmin gains nothing by self-editing that they couldn't already do
+    // by editing another account, so gating it just locks people out with no
+    // real security benefit. Everyone else (a lower-privileged invited
+    // member) still can't self-edit. Updates the workspace's Membership —
+    // the authoritative value the Members list and workspace-scoped RBAC
+    // read. The legacy global User.role is only kept in sync for a built-in
+    // role; a custom role is workspace-scoped by definition and has no
+    // meaningful global equivalent, so it's left untouched.
     if (body?.role !== undefined) {
       if (!body.projectId) return bad('projectId is required to change a role');
-      if (!ROLES.includes(body.role)) return bad('invalid role');
+      const validRoleKeys = await getWorkspaceRoleKeys(body.projectId);
+      if (!validRoleKeys.includes(body.role)) return bad('invalid role');
 
-      const [project, targetMembership, callerMembership] = await Promise.all([
+      const [project, targetMembership] = await Promise.all([
         prisma.project.findUnique({
           where: { id: body.projectId },
           select: { createdById: true },
@@ -124,54 +143,30 @@ export async function PATCH(req: Request, { params }: Ctx) {
         prisma.membership.findUnique({
           where: { userId_projectId: { userId: params.id, projectId: body.projectId } },
         }),
-        isSelf
-          ? Promise.resolve(null)
-          : prisma.membership.findUnique({
-              where: { userId_projectId: { userId: me.id, projectId: body.projectId } },
-            }),
       ]);
       if (!targetMembership) return bad('User is not a member of this workspace', 404);
 
       if (isSelf) {
         const isWorkspaceCreator = !!project && project.createdById === me.id;
-        const isWorkspaceSuperAdmin = targetMembership.role === 'SuperAdmin';
+        const isWorkspaceSuperAdmin = roleKeyOf(targetMembership) === 'SuperAdmin';
         if (!isWorkspaceCreator && !isWorkspaceSuperAdmin) {
           return bad('You cannot change your own role', 403);
         }
-      } else if (
-        !callerMembership ||
-        !hasRole(
-          {
-            id: me.id,
-            username: '',
-            email: '',
-            name: '',
-            role: callerMembership.role,
-            avatarUrl: null,
-          },
-          'QAManager',
-        )
-      ) {
-        return bad('Requires QA Manager or higher in this workspace', 403);
       }
 
-      // The "only a SuperAdmin can touch SuperAdmin" rule protects against a
-      // lower-privileged member promoting/demoting someone else. It doesn't
-      // apply to the creator editing their OWN role (already verified just
-      // above) — otherwise a creator who steps down to QAManager would
-      // permanently lock themselves out of ever reclaiming SuperAdmin over
-      // their own workspace.
-      const touchingSuperAdmin =
-        targetMembership.role === 'SuperAdmin' || body.role === 'SuperAdmin';
-      if (!isSelf && touchingSuperAdmin && callerMembership!.role !== 'SuperAdmin') {
-        return bad('Only a SuperAdmin can assign or unassign the SuperAdmin role', 403);
+      const newRole = body.role;
+      if (isBuiltinRole(newRole)) {
+        await prisma.membership.update({
+          where: { userId_projectId: { userId: params.id, projectId: body.projectId } },
+          data: { role: newRole, customRoleId: null },
+        });
+        data.role = newRole;
+      } else {
+        await prisma.membership.update({
+          where: { userId_projectId: { userId: params.id, projectId: body.projectId } },
+          data: { role: 'Viewer', customRoleId: newRole },
+        });
       }
-
-      await prisma.membership.update({
-        where: { userId_projectId: { userId: params.id, projectId: body.projectId } },
-        data: { role: body.role },
-      });
-      data.role = body.role;
     }
 
     if (Object.keys(data).length === 0) return bad('nothing to update');
@@ -213,20 +208,32 @@ export async function PATCH(req: Request, { params }: Ctx) {
   }
 }
 
-// DELETE /api/users/:id — remove a member entirely. SuperAdmin only.
-// Cascades: sessions are deleted; owned test cases have their ownerId cleared
-// (ON DELETE SET NULL — see TestCase.owner relation in schema).
-export async function DELETE(_req: Request, { params }: Ctx) {
-  const guard = await requireRole('SuperAdmin');
+// DELETE /api/users/:id?projectId=... — remove a member from ONE workspace
+// (deletes their Membership row only). SuperAdmin in that workspace. This
+// used to delete the User account entirely, which didn't match "Remove from
+// workspace" -- a member removed from one project stayed a real account,
+// still able to sign in and still a member of any OTHER workspace they
+// belong to; only their access to THIS project's data goes away, same as
+// declining/expiring an invite.
+export async function DELETE(req: Request, { params }: Ctx) {
+  const projectId = new URL(req.url).searchParams.get('projectId');
+  if (!projectId) return bad('projectId is required');
+
+  const guard = await requireWorkspacePermission(projectId, 'manageTeamRoles');
   if (guard instanceof NextResponse) return guard;
 
   if (guard.id === params.id) {
-    return bad('You cannot remove your own account', 403);
+    return bad('You cannot remove yourself from the workspace', 403);
   }
 
   try {
-    await prisma.user.delete({ where: { id: params.id } });
-    return ok({ deleted: true });
+    const membership = await prisma.membership.findUnique({
+      where: { userId_projectId: { userId: params.id, projectId } },
+    });
+    if (!membership) return notFound('User is not a member of this workspace');
+
+    await prisma.membership.delete({ where: { id: membership.id } });
+    return ok({ removed: true });
   } catch (e) {
     return prismaError(e) ?? serverError(e);
   }

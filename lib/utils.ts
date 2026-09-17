@@ -1,6 +1,7 @@
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { CaseStatus, Priority, RunResult, Severity, TestType } from '@/types';
+import { colorClassesOf } from '@/lib/colors';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -80,6 +81,80 @@ export function resultTone(result: RunResult | null | undefined): {
     default:
       return { dot: 'bg-text-3', text: 'text-text-3', label: 'Not Run' };
   }
+}
+
+// A run's tone -- checks a workspace-custom result override (see
+// lib/options.ts) first, falling back to the built-in resultTone() above.
+export function resultToneDisplay(run: {
+  result: RunResult;
+  customResult?: CustomOptionRef | null;
+}): { dot: string; text: string; label: string; borderL: string } {
+  if (run.customResult) {
+    const c = colorClassesOf(run.customResult.color);
+    return { dot: c.dot, text: c.text, label: run.customResult.name, borderL: c.borderL };
+  }
+  const t = resultTone(run.result);
+  const borderL =
+    run.result === 'Passed'
+      ? 'border-l-success'
+      : run.result === 'Failed'
+        ? 'border-l-danger'
+        : run.result === 'Blocked'
+          ? 'border-l-warning'
+          : run.result === 'Skipped'
+            ? 'border-l-text-3'
+            : 'border-l-border';
+  return { ...t, borderL };
+}
+
+// A workspace-custom option a case's priority/severity/type may point at
+// instead of the built-in enum value (see lib/options.ts). The 3 badge/tone
+// pairs below fall back to the plain built-in functions above when there's
+// no override, so an unmodified workspace's rendering is unchanged.
+interface CustomOptionRef {
+  name: string;
+  color: string;
+}
+
+export function priorityDisplay(tc: {
+  priority: Priority;
+  customPriority?: CustomOptionRef | null;
+}): { label: string; classes: string } {
+  if (tc.customPriority) {
+    return { label: tc.customPriority.name, classes: colorClassesOf(tc.customPriority.color).pill };
+  }
+  return { label: tc.priority, classes: priorityBadge(tc.priority) };
+}
+
+export function priorityToneDisplay(tc: {
+  priority: Priority;
+  customPriority?: CustomOptionRef | null;
+}): { dot: string; text: string; label: string } {
+  if (tc.customPriority) {
+    const c = colorClassesOf(tc.customPriority.color);
+    return { dot: c.dot, text: c.text, label: tc.customPriority.name };
+  }
+  return { ...priorityTone(tc.priority), label: tc.priority };
+}
+
+export function severityDisplay(tc: {
+  severity: Severity;
+  customSeverity?: CustomOptionRef | null;
+}): { label: string; classes: string } {
+  if (tc.customSeverity) {
+    return { label: tc.customSeverity.name, classes: colorClassesOf(tc.customSeverity.color).pill };
+  }
+  return { label: tc.severity, classes: severityBadge(tc.severity) };
+}
+
+export function typeDisplay(tc: { type: TestType; customType?: CustomOptionRef | null }): {
+  label: string;
+  classes: string;
+} {
+  if (tc.customType) {
+    return { label: tc.customType.name, classes: colorClassesOf(tc.customType.color).pill };
+  }
+  return { label: tc.type, classes: typeBadge(tc.type) };
 }
 
 // Deterministic pastel avatar colour for users without an uploaded picture.

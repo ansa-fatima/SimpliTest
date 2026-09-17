@@ -35,6 +35,8 @@ export interface CycleFormPayload {
   version?: string;
   cycleCategory?: string;
   ticketLink?: string;
+  jiraStatus?: string;
+  jiraSyncedAt?: string | null;
   issueCount?: number;
   criticalCount?: number;
   majorCount?: number;
@@ -141,6 +143,57 @@ export function NewCycleModal({
   const [passedCount, setPassedCount] = useState(initial?.passedCount ?? 0);
   const [failedCount, setFailedCount] = useState(initial?.failedCount ?? 0);
   const [blockedCount, setBlockedCount] = useState(initial?.blockedCount ?? 0);
+
+  // ── Jira sync ────────────────────────────────────────────────
+  // The linked ticket's own status + when it was last pulled -- set by
+  // "Sync from Jira" below, persisted alongside the counts on save.
+  const [jiraStatus, setJiraStatus] = useState(initial?.jiraStatus ?? '');
+  const [jiraSyncedAt, setJiraSyncedAt] = useState(initial?.jiraSyncedAt ?? '');
+  const [jiraConnected, setJiraConnected] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState('');
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    api
+      .get<{ connected: boolean }>(`/api/projects/${projectId}/integrations/jira`)
+      .then(s => !cancelled && setJiraConnected(s.connected))
+      .catch(() => !cancelled && setJiraConnected(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const syncFromJira = async () => {
+    if (!projectId || !ticketLink.trim()) return;
+    setSyncError('');
+    setSyncing(true);
+    try {
+      const result = await api.post<{
+        status: string;
+        issueCount: number;
+        criticalCount: number;
+        majorCount: number;
+        minorCount: number;
+        doneCount: number;
+        remainingCount: number;
+      }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: ticketLink.trim() });
+      setJiraStatus(result.status);
+      setJiraSyncedAt(new Date().toISOString());
+      setIssueCount(result.issueCount);
+      setCriticalCount(result.criticalCount);
+      setMajorCount(result.majorCount);
+      setMinorCount(result.minorCount);
+      setDoneCount(result.doneCount);
+      setRemainingCount(result.remainingCount);
+      setRemainingTouched(true);
+    } catch (e) {
+      setSyncError((e as Error).message);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const handleRemainingChange = (v: number) => {
     setRemainingTouched(true);
@@ -371,6 +424,8 @@ export function NewCycleModal({
       payload.version = version.trim() || undefined;
       payload.cycleCategory = cycleCategory || undefined;
       payload.ticketLink = ticketLink.trim() || undefined;
+      payload.jiraStatus = jiraStatus || undefined;
+      payload.jiraSyncedAt = jiraSyncedAt || undefined;
       payload.issueCount = issueCount;
       payload.criticalCount = criticalCount;
       payload.majorCount = majorCount;
@@ -557,13 +612,38 @@ export function NewCycleModal({
                 </div>
 
                 <Field label="Ticket link">
-                  <input
-                    type="text"
-                    value={ticketLink}
-                    onChange={e => setTicketLink(e.target.value)}
-                    placeholder="NPD-10656 or full URL"
-                    className="input"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={ticketLink}
+                      onChange={e => setTicketLink(e.target.value)}
+                      placeholder="NPD-10656 or full URL"
+                      className="input flex-1"
+                    />
+                    {jiraConnected && (
+                      <button
+                        type="button"
+                        disabled={!ticketLink.trim() || syncing}
+                        onClick={syncFromJira}
+                        className="flex-shrink-0 whitespace-nowrap rounded-[7px] border border-border bg-surface px-3 py-1.5 text-[12px] font-medium text-text hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {syncing ? (
+                          <i className="ti ti-loader-2 animate-spin text-[13px]" />
+                        ) : (
+                          'Sync from Jira'
+                        )}
+                      </button>
+                    )}
+                  </div>
+                  {syncError && (
+                    <p className="mt-1 text-[11px] font-medium text-danger">{syncError}</p>
+                  )}
+                  {jiraStatus && (
+                    <p className="mt-1 text-[11px] text-text-3">
+                      Jira status: <span className="font-medium text-text-2">{jiraStatus}</span>
+                      {jiraSyncedAt && ` · synced ${new Date(jiraSyncedAt).toLocaleString()}`}
+                    </p>
+                  )}
                 </Field>
 
                 {/* Issue counts */}

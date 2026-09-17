@@ -14,7 +14,7 @@ import { CycleView } from '@/components/features/CycleView';
 import { Dashboard } from '@/components/features/Dashboard';
 import { Reports } from '@/components/features/Reports';
 import { Members } from '@/components/features/Members';
-import { ComingSoon } from '@/components/features/ComingSoon';
+import { Settings } from '@/components/features/Settings';
 import { WorkspaceOnboarding } from '@/components/features/WorkspaceOnboarding';
 import { Profile } from '@/components/features/Profile';
 import { ManualCycleSummaryModal } from '@/components/features/ManualCycleSummaryModal';
@@ -183,27 +183,9 @@ export default function Home() {
           {page === 'profile' && <Profile currentUser={user} onUpdated={refreshSessionUser} />}
 
           {page === 'settings' && (
-            <ComingSoon
-              title="Settings"
-              subtitle="Workspace preferences, integrations, and billing."
-              icon="ti-settings"
-              features={[
-                {
-                  icon: 'ti-bell',
-                  label: 'Notifications',
-                  desc: 'Email + Slack alerts when runs complete or new failures land.',
-                },
-                {
-                  icon: 'ti-plug',
-                  label: 'Integrations',
-                  desc: 'Connect Jira, Linear, GitHub Issues for two-way defect sync.',
-                },
-                {
-                  icon: 'ti-key',
-                  label: 'API tokens',
-                  desc: 'Create scoped tokens for CI pipelines to push test results.',
-                },
-              ]}
+            <Settings
+              workspaceId={currentProjectId}
+              workspaceName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
             />
           )}
 

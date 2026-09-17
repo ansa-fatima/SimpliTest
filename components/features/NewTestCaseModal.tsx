@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
-import { cn } from '@/lib/utils';
 import { StepEditor } from '@/components/ui/StepEditor';
 import { AttachmentsField } from '@/components/ui/AttachmentsField';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import { Priority, Severity, TestType, ApiTestCase, CaseAttachment } from '@/types';
+import { useCaseOptions, ClassificationField } from '@/components/features/CaseClassification';
+import { ApiTestCase, CaseAttachment } from '@/types';
 
 // Structurally matches the tree shape TestCaseList already fetches from
 // /api/portals — kept local/duck-typed since TestCaseList doesn't export its
@@ -29,14 +28,13 @@ interface TreePortal {
 
 interface NewTestCaseModalProps {
   tree: TreePortal[];
+  projectId: string;
   /** Pre-selects the cascade to match whatever node was active when "New case" was clicked. */
   initial: { portalId: string; moduleId?: string; suiteId?: string };
   authorName: string;
   onClose: () => void;
   onCreated: (tc: ApiTestCase) => void;
 }
-
-const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
 
 // Flattens a suite tree into (id, name, depth) pairs, indented for select display.
 function flattenSuites(suites: TreeSuite[], depth = 0): { id: string; label: string }[] {
@@ -48,6 +46,7 @@ function flattenSuites(suites: TreeSuite[], depth = 0): { id: string; label: str
 
 export function NewTestCaseModal({
   tree,
+  projectId,
   initial,
   authorName,
   onClose,
@@ -59,17 +58,38 @@ export function NewTestCaseModal({
   const [moduleId, setModuleId] = useState(initial.moduleId ?? '');
   const [suiteId, setSuiteId] = useState(initial.suiteId ?? '');
 
+  const caseOptions = useCaseOptions(projectId);
+
   const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
   const [preconditions, setPreconditions] = useState('');
   const [expected, setExpected] = useState('');
   const [steps, setSteps] = useState<string[]>(['']);
-  const [priority, setPriority] = useState<Priority>('High');
-  const [severity, setSeverity] = useState<Severity>('Critical');
-  const [type, setType] = useState<TestType>('Functional');
+  const [priority, setPriority] = useState('');
+  const [severity, setSeverity] = useState('');
+  const [type, setType] = useState('');
   const [attachments, setAttachments] = useState<CaseAttachment[]>([]);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Default to the workspace's usual "High/Critical/Functional" once options
+  // load, falling back to whichever option happens to be first if a
+  // workspace has deleted those built-ins.
+  useEffect(() => {
+    if (!priority && caseOptions.priority.length > 0) {
+      setPriority(
+        caseOptions.priority.find(o => o.name === 'High')?.key ?? caseOptions.priority[0].key,
+      );
+    }
+    if (!severity && caseOptions.severity.length > 0) {
+      setSeverity(
+        caseOptions.severity.find(o => o.name === 'Critical')?.key ?? caseOptions.severity[0].key,
+      );
+    }
+    if (!type && caseOptions.type.length > 0) {
+      setType(caseOptions.type.find(o => o.name === 'Functional')?.key ?? caseOptions.type[0].key);
+    }
+  }, [caseOptions, priority, severity, type]);
 
   const portal = tree.find(p => p.id === portalId);
   const modules = portal?.modules ?? [];
@@ -169,72 +189,26 @@ export function NewTestCaseModal({
               </Field>
 
               {/* Classification — grouped in one row so priority/severity/type
-                  read as one "how important, what kind" decision. */}
+                  read as one "how important, what kind" decision. Options
+                  come from Settings > Test Configuration, so a custom value
+                  a SuperAdmin added shows up right alongside the built-ins. */}
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <Field label="Priority" required>
-                  <SegmentedControl
+                  <ClassificationField
+                    options={caseOptions.priority}
                     value={priority}
-                    onChange={v => setPriority(v as Priority)}
-                    options={[
-                      {
-                        value: 'High',
-                        label: 'High',
-                        activeClass: 'bg-pill-high-bg text-pill-high-text',
-                      },
-                      {
-                        value: 'Medium',
-                        label: 'Med',
-                        activeClass: 'bg-pill-medium-bg text-pill-medium-text',
-                      },
-                      {
-                        value: 'Low',
-                        label: 'Low',
-                        activeClass: 'bg-pill-low-bg text-pill-low-text',
-                      },
-                    ]}
+                    onChange={setPriority}
                   />
                 </Field>
                 <Field label="Severity" required>
-                  <SegmentedControl
+                  <ClassificationField
+                    options={caseOptions.severity}
                     value={severity}
-                    onChange={v => setSeverity(v as Severity)}
-                    options={[
-                      {
-                        value: 'Critical',
-                        label: 'Critical',
-                        activeClass: 'bg-pill-high-bg text-pill-high-text',
-                      },
-                      {
-                        value: 'Major',
-                        label: 'Major',
-                        activeClass: 'bg-pill-medium-bg text-pill-medium-text',
-                      },
-                      {
-                        value: 'Minor',
-                        label: 'Minor',
-                        activeClass: 'bg-pill-low-bg text-pill-low-text',
-                      },
-                    ]}
+                    onChange={setSeverity}
                   />
                 </Field>
                 <Field label="Type" required>
-                  <div className="flex flex-wrap gap-1">
-                    {TYPES.map(t => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setType(t)}
-                        className={cn(
-                          'cursor-pointer rounded border px-2 py-1 text-xs transition-all',
-                          type === t
-                            ? 'border-primary bg-primary-light font-semibold text-primary-text'
-                            : 'border-border bg-surface text-text-3 hover:bg-surface-2',
-                        )}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
+                  <ClassificationField options={caseOptions.type} value={type} onChange={setType} />
                 </Field>
               </div>
 

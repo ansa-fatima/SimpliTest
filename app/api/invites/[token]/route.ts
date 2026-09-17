@@ -1,6 +1,8 @@
 import { prisma } from '@/lib/db';
 import { ok, notFound, bad, serverError } from '@/lib/api';
 import { getCurrentUser } from '@/lib/auth';
+import { hasWorkspacePermission } from '@/lib/permissions';
+import { roleKeyOf, BUILTIN_ROLE_LABEL, isBuiltinRole } from '@/lib/roles';
 
 interface Ctx {
   params: { token: string };
@@ -16,6 +18,7 @@ export async function GET(_req: Request, { params }: Ctx) {
         id: true,
         email: true,
         role: true,
+        customRoleId: true,
         status: true,
         expiresAt: true,
         createdAt: true,
@@ -38,8 +41,13 @@ export async function GET(_req: Request, { params }: Ctx) {
     // Tell the front-end whether the current visitor is signed in AND if so,
     // whether the signed-in user is the intended recipient (matching email).
     const me = await getCurrentUser();
+    const roleKey = roleKeyOf(invite);
+    const roleName = isBuiltinRole(roleKey)
+      ? BUILTIN_ROLE_LABEL[roleKey]
+      : ((await prisma.workspaceRole.findUnique({ where: { id: roleKey }, select: { name: true } }))
+          ?.name ?? roleKey);
     return ok({
-      invite: { ...invite, status },
+      invite: { ...invite, role: roleKey, roleName, status },
       viewer: me
         ? {
             id: me.id,
@@ -66,12 +74,16 @@ export async function DELETE(_req: Request, { params }: Ctx) {
     if (!invite) return notFound('Invite not found');
     if (invite.status !== 'Pending') return bad('Invite is no longer pending');
 
+    // Manage Team & Roles gates this, but whoever originally sent an invite
+    // can always revoke their own.
     let allowed = invite.invitedById === me.id;
     if (!allowed) {
       const m = await prisma.membership.findUnique({
         where: { userId_projectId: { userId: me.id, projectId: invite.projectId } },
       });
-      if (m && (m.role === 'SuperAdmin' || m.role === 'QAManager')) allowed = true;
+      if (m && (await hasWorkspacePermission(invite.projectId, 'manageTeamRoles', roleKeyOf(m)))) {
+        allowed = true;
+      }
     }
     if (!allowed) return bad('Insufficient permissions', 403);
 

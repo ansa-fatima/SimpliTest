@@ -10,12 +10,14 @@ import {
   avatarColour,
   cn,
   initials,
-  priorityBadge,
+  priorityDisplay,
   relativeTime,
   resultTone,
-  severityBadge,
-  typeBadge,
+  resultToneDisplay,
+  severityDisplay,
+  typeDisplay,
 } from '@/lib/utils';
+import { colorClassesOf } from '@/lib/colors';
 
 interface CycleViewProps {
   cycle: TestCycle;
@@ -25,15 +27,15 @@ interface CycleViewProps {
   modules: Module[];
   projectId: string | null;
   onBack: () => void;
-  onSubmitResult: (runId: string, result: RunResult, notes?: string) => Promise<void>;
+  // `result` is a category KEY (see lib/options.ts) -- a built-in enum
+  // literal or a custom RunResult WorkspaceOption.id.
+  onSubmitResult: (runId: string, result: string, notes?: string) => Promise<void>;
   onCloseRun?: (cycleId: string) => void;
   onRegenerate?: (cycleId: string) => void;
   onUpdate: (id: string, patch: Record<string, unknown>) => Promise<void>;
 }
 
-const RESULTS: RunResult[] = ['Passed', 'Failed', 'Blocked', 'Skipped'];
-
-const RESULT_BTN: Record<RunResult, string> = {
+const RESULT_BTN: Partial<Record<RunResult, string>> = {
   NotRun: 'border-border text-text-3 hover:bg-surface-2',
   Passed: 'border-green-300 text-green-700 hover:bg-green-50',
   Failed: 'border-red-300 text-red-700 hover:bg-red-50',
@@ -42,6 +44,33 @@ const RESULT_BTN: Record<RunResult, string> = {
 };
 
 type FilterTab = 'All' | RunResult | 'Recurring';
+
+interface RunResultOption {
+  key: string;
+  name: string;
+  color: string;
+}
+
+// The workspace's Run Result options -- built-ins first, then any custom
+// ones added in Settings > Test Configuration (see lib/options.ts). Drives
+// the "Submit result" grid in the selected-case panel.
+function useRunResultOptions(projectId: string | null): RunResultOption[] {
+  const [options, setOptions] = useState<RunResultOption[]>([]);
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    api
+      .get<{ options: RunResultOption[] }>(`/api/projects/${projectId}/options/RunResult`)
+      .then(r => !cancelled && setOptions(r.options))
+      .catch(() => {
+        /* leave empty -- submit grid renders nothing until options load */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+  return options;
+}
 
 interface RecurringItem {
   id: string;
@@ -157,7 +186,10 @@ export function CycleView({
     }
     if (filter === 'Recurring') return list.filter(r => recurringIds.has(r.testCaseId));
     if (filter === 'All') return list;
-    return list.filter(r => r.result === filter);
+    // The 5 tabs are built-in results only -- a run with a custom result
+    // (see lib/options.ts) shows under "All" but not under any specific
+    // built-in tab, since it isn't one of those 5 values.
+    return list.filter(r => !r.customResultId && r.result === filter);
   }, [runs, moduleFilter, search, filter, recurringIds]);
 
   const selectedRun = useMemo(
@@ -458,7 +490,7 @@ export function CycleView({
                         onClick={() => setSelectedRunId(run.id)}
                         className={cn(
                           'flex cursor-pointer items-center justify-between gap-3 rounded-lg border-y border-l-4 border-r border-border bg-surface px-3.5 py-2.5 transition-colors',
-                          resultBorderTone(run.result),
+                          resultBorderTone(run),
                           isSel ? 'bg-primary-light/40' : 'hover:bg-surface-2',
                         )}
                       >
@@ -467,7 +499,9 @@ export function CycleView({
                             <span className="flex-shrink-0 font-mono text-[11px] text-text-3">
                               TC-{String(tc.caseNum).padStart(2, '0')}
                             </span>
-                            <Pill className={priorityBadge(tc.priority)}>{tc.priority}</Pill>
+                            <Pill className={priorityDisplay(tc).classes}>
+                              {priorityDisplay(tc).label}
+                            </Pill>
                             <span className="truncate text-[11px] text-text-3">
                               {caseScopePath(run)}
                             </span>
@@ -483,28 +517,28 @@ export function CycleView({
                         >
                           <QuickAction
                             icon="ti-check"
-                            active={run.result === 'Passed'}
+                            active={!run.customResultId && run.result === 'Passed'}
                             tone="success"
                             onClick={() => onSubmitResult(run.id, 'Passed')}
                             title="Mark Passed"
                           />
                           <QuickAction
                             icon="ti-x"
-                            active={run.result === 'Failed'}
+                            active={!run.customResultId && run.result === 'Failed'}
                             tone="danger"
                             onClick={() => onSubmitResult(run.id, 'Failed')}
                             title="Mark Failed"
                           />
                           <QuickAction
                             icon="ti-alert-triangle"
-                            active={run.result === 'Blocked'}
+                            active={!run.customResultId && run.result === 'Blocked'}
                             tone="warning"
                             onClick={() => onSubmitResult(run.id, 'Blocked')}
                             title="Mark Blocked"
                           />
                           <QuickAction
                             icon="ti-player-skip-forward"
-                            active={run.result === 'Skipped'}
+                            active={!run.customResultId && run.result === 'Skipped'}
                             tone="muted"
                             onClick={() => onSubmitResult(run.id, 'Skipped')}
                             title="Skip"
@@ -550,6 +584,7 @@ export function CycleView({
               key={selectedRun.id}
               run={selectedRun}
               readOnly={false}
+              projectId={projectId}
               onSubmitResult={onSubmitResult}
             />
           )}
@@ -648,12 +683,8 @@ function QuickAction({
   );
 }
 
-function resultBorderTone(result: RunResult): string {
-  if (result === 'Passed') return 'border-l-success';
-  if (result === 'Failed') return 'border-l-danger';
-  if (result === 'Blocked') return 'border-l-warning';
-  if (result === 'Skipped') return 'border-l-text-3';
-  return 'border-l-border';
+function resultBorderTone(run: ApiTestRun): string {
+  return resultToneDisplay(run).borderL;
 }
 
 // ─── Recurring issue history (expands under a recurring row) ──
@@ -733,24 +764,32 @@ function RecurringHistoryPanel({ testCaseId }: { testCaseId: string }) {
 function SelectedCasePanel({
   run,
   readOnly,
+  projectId,
   onSubmitResult,
 }: {
   run: ApiTestRun;
   readOnly: boolean;
-  onSubmitResult: (runId: string, result: RunResult, notes?: string) => Promise<void>;
+  projectId: string | null;
+  onSubmitResult: (runId: string, result: string, notes?: string) => Promise<void>;
 }) {
   const [notes, setNotes] = useState(run.notes);
-  const [saving, setSaving] = useState<RunResult | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
   const [savedNotes, setSavedNotes] = useState(false);
   const tc = run.testCase;
+  const resultOptions = useRunResultOptions(projectId);
 
   // Reset local notes when the selected run changes.
   useEffect(() => {
     setNotes(run.notes);
   }, [run.id, run.notes]);
 
-  const tone =
-    run.result === 'Passed'
+  // A custom result's own color doesn't have a matching border/ring combo
+  // (only pill/dot/text/borderL, see lib/colors.ts) -- a neutral frame for
+  // that case is a reasonable trade rather than adding a 5th color variant
+  // just for this one card.
+  const tone = run.customResultId
+    ? 'border-border ring-surface-2'
+    : run.result === 'Passed'
       ? 'border-emerald-300 ring-emerald-100'
       : run.result === 'Failed'
         ? 'border-red-300 ring-red-100'
@@ -760,18 +799,9 @@ function SelectedCasePanel({
             ? 'border-slate-300 ring-slate-100'
             : 'border-border ring-surface-2';
 
-  const labelTone =
-    run.result === 'Passed'
-      ? 'text-emerald-700'
-      : run.result === 'Failed'
-        ? 'text-red-700'
-        : run.result === 'Blocked'
-          ? 'text-amber-700'
-          : run.result === 'Skipped'
-            ? 'text-slate-600'
-            : 'text-text-3';
+  const labelTone = resultToneDisplay(run).text;
 
-  const submit = async (result: RunResult) => {
+  const submit = async (result: string) => {
     setSaving(result);
     try {
       await onSubmitResult(run.id, result, notes);
@@ -791,7 +821,7 @@ function SelectedCasePanel({
     >
       <div className="px-4 pb-3 pt-4">
         <div className={cn('mb-1 text-[10px] font-semibold uppercase tracking-widest', labelTone)}>
-          Selected · {run.result === 'NotRun' ? 'Not run' : run.result}
+          Selected · {resultToneDisplay(run).label}
         </div>
         <div className="font-mono text-[11px] text-text-3">
           TC-{String(tc.caseNum).padStart(2, '0')}
@@ -800,9 +830,9 @@ function SelectedCasePanel({
         <p className="mt-1 text-[11px] text-text-3">{caseScopePath(run)}</p>
 
         <div className="mt-2 flex flex-wrap gap-1">
-          <Pill className={priorityBadge(tc.priority)}>{tc.priority}</Pill>
-          <Pill className={severityBadge(tc.severity)}>{tc.severity}</Pill>
-          <Pill className={typeBadge(tc.type)}>{tc.type}</Pill>
+          <Pill className={priorityDisplay(tc).classes}>{priorityDisplay(tc).label}</Pill>
+          <Pill className={severityDisplay(tc).classes}>{severityDisplay(tc).label}</Pill>
+          <Pill className={typeDisplay(tc).classes}>{typeDisplay(tc).label}</Pill>
         </div>
       </div>
 
@@ -851,23 +881,29 @@ function SelectedCasePanel({
             Submit result
           </p>
           <div className="grid grid-cols-2 gap-1.5">
-            {RESULTS.map(r => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => submit(r)}
-                disabled={saving !== null}
-                className={cn(
-                  'rounded-md border px-2 py-1.5 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-                  RESULT_BTN[r],
-                  run.result === r && 'ring-2 ring-primary-light',
-                )}
-              >
-                {saving === r ? 'Saving…' : r}
-              </button>
-            ))}
+            {resultOptions.map(o => {
+              const isCurrent = run.customResultId
+                ? run.customResultId === o.key
+                : run.result === o.key;
+              const builtinStyle = RESULT_BTN[o.key as RunResult];
+              return (
+                <button
+                  key={o.key}
+                  type="button"
+                  onClick={() => submit(o.key)}
+                  disabled={saving !== null}
+                  className={cn(
+                    'rounded-md border px-2 py-1.5 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                    builtinStyle ?? colorClassesOf(o.color).pill.replace('ring-', 'border-'),
+                    isCurrent && 'ring-2 ring-primary-light',
+                  )}
+                >
+                  {saving === o.key ? 'Saving…' : o.name}
+                </button>
+              );
+            })}
           </div>
-          {run.result !== 'NotRun' && (
+          {!(!run.customResultId && run.result === 'NotRun') && (
             <button
               type="button"
               onClick={() => submit('NotRun')}
@@ -892,21 +928,12 @@ function SelectedCasePanel({
 // ─── Visual atoms ──────────────────────────────────────────
 
 function ResultChip({ run }: { run: ApiTestRun }) {
-  if (run.result === 'NotRun') {
+  if (!run.customResultId && run.result === 'NotRun') {
     return <span className="text-[12px] text-text-3">—</span>;
   }
-  const baseColor =
-    run.result === 'Passed'
-      ? 'text-emerald-700'
-      : run.result === 'Failed'
-        ? 'text-red-700'
-        : run.result === 'Blocked'
-          ? 'text-amber-700'
-          : 'text-slate-600';
+  const t = resultToneDisplay(run);
   return (
-    <span className={cn('whitespace-nowrap text-[12.5px] font-medium', baseColor)}>
-      {run.result}
-    </span>
+    <span className={cn('whitespace-nowrap text-[12.5px] font-medium', t.text)}>{t.label}</span>
   );
 }
 

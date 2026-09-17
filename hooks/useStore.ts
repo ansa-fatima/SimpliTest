@@ -38,6 +38,9 @@ function toLocalTestCase(c: ApiTestCase): TestCase {
     priority: c.priority,
     severity: c.severity,
     type: c.type,
+    customPriorityId: c.customPriorityId,
+    customSeverityId: c.customSeverityId,
+    customTypeId: c.customTypeId,
     feature: c.suite?.name ?? c.feature?.name ?? '',
     module: c.suite?.module.name ?? c.module?.name ?? '',
     portal: c.suite?.module.portal?.name ?? c.module?.portal?.name ?? c.portal?.name ?? '',
@@ -690,7 +693,17 @@ export function useStore() {
   // Falls back to a local-only edit if the case has no apiId (legacy seed data).
   const saveEdit = useCallback(
     async (
-      patch: Partial<TestCase> & { portalId?: string; moduleId?: string; suiteId?: string },
+      // priority/severity/type are category KEYS (see lib/options.ts) --
+      // either a built-in enum literal or a custom WorkspaceOption.id --
+      // wider than TestCase's own narrowed Priority/Severity/TestType.
+      patch: Omit<Partial<TestCase>, 'priority' | 'severity' | 'type'> & {
+        priority?: string;
+        severity?: string;
+        type?: string;
+        portalId?: string;
+        moduleId?: string;
+        suiteId?: string;
+      },
     ) => {
       // Snapshot the current case + apiId before async work.
       const current = state.currentTC;
@@ -944,6 +957,8 @@ export function useStore() {
       version?: string;
       cycleCategory?: string;
       ticketLink?: string;
+      jiraStatus?: string;
+      jiraSyncedAt?: string | null;
       issueCount?: number;
       criticalCount?: number;
       majorCount?: number;
@@ -1101,7 +1116,9 @@ export function useStore() {
   );
 
   const submitResult = useCallback(
-    async (runId: string, result: RunResult, notes?: string) => {
+    // `result` is a category KEY (see lib/options.ts) -- a built-in enum
+    // literal or a custom RunResult WorkspaceOption.id.
+    async (runId: string, result: string, notes?: string) => {
       try {
         const executedBy = state.user?.name || state.user?.username || 'You';
         const updated = await api.patch<ApiTestRun>(`/api/runs/${runId}`, {

@@ -13,6 +13,7 @@ interface InvitePayload {
     id: string;
     email: string;
     role: string;
+    roleName: string;
     status: InviteStatus;
     expiresAt: string;
     project: { id: string; name: string; slug: string };
@@ -168,7 +169,7 @@ function Card({
       <div className="my-5 rounded-lg border border-border bg-surface-2/40 p-3 text-[12.5px]">
         <Row label="Workspace" value={invite.project.name} />
         <Row label="Email" value={invite.email} mono />
-        <Row label="Role" value={prettyRole(invite.role)} />
+        <Row label="Role" value={invite.roleName} />
         <Row label="Expires" value={new Date(invite.expiresAt).toLocaleString()} />
       </div>
 
@@ -192,12 +193,6 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
       <span className={cn('truncate text-text', mono && 'font-mono text-[11.5px]')}>{value}</span>
     </div>
   );
-}
-
-function prettyRole(role: string): string {
-  if (role === 'SuperAdmin') return 'Super Admin';
-  if (role === 'QAManager') return 'QA Manager';
-  return role;
 }
 
 // ─── Modes ─────────────────────────────────────────────────

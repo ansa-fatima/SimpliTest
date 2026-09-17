@@ -2,11 +2,20 @@ import { prisma } from '@/lib/db';
 import { ok, serverError } from '@/lib/api';
 import { pointFromRun, pointFromQuickLog, stats } from '@/lib/stability';
 import { computeRecurringIssues, caseScopeName } from '@/lib/recurringIssues';
+import { buildRecentActivity } from '@/lib/activity';
+import {
+  loadRunResultClassMap,
+  countsForStability,
+  failedOnlyResultWhereClause,
+  runResultClassWhereClause,
+} from '@/lib/options';
+import { Prisma, RunResultClass } from '@prisma/client';
 
 // Full run detail needed by pointFromRun() -- shared so the module-stability
 // query below and the Stability report ask Prisma for exactly the same shape.
 const runSelect = {
   result: true,
+  customResultId: true,
   executedAt: true,
   updatedAt: true,
   cycleId: true,
@@ -52,6 +61,24 @@ export async function GET(req: Request) {
     const todayStart = new Date(now);
     todayStart.setHours(0, 0, 0, 0);
 
+    // "Failed" for these 3 KPIs keeps its historical Blocked-excluded
+    // meaning, extended to cover a custom FailLike option too (see
+    // lib/options.ts's failedOnlyResultWhereClause). A custom Severity can
+    // never be misnamed "Critical" (the built-in already owns that name, if
+    // it still exists), so the severity side needs no resolver.
+    const failedFilter: Prisma.TestRunWhereInput = projectId
+      ? await failedOnlyResultWhereClause(projectId)
+      : { result: 'Failed' };
+    // Recurring-issue detection wants the broader "is this an issue at all"
+    // definition (includes Blocked), same as wasEverIssue -- unlike the
+    // Failed/Blocked KPI tiles above, which keep them as separate buckets.
+    const failLikeFilter: Prisma.TestRunWhereInput = projectId
+      ? await runResultClassWhereClause(projectId, ['FailLike'])
+      : { result: { in: ['Failed', 'Blocked'] } };
+    const resultClassMap = projectId
+      ? await loadRunResultClassMap(projectId)
+      : new Map<string, RunResultClass>();
+
     const [
       totalCases,
       runs30d,
@@ -73,7 +100,7 @@ export async function GET(req: Request) {
           NOT: { result: 'NotRun' },
           testCase: wsCase,
         },
-        select: { result: true, executedAt: true },
+        select: { result: true, customResultId: true, executedAt: true },
       }),
       prisma.testRun.findMany({
         where: {
@@ -81,14 +108,14 @@ export async function GET(req: Request) {
           NOT: { result: 'NotRun' },
           testCase: wsCase,
         },
-        select: { result: true },
+        select: { result: true, customResultId: true },
       }),
       prisma.testRun.count({
-        where: { result: 'Failed', cycle: { status: 'Active', ...wsCycle } },
+        where: { ...failedFilter, cycle: { status: 'Active', ...wsCycle } },
       }),
       prisma.testRun.count({
         where: {
-          result: 'Failed',
+          ...failedFilter,
           executedAt: { gte: todayStart },
           cycle: { status: 'Active', ...wsCycle },
         },
@@ -98,9 +125,9 @@ export async function GET(req: Request) {
       // failures are the ones that actually matter most".
       prisma.testRun.count({
         where: {
-          result: 'Failed',
+          ...failedFilter,
           cycle: { status: 'Active', ...wsCycle },
-          testCase: { severity: 'Critical' },
+          testCase: { customSeverityId: null, severity: 'Critical' },
         },
       }),
       prisma.module.findMany({
@@ -164,7 +191,11 @@ export async function GET(req: Request) {
       // because Prisma can't easily express "count of distinct cycleId per
       // testCaseId" in one groupBy.
       prisma.testRun.findMany({
-        where: { result: { in: ['Failed', 'Blocked'] }, executedAt: { not: null }, cycle: wsCycle },
+        where: {
+          ...failLikeFilter,
+          executedAt: { not: null },
+          cycle: wsCycle,
+        },
         select: {
           testCaseId: true,
           cycleId: true,
@@ -175,6 +206,7 @@ export async function GET(req: Request) {
               title: true,
               caseNum: true,
               severity: true,
+              customSeverity: { select: { name: true } },
               module: { select: { name: true } },
               suite: { select: { name: true, module: { select: { name: true } } } },
               portal: { select: { name: true } },
@@ -193,6 +225,7 @@ export async function GET(req: Request) {
         take: 8,
         select: {
           result: true,
+          customResult: { select: { name: true } },
           executedAt: true,
           executedBy: true,
           testCase: { select: { title: true, caseNum: true } },
@@ -263,14 +296,27 @@ export async function GET(req: Request) {
     const manualCurrent = manualLogs.filter(l => logTs(l) >= thirtyDaysAgo);
     const manualPrev = manualLogs.filter(l => logTs(l) >= sixtyDaysAgo && logTs(l) < thirtyDaysAgo);
 
+    // Effective-result helpers -- a custom RunResult option (see
+    // lib/options.ts) is classified via its own countsAs; Blocked stays its
+    // own bucket (no custom equivalent), matching the KPI tiles' historical
+    // Failed-vs-Blocked split.
+    const isPassLike = (r: { result: string; customResultId: string | null }) =>
+      r.customResultId
+        ? resultClassMap.get(r.customResultId) === 'PassLike'
+        : r.result === 'Passed';
+    const isFailLikeNotBlocked = (r: { result: string; customResultId: string | null }) =>
+      r.customResultId
+        ? resultClassMap.get(r.customResultId) === 'FailLike'
+        : r.result === 'Failed';
+    const isBlocked = (r: { result: string; customResultId: string | null }) =>
+      !r.customResultId && r.result === 'Blocked';
+
     // Pass rate for 30d window — CaseBased runs + quick logs, blended.
-    const passed30d =
-      runs30d.filter(r => r.result === 'Passed').length + manualCurrent.filter(logPass).length;
+    const passed30d = runs30d.filter(isPassLike).length + manualCurrent.filter(logPass).length;
     const total30d = runs30d.length + manualCurrent.length;
     const passRate = total30d === 0 ? 0 : Math.round((passed30d / total30d) * 100);
 
-    const passedPrev =
-      runsPrev30d.filter(r => r.result === 'Passed').length + manualPrev.filter(logPass).length;
+    const passedPrev = runsPrev30d.filter(isPassLike).length + manualPrev.filter(logPass).length;
     const totalPrev = runsPrev30d.length + manualPrev.length;
     const passRatePrev = totalPrev === 0 ? 0 : Math.round((passedPrev / totalPrev) * 100);
 
@@ -278,13 +324,11 @@ export async function GET(req: Request) {
     // Quick logs have no Blocked concept -- a failed log is just a Failed
     // count, never a Blocked one.
     const failed30d =
-      runs30d.filter(r => r.result === 'Failed').length +
-      manualCurrent.filter(l => !logPass(l)).length;
-    const blocked30d = runs30d.filter(r => r.result === 'Blocked').length;
+      runs30d.filter(isFailLikeNotBlocked).length + manualCurrent.filter(l => !logPass(l)).length;
+    const blocked30d = runs30d.filter(isBlocked).length;
     const failedPrev30d =
-      runsPrev30d.filter(r => r.result === 'Failed').length +
-      manualPrev.filter(l => !logPass(l)).length;
-    const blockedPrev30d = runsPrev30d.filter(r => r.result === 'Blocked').length;
+      runsPrev30d.filter(isFailLikeNotBlocked).length + manualPrev.filter(l => !logPass(l)).length;
+    const blockedPrev30d = runsPrev30d.filter(isBlocked).length;
     const pctChange = (curr: number, prev: number) =>
       prev === 0 ? (curr === 0 ? 0 : 100) : Math.round(((curr - prev) / prev) * 100);
 
@@ -348,7 +392,11 @@ export async function GET(req: Request) {
       recurringRuns.map(r => ({
         cycleId: r.cycleId,
         executedAt: r.executedAt!,
-        testCase: { ...r.testCase, scopeName: caseScopeName(r.testCase) },
+        testCase: {
+          ...r.testCase,
+          severity: r.testCase.customSeverity?.name ?? r.testCase.severity,
+          scopeName: caseScopeName(r.testCase),
+        },
       })),
       5,
     );
@@ -356,43 +404,23 @@ export async function GET(req: Request) {
     // Recent activity -- two real, directly-observable event kinds. Not
     // attempting "cycle started"/"issue resolved"/"N cases created" here:
     // nothing in the schema timestamps those moments, so synthesizing them
-    // would just be showing fabricated activity.
-    const runEvents = recentRunEvents.map(r => ({
-      kind: 'run' as const,
-      actor: r.executedBy || 'Someone',
-      verb: r.result === 'Passed' ? 'marked' : 'marked',
-      caseLabel: `TC-${String(r.testCase.caseNum).padStart(3, '0')}`,
-      result: r.result,
-      cycleName: r.cycle.name,
-      ts: r.executedAt!.toISOString(),
-    }));
-    const logEvents = [...manualLogs]
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      .slice(0, 8)
-      .map(l => ({
-        kind: 'quicklog' as const,
-        actor: l.loggedBy || 'Someone',
-        scopeName:
-          [l.portalName, l.moduleName, l.featureName].filter(Boolean).join(' › ') || l.name,
-        ts: l.createdAt.toISOString(),
-      }));
-    const recentActivity = [...runEvents, ...logEvents]
-      .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())
-      .slice(0, 8);
+    // would just be showing fabricated activity. Shared with Teams' own
+    // activity feed — see lib/activity.ts.
+    const recentActivity = buildRecentActivity(recentRunEvents, manualLogs, 8);
 
     const moduleStability = modules
       .map(m => {
         const points = [
           ...m.testCases.flatMap(tc =>
             tc.runs
-              .filter(r => r.result === 'Passed' || r.result === 'Failed')
-              .map(r => pointFromRun({ ...r, testCase: { title: tc.title } })),
+              .filter(r => countsForStability(r, resultClassMap))
+              .map(r => pointFromRun({ ...r, testCase: { title: tc.title } }, resultClassMap)),
           ),
           ...m.suites.flatMap(s =>
             s.testCases.flatMap(tc =>
               tc.runs
-                .filter(r => r.result === 'Passed' || r.result === 'Failed')
-                .map(r => pointFromRun({ ...r, testCase: { title: tc.title } })),
+                .filter(r => countsForStability(r, resultClassMap))
+                .map(r => pointFromRun({ ...r, testCase: { title: tc.title } }, resultClassMap)),
             ),
           ),
         ];

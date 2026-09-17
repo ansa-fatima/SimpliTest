@@ -226,6 +226,7 @@ export function TestRunsBoard({
       {editingLog && (
         <UpdateQuickLogModal
           log={editingLog}
+          projectId={projectId}
           onClose={() => setEditingLog(null)}
           onSave={async patch => {
             await onUpdate(editingLog.id, patch);
@@ -472,8 +473,9 @@ function QuickLogRow({ log, onEdit }: { log: TestCycle; onEdit: () => void }) {
 
   return (
     <div
+      onClick={onEdit}
       className={cn(
-        'flex items-center justify-between gap-3 rounded-lg border-y border-l-4 border-r border-border bg-surface px-3.5 py-2.5',
+        'flex cursor-pointer items-center justify-between gap-3 rounded-lg border-y border-l-4 border-r border-border bg-surface px-3.5 py-2.5 transition-colors hover:bg-surface-2',
         point.pass ? 'border-l-success' : 'border-l-danger',
       )}
     >

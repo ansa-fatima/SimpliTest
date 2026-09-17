@@ -1,6 +1,12 @@
 import { prisma } from '@/lib/db';
+import { Prisma } from '@prisma/client';
 import { ok, serverError } from '@/lib/api';
 import { DataPoint, pointFromRun, pointFromQuickLog, stats } from '@/lib/stability';
+import {
+  loadRunResultClassMap,
+  runResultClassWhereClause,
+  stabilityResultWhereClause,
+} from '@/lib/options';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +34,13 @@ export async function GET(req: Request) {
   try {
     const projectId = new URL(req.url).searchParams.get('projectId') || undefined;
     const wsCycle = projectId ? { projectId } : {};
+    const passFailFilter: Prisma.TestRunWhereInput = projectId
+      ? await stabilityResultWhereClause(projectId)
+      : { result: { in: ['Passed', 'Failed'] } };
+    const failLikeFilter: Prisma.TestRunWhereInput = projectId
+      ? await runResultClassWhereClause(projectId, ['FailLike'])
+      : { result: { in: ['Failed', 'Blocked'] } };
+    const resultClassMap = projectId ? await loadRunResultClassMap(projectId) : new Map();
 
     const [completedCycles, totalLoggedEntries, caseCycles, manualLogs, runs, recurringRuns] =
       await Promise.all([
@@ -63,9 +76,10 @@ export async function GET(req: Request) {
         // Stability already use (see lib/stability.ts), unfiltered here since
         // this is a workspace-wide headline number, not a drill-down.
         prisma.testRun.findMany({
-          where: { cycle: { mode: 'CaseBased', ...wsCycle }, result: { in: ['Passed', 'Failed'] } },
+          where: { cycle: { mode: 'CaseBased', ...wsCycle }, ...passFailFilter },
           select: {
             result: true,
+            customResultId: true,
             executedAt: true,
             updatedAt: true,
             cycleId: true,
@@ -86,7 +100,7 @@ export async function GET(req: Request) {
         // than listed.
         prisma.testRun.findMany({
           where: {
-            result: { in: ['Failed', 'Blocked'] },
+            ...failLikeFilter,
             executedAt: { not: null },
             cycle: wsCycle,
           },
@@ -116,7 +130,7 @@ export async function GET(req: Request) {
     // the flat blend.
     const moduleDirectPoints = new Map<string, DataPoint[]>();
     for (const r of runs) {
-      const point = pointFromRun(r);
+      const point = pointFromRun(r, resultClassMap);
       // A case attaches to a module directly OR via a suite -- resolve
       // whichever one holds it so a suite's cases roll up under their real
       // parent module instead of landing in a separate bucket keyed by suite id.

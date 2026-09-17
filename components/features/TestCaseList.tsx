@@ -1,21 +1,22 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ApiTestCase, Priority, Severity, TestType, UserSummary } from '@/types';
+import { ApiTestCase, UserSummary } from '@/types';
 import { api } from '@/lib/client';
 import { exportApiTestCases } from '@/lib/export';
 import { ImportCsvModal } from '@/components/features/ImportCsvModal';
 import { NewTestCaseModal } from '@/components/features/NewTestCaseModal';
+import { useCaseOptions, CaseOption } from '@/components/features/CaseClassification';
 import { TruncatedText } from '@/components/ui/TruncatedText';
 import {
   avatarColour,
   cn,
   initials,
   localDateStr,
-  priorityTone,
+  priorityToneDisplay,
   resultTone,
   statusBadge,
-  typeBadge,
+  typeDisplay,
 } from '@/lib/utils';
 
 // ─── Data shapes that come back from /api/portals?projectId=… ─────────
@@ -83,9 +84,6 @@ interface TestCaseListProps {
   dataVersion?: number;
 }
 
-const PRIORITIES: Priority[] = ['High', 'Medium', 'Low'];
-const SEVERITIES: Severity[] = ['Critical', 'Major', 'Minor'];
-const TYPES: TestType[] = ['Functional', 'Regression', 'Smoke', 'Sanity', 'UI', 'API'];
 const MODAL_SELECT_CLS =
   'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100';
 
@@ -105,6 +103,11 @@ export function TestCaseList({
   onOpenCase,
   dataVersion = 0,
 }: TestCaseListProps) {
+  // Workspace's Priority/Severity/Test Type options -- built-ins + any
+  // custom ones added in Settings > Test Configuration (see lib/options.ts).
+  // Drives the filter chips, the bulk-edit dropdown, and badge colors.
+  const caseOptions = useCaseOptions(projectId ?? '');
+
   // ─── Tree (in-page hierarchy) ──────────────────────────────
   const [tree, setTree] = useState<ApiPortal[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
@@ -330,8 +333,8 @@ export function TestCaseList({
   }, [curMod, curSuite]);
 
   // ─── Filters + paging ──────────────────────────────────────
-  const [priorityF, setPriorityF] = useState<Set<Priority>>(new Set());
-  const [typeF, setTypeF] = useState<Set<TestType>>(new Set());
+  const [priorityF, setPriorityF] = useState<Set<string>>(new Set());
+  const [typeF, setTypeF] = useState<Set<string>>(new Set());
   const [openFilter, setOpenFilter] = useState<FilterKey | null>(null);
   const filterBarRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
@@ -1328,7 +1331,7 @@ export function TestCaseList({
               <FilterChip
                 label="Priority"
                 icon="ti-flag"
-                options={PRIORITIES}
+                options={caseOptions.priority.map(o => ({ value: o.key, label: o.name }))}
                 selected={priorityF}
                 onToggle={v => {
                   const n = new Set(priorityF);
@@ -1342,7 +1345,7 @@ export function TestCaseList({
               <FilterChip
                 label="Type"
                 icon="ti-category"
-                options={TYPES}
+                options={caseOptions.type.map(o => ({ value: o.key, label: o.name }))}
                 selected={typeF}
                 onToggle={v => {
                   const n = new Set(typeF);
@@ -1516,7 +1519,7 @@ export function TestCaseList({
                             </td>
                             <td className="px-4 py-3">
                               {(() => {
-                                const t = priorityTone(tc.priority);
+                                const t = priorityToneDisplay(tc);
                                 return (
                                   <span
                                     className={cn(
@@ -1530,13 +1533,16 @@ export function TestCaseList({
                                         t.dot,
                                       )}
                                     />
-                                    {tc.priority}
+                                    {t.label}
                                   </span>
                                 );
                               })()}
                             </td>
                             <td className="px-4 py-3">
-                              <Pill className={typeBadge(tc.type)}>{tc.type}</Pill>
+                              {(() => {
+                                const t = typeDisplay(tc);
+                                return <Pill className={t.classes}>{t.label}</Pill>;
+                              })()}
                             </td>
                             <td className="px-4 py-3">
                               <Pill className={statusBadge(tc.status)}>{tc.status}</Pill>
@@ -1705,9 +1711,10 @@ export function TestCaseList({
         />
       )}
 
-      {showNewCase && activeNode && (
+      {showNewCase && activeNode && projectId && (
         <NewTestCaseModal
           tree={tree}
+          projectId={projectId}
           initial={{
             portalId: activeNode.portal.id,
             moduleId: activeNode.kind !== 'portal' ? activeNode.module.id : undefined,
@@ -1736,6 +1743,7 @@ export function TestCaseList({
         <BulkEditModal
           count={selected.size}
           busy={bulkBusy}
+          caseOptions={caseOptions}
           onClose={() => setShowBulkEdit(false)}
           onSave={bulkEdit}
         />
@@ -2182,11 +2190,13 @@ function BulkMoveModal({
 function BulkEditModal({
   count,
   busy,
+  caseOptions,
   onClose,
   onSave,
 }: {
   count: number;
   busy: boolean;
+  caseOptions: { priority: CaseOption[]; severity: CaseOption[]; type: CaseOption[] };
   onClose: () => void;
   onSave: (patch: Partial<Record<'priority' | 'severity' | 'type', string>>) => void;
 }) {
@@ -2228,9 +2238,9 @@ function BulkEditModal({
               className={MODAL_SELECT_CLS}
             >
               <option value="">No change</option>
-              {PRIORITIES.map(p => (
-                <option key={p} value={p}>
-                  {p}
+              {caseOptions.priority.map(p => (
+                <option key={p.key} value={p.key}>
+                  {p.name}
                 </option>
               ))}
             </select>
@@ -2243,9 +2253,9 @@ function BulkEditModal({
               className={MODAL_SELECT_CLS}
             >
               <option value="">No change</option>
-              {SEVERITIES.map(s => (
-                <option key={s} value={s}>
-                  {s}
+              {caseOptions.severity.map(s => (
+                <option key={s.key} value={s.key}>
+                  {s.name}
                 </option>
               ))}
             </select>
@@ -2258,9 +2268,9 @@ function BulkEditModal({
               className={MODAL_SELECT_CLS}
             >
               <option value="">No change</option>
-              {TYPES.map(t => (
-                <option key={t} value={t}>
-                  {t}
+              {caseOptions.type.map(t => (
+                <option key={t.key} value={t.key}>
+                  {t.name}
                 </option>
               ))}
             </select>
@@ -2337,10 +2347,15 @@ function EmptyState({
 
 // ─── Generic filter chip ─────────────────────────────────────
 
+interface FilterChipOption<T extends string> {
+  value: T;
+  label: string;
+}
+
 interface FilterChipProps<T extends string> {
   label: string;
   icon: string;
-  options: T[];
+  options: FilterChipOption<T>[];
   selected: Set<T>;
   onToggle: (value: T) => void;
   onClear: () => void;
@@ -2360,7 +2375,8 @@ function FilterChip<T extends string>({
 }: FilterChipProps<T>) {
   const count = selected.size;
   // Render the single-value selection inline (e.g. "Status: Active") to match the design.
-  const singleLabel = count === 1 ? Array.from(selected)[0] : null;
+  const singleLabel =
+    count === 1 ? (options.find(o => o.value === Array.from(selected)[0])?.label ?? null) : null;
   return (
     <div className="relative">
       <button
@@ -2397,14 +2413,14 @@ function FilterChip<T extends string>({
       {isOpen && (
         <div className="absolute left-0 top-[calc(100%+4px)] z-30 w-[180px] rounded-lg border border-border bg-surface py-1.5 shadow-[0_4px_24px_-4px_rgba(28,25,23,0.12)]">
           {options.map(opt => {
-            const checked = selected.has(opt);
+            const checked = selected.has(opt.value);
             return (
               <label
-                key={opt}
+                key={opt.value}
                 className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[13px] hover:bg-surface-2"
               >
-                <CheckBox checked={checked} onChange={() => onToggle(opt)} />
-                <span className="text-text">{opt}</span>
+                <CheckBox checked={checked} onChange={() => onToggle(opt.value)} />
+                <span className="text-text">{opt.label}</span>
               </label>
             );
           })}

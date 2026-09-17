@@ -139,6 +139,14 @@ export function ManualCycleSummaryModal({
                   <span className="font-mono text-slate-600">{cycle.ticketLink}</span>
                 </>
               )}
+              {cycle.jiraStatus && (
+                <>
+                  <span>·</span>
+                  <span>
+                    <strong className="text-slate-700">Jira:</strong> {cycle.jiraStatus}
+                  </span>
+                </>
+              )}
             </div>
           </div>
 

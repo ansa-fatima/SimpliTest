@@ -95,12 +95,7 @@ export function Sidebar({
 
       <div className="my-1.5 h-px w-8 flex-shrink-0 bg-border" />
 
-      <IconNavItem
-        active={onMembers}
-        onClick={onShowMembers}
-        icon={<PeopleIcon />}
-        label="Members"
-      />
+      <IconNavItem active={onMembers} onClick={onShowMembers} icon={<PeopleIcon />} label="Teams" />
       <IconNavItem
         active={onSettings}
         onClick={onShowSettings}
