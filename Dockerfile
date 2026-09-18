@@ -28,20 +28,27 @@ COPY --from=builder /app/node_modules ./node_modules
 
 EXPOSE 3000
 
-# Bring the DB schema up to date on startup. Two paths:
+# Bring the DB in line with prisma/schema.prisma on startup, then start the app.
+# schema.prisma is the single source of truth — the entrypoint uses
+# `prisma db push` (not migrations), so any table/column/constraint you add to
+# the schema is created automatically on the next deploy. See docker-entrypoint.sh.
 #
-# A) SEED_DATA=true (DESTRUCTIVE — opt-in only):
-#      Drops the public schema, re-applies all migrations, re-seeds.
-#      Use this to recover from a corrupted DB (e.g. missing enum types) or to
-#      reset to a known-good demo state. REMEMBER to flip the env back to
-#      false after the next deploy, or every deploy will wipe the database.
+# Env flags:
+#   SEED_DATA=true  (default false, non-destructive)
+#       After the schema sync, run the idempotent seed (prisma db seed).
+#       Safe to leave on: seed.js upserts and skips existing rows. Toggle this
+#       true/false to control whether demo data is (re)seeded.
 #
-# B) Default (SEED_DATA=false or unset):
-#      1) Prefer `prisma migrate deploy` (applies migration files in order).
-#      2) If that fails (prod DB has no _prisma_migrations history or was
-#         applied against a different instance), fall back to `prisma db push`
-#         which syncs columns/tables without touching migration history.
-#      3) Either way, exec npm start so the container is always reachable.
+#   RESET_DB=true   (default false, DESTRUCTIVE — opt-in only)
+#       DROPs the public schema, rebuilds every table from schema.prisma, and
+#       re-seeds. Use to recover a corrupted DB, or to clear old leftover
+#       columns that block the safe sync. ALL DATA IS LOST — flip back to false
+#       after the deploy or every deploy will wipe the database.
+#
+# The always-on `db push` runs WITHOUT --accept-data-loss, so it can never
+# silently drop data; if a schema change would lose data it refuses and logs
+# how to proceed. Either way the container always exec's npm start so it stays
+# reachable.
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 CMD ["/usr/local/bin/docker-entrypoint.sh"]
