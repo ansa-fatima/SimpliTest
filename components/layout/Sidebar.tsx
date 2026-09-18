@@ -11,7 +11,6 @@ interface SidebarProps {
   onShowDashboard: () => void;
   onShowTestCases: () => void;
   onShowTestRunsBoard: () => void;
-  onShowTestRuns: () => void;
   onShowReports: () => void;
 
   // Configuration nav
@@ -21,12 +20,9 @@ interface SidebarProps {
 
 // Page-buckets used to decide which top-level nav item is "active".
 const TESTCASE_PAGES: Page[] = ['list', 'view', 'edit'];
-// The Execution screen ('cycle') is opened from both Test Runs and Test
-// Cycles, but it's the same working/execution screen either way (its own
-// breadcrumb always reads "Test Runs / Execution") -- so it always reads as
-// Test Runs here too, regardless of which list it was opened from.
-const TESTRUNS_BOARD_PAGES: Page[] = ['testRuns', 'cycle'];
-const TESTRUN_PAGES: Page[] = ['cycles', 'cycleOverview'];
+// The Execution screen ('cycle') and Cycle Overview always read as Test
+// Runs in the sidebar, regardless of which cycle was opened.
+const TESTRUNS_BOARD_PAGES: Page[] = ['testRuns', 'cycle', 'cycleOverview'];
 
 // Slim icon-only rail -- everything workspace-identity-related (which
 // project, who's signed in, theme) now lives in the Topbar above; this rail
@@ -36,7 +32,6 @@ export function Sidebar({
   onShowDashboard,
   onShowTestCases,
   onShowTestRunsBoard,
-  onShowTestRuns,
   onShowReports,
   onShowMembers,
   onShowSettings,
@@ -44,7 +39,6 @@ export function Sidebar({
   const onDashboard = page === 'dashboard';
   const onTestCases = TESTCASE_PAGES.includes(page);
   const onTestRunsBoard = TESTRUNS_BOARD_PAGES.includes(page);
-  const onTestRuns = TESTRUN_PAGES.includes(page);
   const onReports = page === 'reports';
   const onMembers = page === 'members';
   const onSettings = page === 'settings';
@@ -79,12 +73,6 @@ export function Sidebar({
         onClick={onShowTestRunsBoard}
         icon={<PlayIcon />}
         label="Test Runs"
-      />
-      <IconNavItem
-        active={onTestRuns}
-        onClick={onShowTestRuns}
-        icon={<TableIcon />}
-        label="Test Cycles"
       />
       <IconNavItem
         active={onReports}
@@ -166,17 +154,6 @@ function PlayIcon() {
   return (
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
       <path d="M5 3l7 5-7 5V3z" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-function TableIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
-      <rect x="2" y="3" width="12" height="10" rx="1.5" />
-      <line x1="2" y1="6.5" x2="14" y2="6.5" />
-      <line x1="6" y1="6.5" x2="6" y2="13" />
-      <line x1="10" y1="6.5" x2="10" y2="13" />
     </svg>
   );
 }

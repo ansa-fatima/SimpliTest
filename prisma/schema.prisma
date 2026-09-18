@@ -106,6 +106,7 @@ model Project {
   // nothing has been toggled yet (all off).
   integrations       Json?
   jiraConnection     JiraConnection?
+  jiraSubIssues      JiraSubIssue[]
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
 
@@ -154,6 +155,45 @@ model JiraConnection {
   connectedBy   User?    @relation(fields: [connectedById], references: [id], onDelete: SetNull)
 
   @@map("jira_connections")
+}
+
+// A snapshot of one Jira sub-issue as of a cycle's last "Sync from Jira" --
+// see lib/jira.ts's syncFromJira. Whenever a cycle re-syncs, its own rows
+// here are replaced wholesale with the fresh set, EXCEPT `timesReopened`
+// (see below), so this table otherwise reflects "what did the last sync
+// see," not a change history. Two things get computed from it across ALL
+// of a workspace's cycles (see lib/recurringIssues.ts):
+//   - Recurring: the same issueKey appearing under 2+ distinct cycles.
+//   - Reopened: isReopened true on its most recent sync, regardless of
+//     whether it's also recurring (a ticket seen in only one quick log can
+//     still be reopened).
+model JiraSubIssue {
+  id         String    @id @default(cuid())
+  projectId  String
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  cycleId    String
+  cycle      TestCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  issueKey   String
+  // The issue's own summary, as of this sync -- there only for display
+  // (e.g. Reports' recurring-issues list); never null on a real sync,
+  // nullable only because it's optional in transit.
+  title      String?
+  severity   String // "Critical" | "Major" | "Minor" -- see lib/jira.ts's bucketOf
+  status     String // the raw Jira status name, e.g. "Reopened", "To Do", "Done"
+  isDone     Boolean   @default(false)
+  isReopened Boolean   @default(false)
+  // How many times THIS issue has been seen flipping into Reopened across
+  // every sync so far -- the one field that survives the delete+recreate
+  // every other column gets on re-sync (carried forward and incremented by
+  // the cycles routes, comparing against the row about to be replaced).
+  // Incremented only on a false->true transition, so re-syncing while it's
+  // still sitting in Reopened doesn't double-count.
+  timesReopened Int    @default(0)
+  syncedAt   DateTime  @default(now())
+
+  @@unique([cycleId, issueKey])
+  @@index([projectId, issueKey])
+  @@map("jira_sub_issues")
 }
 
 // A workspace role row -- either one of the 5 built-in UserRole values,
@@ -502,23 +542,24 @@ enum CycleMode {
 }
 
 model TestCycle {
-  id          String         @id @default(cuid())
-  name        String
-  description String         @default("")
-  status      CycleStatus    @default(Active)
-  mode        CycleMode      @default(CaseBased)
-  scopeType   CycleScopeType @default(All)
-  scopeId     String? // moduleId or suiteId; null for All / Custom
-  targetDate  DateTime?
+  id            String         @id @default(cuid())
+  name          String
+  description   String         @default("")
+  status        CycleStatus    @default(Active)
+  mode          CycleMode      @default(CaseBased)
+  scopeType     CycleScopeType @default(All)
+  scopeId       String? // moduleId or suiteId; null for All / Custom
+  targetDate    DateTime?
   // When this cycle was actually executed. For Manual (quick-log) entries the
   // user picks it explicitly so back-dated cycles show up on the day they ran.
   // For CaseBased cycles it's left null until the run is closed.
-  completedAt DateTime?
-  projectId   String
-  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  runs        TestRun[]
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  completedAt   DateTime?
+  projectId     String
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  runs          TestRun[]
+  jiraSubIssues JiraSubIssue[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
   // Manual-mode bookkeeping — free-text so users can record cycles before
   // defining the workspace's module/feature structure. Ignored for CaseBased cycles.
@@ -542,6 +583,11 @@ model TestCycle {
   // cycle never synced keeps using manual entry exactly as before.
   jiraStatus    String? // the linked ticket's own status name, as of last sync
   jiraSyncedAt  DateTime?
+  // The connected site's URL AT THE TIME of that sync -- cached so a bare
+  // ticket key (e.g. "QTP-2") in ticketLink stays a real /browse/ link even
+  // after the workspace's JiraConnection is later disconnected or swapped
+  // for a different site. See lib/jiraLink.tsx.
+  jiraSiteUrl   String?
   // Who logged this quick log — plain text like TestRun.executedBy, set
   // automatically from the session at creation time (not user-editable).
   // Lets Reports' Tester filter narrow quick logs the same way it already

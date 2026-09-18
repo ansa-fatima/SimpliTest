@@ -4,8 +4,9 @@ import { useState } from 'react';
 import { CycleOverviewData, Module, TestCycle } from '@/types';
 import { api } from '@/lib/client';
 import { DonutChart } from './Dashboard';
-import { NewCycleModal } from './NewCycleModal';
+import { UpdateQuickLogModal } from './QuickLogModal';
 import { avatarColour, cn, initials, localDateStr, relativeTime } from '@/lib/utils';
+import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 
 interface CycleOverviewProps {
   data: CycleOverviewData | null;
@@ -31,6 +32,7 @@ export function CycleOverview({
 }: CycleOverviewProps) {
   const [editing, setEditing] = useState<TestCycle | null>(null);
   const [editLoading, setEditLoading] = useState(false);
+  const siteUrl = useJiraSiteUrl(projectId);
 
   const openEdit = async () => {
     if (!data) return;
@@ -114,7 +116,10 @@ export function CycleOverview({
               {cycle.ticketLink && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-2">
                   <i className="ti ti-brand-jira text-[12px] text-text-3" />
-                  {cycle.ticketLink.replace(/^https?:\/\//, '')}
+                  <JiraTicketLink
+                    ticketLink={cycle.ticketLink}
+                    siteUrl={cycle.jiraSiteUrl ?? siteUrl}
+                  />
                 </span>
               )}
             </div>
@@ -341,13 +346,11 @@ export function CycleOverview({
       </div>
 
       {editing && (
-        <NewCycleModal
-          modules={modules}
+        <UpdateQuickLogModal
+          log={editing}
           projectId={projectId}
-          initial={editing}
           onClose={() => setEditing(null)}
-          onSave={async input => {
-            const patch: Record<string, unknown> = { ...input };
+          onSave={async patch => {
             await onUpdate(editing.id, patch);
             setEditing(null);
           }}

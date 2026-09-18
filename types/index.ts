@@ -9,7 +9,6 @@ export type Page =
   | 'view'
   | 'edit'
   | 'testRuns'
-  | 'cycles'
   | 'cycleOverview'
   | 'cycle'
   | 'reports'
@@ -97,6 +96,8 @@ export interface TestCycle {
   /** The linked Jira ticket's own status, as of the last "Sync from Jira". */
   jiraStatus?: string | null;
   jiraSyncedAt?: string | null;
+  /** The connected site's URL at the time of that sync -- see lib/jiraLink.tsx. */
+  jiraSiteUrl?: string | null;
   /** Who logged this quick log (Manual mode only). */
   loggedBy?: string;
   issueCount?: number;
@@ -120,6 +121,7 @@ export interface CycleOverviewData {
     cycleCategory: string | null;
     version: string | null;
     ticketLink: string | null;
+    jiraSiteUrl?: string | null;
     environment: string | null;
     platform: string | null;
     scopeName: string | null;

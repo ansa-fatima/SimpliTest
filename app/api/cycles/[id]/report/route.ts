@@ -130,6 +130,7 @@ export async function GET(_req: Request, { params }: Ctx) {
         version: cycle.version,
         cycleCategory: cycle.cycleCategory,
         ticketLink: cycle.ticketLink,
+        jiraSiteUrl: cycle.jiraSiteUrl,
         moduleName: cycle.moduleName,
         featureName: cycle.featureName,
       },

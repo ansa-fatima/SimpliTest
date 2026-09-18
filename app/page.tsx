@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+import { TestCycle } from '@/types';
 import { useStore } from '@/hooks/useStore';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Topbar } from '@/components/layout/Topbar';
@@ -8,7 +10,6 @@ import { TestCaseList } from '@/components/features/TestCaseList';
 import { TestCaseView } from '@/components/features/TestCaseView';
 import { TestCaseEdit } from '@/components/features/TestCaseEdit';
 import { TestRunsBoard } from '@/components/features/TestRunsBoard';
-import { CyclesList } from '@/components/features/CyclesList';
 import { CycleOverview } from '@/components/features/CycleOverview';
 import { CycleView } from '@/components/features/CycleView';
 import { Dashboard } from '@/components/features/Dashboard';
@@ -18,9 +19,15 @@ import { Settings } from '@/components/features/Settings';
 import { WorkspaceOnboarding } from '@/components/features/WorkspaceOnboarding';
 import { Profile } from '@/components/features/Profile';
 import { ManualCycleSummaryModal } from '@/components/features/ManualCycleSummaryModal';
+import { UpdateQuickLogModal } from '@/components/features/QuickLogModal';
 import { Toast } from '@/components/ui/Toast';
 
 export default function Home() {
+  // The summary modal's own "Edit" button opens this in place, instead of
+  // navigating to Test Cycles and making the user find + click the same
+  // quick log a second time to actually edit it.
+  const [editingQuickLog, setEditingQuickLog] = useState<TestCycle | null>(null);
+
   const {
     state,
     currentCases,
@@ -38,7 +45,6 @@ export default function Home() {
     deleteFeature,
     showDashboard,
     showTestCases,
-    showCycles,
     showTestRunsBoard,
     openCycle,
     closeQuickLogCycle,
@@ -139,7 +145,6 @@ export default function Home() {
             onShowDashboard={showDashboard}
             onShowTestCases={showTestCases}
             onShowTestRunsBoard={showTestRunsBoard}
-            onShowTestRuns={showCycles}
             onShowReports={() => showReports()}
             onShowMembers={showMembers}
             onShowSettings={showSettings}
@@ -240,20 +245,6 @@ export default function Home() {
             />
           )}
 
-          {page === 'cycles' && (
-            <CyclesList
-              cycles={cycles}
-              loading={cyclesLoading}
-              modules={modules}
-              projectId={currentProjectId}
-              onOpen={openCycle}
-              onArchive={archiveCycle}
-              onDelete={deleteCycle}
-              onCreate={createCycle}
-              onUpdate={updateCycle}
-            />
-          )}
-
           {page === 'cycleOverview' && (
             <CycleOverview
               data={cycleOverview}
@@ -290,10 +281,23 @@ export default function Home() {
       {quickLogCycle && (
         <ManualCycleSummaryModal
           cycle={quickLogCycle}
+          projectId={currentProjectId}
           onClose={closeQuickLogCycle}
           onEdit={() => {
+            setEditingQuickLog(quickLogCycle);
             closeQuickLogCycle();
-            showCycles();
+          }}
+        />
+      )}
+
+      {editingQuickLog && (
+        <UpdateQuickLogModal
+          log={editingQuickLog}
+          projectId={currentProjectId}
+          onClose={() => setEditingQuickLog(null)}
+          onSave={async patch => {
+            await updateCycle(editingQuickLog.id, patch);
+            setEditingQuickLog(null);
           }}
         />
       )}

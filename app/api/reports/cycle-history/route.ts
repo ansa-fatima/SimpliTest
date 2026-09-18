@@ -7,9 +7,7 @@ import { loadRunResultClassMap, resultClassOf } from '@/lib/options';
 //   ?projectId=&period=&sprintOffset=&portalId=&moduleId=&suiteId=&tester=
 //
 // Every cycle (quick log or test run) as one row, filterable by the same
-// Period/Portal/Module/Feature/Tester dimensions as Stability, plus a
-// "cycles per module" rollup answering the review's "how many cycles ran
-// against this module/feature" ask directly.
+// Period/Portal/Module/Feature/Tester dimensions as Stability.
 //
 // Tester matches TestRun.executedBy for test runs (a cycle counts if ANY of
 // its runs was executed by that person) and TestCycle.loggedBy for quick
@@ -26,6 +24,7 @@ type Row = {
   moduleName: string | null;
   scopeName: string | null;
   version: string | null;
+  environment: string | null;
   tester: string;
   date: string;
   issueCount: number;
@@ -35,8 +34,9 @@ type Row = {
   doneCount: number;
   remainingCount: number;
   // Of remainingCount, how many regressed after being marked done -- Jira
-  // sync only (see lib/jira.ts). null means "not applicable": a case-based
-  // cycle has no Jira-synced aggregate, only Manual quick logs do.
+  // sync only (see lib/jira.ts). null means "not applicable": an
+  // unsynced case-based cycle's breakdown comes from runs[] instead, which
+  // has no concept of "reopened".
   reopenedCount: number | null;
 };
 
@@ -126,7 +126,20 @@ export async function GET(req: Request) {
           scopeType: true,
           scopeId: true,
           version: true,
+          environment: true,
           createdAt: true,
+          // A case-based cycle can ALSO carry a Jira sync result (see
+          // CycleView's Jira panel) -- when it does, that's the source of
+          // truth for the breakdown below, same as a Manual quick log's own
+          // aggregate fields, instead of the runs[]-derived counts.
+          jiraSyncedAt: true,
+          issueCount: true,
+          criticalCount: true,
+          majorCount: true,
+          minorCount: true,
+          doneCount: true,
+          remainingCount: true,
+          reopenedCount: true,
           runs: {
             select: {
               result: true,
@@ -149,6 +162,7 @@ export async function GET(req: Request) {
           moduleName: true,
           featureName: true,
           version: true,
+          environment: true,
           issueCount: true,
           criticalCount: true,
           majorCount: true,
@@ -182,18 +196,30 @@ export async function GET(req: Request) {
       let minor = 0;
       let done = 0;
       let remaining = 0;
-      for (const r of c.runs) {
-        if (!r.wasEverIssue) continue;
-        if (isFailLike(r)) remaining++;
-        else done++;
-        // A custom-severity case's legacy `severity` column holds an
-        // unrelated placeholder value -- skip it here rather than
-        // misattributing it, same guard used by /api/cycles and the
-        // detailed cycle report.
-        if (r.testCase.customSeverityId) continue;
-        if (r.testCase.severity === 'Critical') critical++;
-        else if (r.testCase.severity === 'Major') major++;
-        else if (r.testCase.severity === 'Minor') minor++;
+      let reopened: number | null = null;
+      if (c.jiraSyncedAt) {
+        // Synced -- the cycle's own aggregate fields are the source of
+        // truth (same fields a Manual quick log stores), not the runs[].
+        critical = c.criticalCount ?? 0;
+        major = c.majorCount ?? 0;
+        minor = c.minorCount ?? 0;
+        done = c.doneCount ?? 0;
+        remaining = c.remainingCount ?? 0;
+        reopened = c.reopenedCount ?? 0;
+      } else {
+        for (const r of c.runs) {
+          if (!r.wasEverIssue) continue;
+          if (isFailLike(r)) remaining++;
+          else done++;
+          // A custom-severity case's legacy `severity` column holds an
+          // unrelated placeholder value -- skip it here rather than
+          // misattributing it, same guard used by /api/cycles and the
+          // detailed cycle report.
+          if (r.testCase.customSeverityId) continue;
+          if (r.testCase.severity === 'Critical') critical++;
+          else if (r.testCase.severity === 'Major') major++;
+          else if (r.testCase.severity === 'Minor') minor++;
+        }
       }
 
       rows.push({
@@ -204,6 +230,7 @@ export async function GET(req: Request) {
         moduleName: moduleId ? (moduleNameById.get(moduleId) ?? null) : null,
         scopeName,
         version: c.version,
+        environment: c.environment,
         tester:
           testers.length === 0
             ? ''
@@ -217,7 +244,7 @@ export async function GET(req: Request) {
         minorCount: minor,
         doneCount: done,
         remainingCount: remaining,
-        reopenedCount: null,
+        reopenedCount: reopened,
       });
     }
 
@@ -242,6 +269,7 @@ export async function GET(req: Request) {
         moduleName: log.moduleName || (moduleId ? (moduleNameById.get(moduleId) ?? null) : null),
         scopeName: log.featureName || scopeName,
         version: log.version,
+        environment: log.environment,
         tester: log.loggedBy,
         date: date.toISOString(),
         issueCount: log.issueCount ?? 0,
@@ -256,12 +284,6 @@ export async function GET(req: Request) {
 
     rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    const cyclesPerModule = new Map<string, number>();
-    for (const r of rows) {
-      const key = r.moduleName ?? 'Unscoped';
-      cyclesPerModule.set(key, (cyclesPerModule.get(key) ?? 0) + 1);
-    }
-
     return ok({
       cycles: rows,
       totals: {
@@ -270,9 +292,6 @@ export async function GET(req: Request) {
         quickLogCount: rows.filter(r => r.mode === 'Manual').length,
         testRunCount: rows.filter(r => r.mode === 'CaseBased').length,
       },
-      cyclesPerModule: Array.from(cyclesPerModule.entries())
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count),
     });
   } catch (e) {
     return serverError(e);

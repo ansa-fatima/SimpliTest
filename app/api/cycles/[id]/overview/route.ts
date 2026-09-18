@@ -231,6 +231,7 @@ export async function GET(_req: Request, { params }: Ctx) {
         cycleCategory: cycle.cycleCategory,
         version: cycle.version,
         ticketLink: cycle.ticketLink,
+        jiraSiteUrl: cycle.jiraSiteUrl,
         environment: cycle.environment,
         platform: cycle.platform,
         scopeName,

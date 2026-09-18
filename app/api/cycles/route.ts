@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { Prisma, CycleScopeType, CycleStatus, CycleMode } from '@prisma/client';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 import { loadRunResultClassMap } from '@/lib/options';
+import { deriveSiteUrlFromTicketLink, JiraSubIssueInfo } from '@/lib/jira';
 
 const SCOPE_TYPES: CycleScopeType[] = ['All', 'Portal', 'Module', 'Suite', 'Custom'];
 const MODES: CycleMode[] = ['CaseBased', 'Manual'];
@@ -214,6 +215,8 @@ export async function POST(req: Request) {
       ticketLink?: string;
       jiraStatus?: string;
       jiraSyncedAt?: string | null;
+      jiraSiteUrl?: string | null;
+      jiraSubIssues?: JiraSubIssueInfo[];
       loggedBy?: string;
       issueCount?: number;
       criticalCount?: number;
@@ -268,6 +271,12 @@ export async function POST(req: Request) {
           ticketLink: body.ticketLink?.trim() || null,
           jiraStatus: body.jiraStatus?.trim() || null,
           jiraSyncedAt: body.jiraSyncedAt ? new Date(body.jiraSyncedAt) : null,
+          // Explicit value (from an actual sync) wins; otherwise, if
+          // ticketLink itself is a full URL, derive the site from it so a
+          // later edit down to just the bare key still resolves as a link.
+          jiraSiteUrl:
+            body.jiraSiteUrl?.trim() ||
+            (body.ticketLink ? deriveSiteUrlFromTicketLink(body.ticketLink.trim()) : null),
           loggedBy: body.loggedBy?.trim() || '',
           issueCount: nz(body.issueCount),
           criticalCount: nz(body.criticalCount),
@@ -281,6 +290,23 @@ export async function POST(req: Request) {
           blockedCount: nz(body.blockedCount),
         },
       });
+      if (body.jiraSubIssues && body.jiraSubIssues.length > 0) {
+        await prisma.jiraSubIssue.createMany({
+          data: body.jiraSubIssues.map(s => ({
+            projectId: body.projectId!,
+            cycleId: cycle.id,
+            issueKey: s.key,
+            title: s.title,
+            severity: s.severity,
+            status: s.status,
+            isDone: s.isDone,
+            isReopened: s.isReopened,
+            // Brand-new cycle -- no prior sync to have already counted this
+            // against, so a fresh Reopened here is always the first time.
+            timesReopened: s.isReopened ? 1 : 0,
+          })),
+        });
+      }
       return ok(cycle, 201);
     }
 
@@ -355,6 +381,7 @@ export async function POST(req: Request) {
         version: body.version?.trim() || null,
         cycleCategory: body.cycleCategory?.trim() || null,
         ticketLink: body.ticketLink?.trim() || null,
+        jiraSiteUrl: body.ticketLink ? deriveSiteUrlFromTicketLink(body.ticketLink.trim()) : null,
         runs: {
           create: caseIds.map(testCaseId => ({ testCaseId })),
         },

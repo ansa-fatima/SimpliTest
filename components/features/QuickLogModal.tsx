@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { TestCycle } from '@/types';
+import { CycleScopeType, TestCycle } from '@/types';
 import { api } from '@/lib/client';
 import { cn, localDateStr } from '@/lib/utils';
 import { CycleFormPayload } from './NewCycleModal';
+import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
+import type { JiraSubIssueInfo } from '@/lib/jira';
 
 interface ApiModule {
   id: string;
@@ -61,11 +63,14 @@ export function NewQuickLogModal({
   const [error, setError] = useState('');
 
   // ── Jira sync ────────────────────────────────────────────────
-  const [jiraConnected, setJiraConnected] = useState(false);
+  const siteUrl = useJiraSiteUrl(projectId);
+  const jiraConnected = siteUrl !== null;
   const [jiraStatus, setJiraStatus] = useState('');
   const [jiraDone, setJiraDone] = useState<number | null>(null);
   const [jiraRemaining, setJiraRemaining] = useState<number | null>(null);
   const [jiraReopened, setJiraReopened] = useState<number | null>(null);
+  const [jiraSiteUrl, setJiraSiteUrl] = useState('');
+  const [jiraSubIssues, setJiraSubIssues] = useState<JiraSubIssueInfo[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState('');
 
@@ -80,10 +85,6 @@ export function NewQuickLogModal({
         .get<ApiPortal[]>(`/api/portals?projectId=${projectId}`)
         .then(setPortals)
         .catch(() => {});
-      api
-        .get<{ connected: boolean }>(`/api/projects/${projectId}/integrations/jira`)
-        .then(s => setJiraConnected(s.connected))
-        .catch(() => setJiraConnected(false));
     }
   }, [projectId]);
 
@@ -100,6 +101,8 @@ export function NewQuickLogModal({
         doneCount: number;
         remainingCount: number;
         reopenedCount: number;
+        siteUrl: string;
+        subIssues: JiraSubIssueInfo[];
       }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: ticketLink.trim() });
       setJiraStatus(result.status);
       setCritical(result.criticalCount);
@@ -108,6 +111,8 @@ export function NewQuickLogModal({
       setJiraDone(result.doneCount);
       setJiraRemaining(result.remainingCount);
       setJiraReopened(result.reopenedCount);
+      setJiraSiteUrl(result.siteUrl);
+      setJiraSubIssues(result.subIssues);
     } catch (e) {
       setSyncError((e as Error).message);
     } finally {
@@ -143,6 +148,8 @@ export function NewQuickLogModal({
         ticketLink: ticketLink.trim() || undefined,
         jiraStatus: jiraStatus || undefined,
         jiraSyncedAt: jiraStatus ? new Date().toISOString() : undefined,
+        jiraSiteUrl: jiraSiteUrl || undefined,
+        jiraSubIssues: jiraSubIssues.length > 0 ? jiraSubIssues : undefined,
         issueCount: total,
         criticalCount: critical,
         majorCount: major,
@@ -335,7 +342,7 @@ export function NewQuickLogModal({
   );
 }
 
-// ─── Update Quick Log (retest) ──────────────────────────────
+// ─── Update Quick Log / Test Cycle (edit) ────────────────────
 
 interface UpdateQuickLogModalProps {
   log: TestCycle;
@@ -344,45 +351,116 @@ interface UpdateQuickLogModalProps {
   onSave: (patch: Record<string, unknown>) => Promise<void>;
 }
 
-// The retest workflow, isolated from everything else about the log --
-// nothing new is created here, Done/Remaining just move against the same
-// record (see lib/stability.ts's pointFromQuickLog for how that then reads
-// as Pass/Fail). Issue counts stay read-only UNLESS a "Sync from Jira"
-// pulls fresh ones from the linked ticket -- this is the one modal both the
-// Test Runs and Test Cycles listings converge on when you open an existing
-// quick log, so it's also the one place a Jira re-sync needs to live for it
-// to be reachable from either screen.
+// The one modal every screen converges on when editing an existing cycle --
+// Manual quick log or CaseBased test run alike (Test Runs board, Test
+// Cycles listing, and the Dashboard/Stability drilldown's summary-modal
+// Edit button all open this same component, instead of each screen opening
+// a differently-shaped edit form). Name/Description/Environment/Platform/
+// Version/Category/Ticket link are editable either way; the Portal/Module/
+// Feature picker is Manual-only, since a CaseBased cycle's scope is fixed
+// once its runs are generated -- changing it here wouldn't regenerate them
+// (see NewCycleModal's identical note). Issue counts stay read-only unless
+// a "Sync from Jira" pulls fresh ones from the linked ticket.
 export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQuickLogModalProps) {
+  const isManual = (log.mode ?? 'CaseBased') === 'Manual';
+
+  // ── Record fields (Name/Description always editable; the rest of the
+  // location + detail fields below) ──────────────────────────
+  const [name, setName] = useState(log.name);
+  const [description, setDescription] = useState(log.description ?? '');
+  const [environment, setEnvironment] = useState(log.environment ?? '');
+  const [platform, setPlatform] = useState(log.platform ?? '');
+  const [version, setVersion] = useState(log.version ?? '');
+  const [cycleCategory, setCycleCategory] = useState(log.cycleCategory ?? '');
+
+  // Manual-only location picker, seeded from the existing scope once modules
+  // load (mirrors NewCycleModal's own backfill for the same reason: a Suite-
+  // scoped log only carries its own id up front).
+  const [modules, setModules] = useState<ApiModule[]>([]);
+  const [portals, setPortals] = useState<ApiPortal[]>([]);
+  const [portalIdF, setPortalIdF] = useState('');
+  const [moduleIdF, setModuleIdF] = useState('');
+  const [suiteIdF, setSuiteIdF] = useState('');
+  const [portalNameFree, setPortalNameFree] = useState(log.portalName ?? '');
+  const [moduleNameFree, setModuleNameFree] = useState(log.moduleName ?? '');
+  const [featureNameFree, setFeatureNameFree] = useState(log.featureName ?? '');
+
+  useEffect(() => {
+    if (!isManual) return;
+    api
+      .get<ApiModule[]>(projectId ? `/api/modules?projectId=${projectId}` : '/api/modules')
+      .then(setModules)
+      .catch(() => {});
+    if (projectId) {
+      api
+        .get<ApiPortal[]>(`/api/portals?projectId=${projectId}`)
+        .then(setPortals)
+        .catch(() => {});
+    }
+  }, [isManual, projectId]);
+
+  useEffect(() => {
+    if (modules.length === 0 || !log.scopeId) return;
+    if (log.scopeType === 'Suite') {
+      const owner = modules.find(m => m.suites.some(s => s.id === log.scopeId));
+      if (owner) {
+        setSuiteIdF(log.scopeId);
+        setModuleIdF(owner.id);
+        setPortalIdF(owner.portalId);
+      }
+    } else if (log.scopeType === 'Module') {
+      const m = modules.find(mm => mm.id === log.scopeId);
+      if (m) {
+        setModuleIdF(log.scopeId);
+        setPortalIdF(m.portalId);
+      }
+    } else if (log.scopeType === 'Portal') {
+      setPortalIdF(log.scopeId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modules]);
+
+  const visibleModules = portalIdF ? modules.filter(m => m.portalId === portalIdF) : modules;
+  const visibleSuites = (() => {
+    if (moduleIdF) {
+      const m = modules.find(mm => mm.id === moduleIdF);
+      return m ? m.suites.map(s => ({ ...s, moduleName: m.name })) : [];
+    }
+    const pool = portalIdF ? visibleModules : modules;
+    return pool.flatMap(m => m.suites.map(s => ({ ...s, moduleName: m.name })));
+  })();
+  const derivedScope: { scopeType: CycleScopeType; scopeId: string | null } = suiteIdF
+    ? { scopeType: 'Suite', scopeId: suiteIdF }
+    : moduleIdF
+      ? { scopeType: 'Module', scopeId: moduleIdF }
+      : portalIdF
+        ? { scopeType: 'Portal', scopeId: portalIdF }
+        : { scopeType: 'All', scopeId: null };
+
+  // ── Issue-resolution tracking (unchanged for either mode) ───
   const wasTracked = (log.doneCount ?? 0) > 0 || (log.remainingCount ?? 0) > 0;
   const [done, setDone] = useState(wasTracked ? (log.doneCount ?? 0) : 0);
   const [issueCount, setIssueCount] = useState(log.issueCount ?? 0);
   const [critical, setCritical] = useState(log.criticalCount ?? 0);
   const [major, setMajor] = useState(log.majorCount ?? 0);
   const [minor, setMinor] = useState(log.minorCount ?? 0);
+  const [ticketLink, setTicketLink] = useState(log.ticketLink ?? '');
   const [jiraStatus, setJiraStatus] = useState(log.jiraStatus ?? '');
   const [jiraSyncedAt, setJiraSyncedAt] = useState(log.jiraSyncedAt ?? '');
+  const [jiraSiteUrl, setJiraSiteUrl] = useState(log.jiraSiteUrl ?? '');
   const [reopenedCount, setReopenedCount] = useState(log.reopenedCount ?? 0);
+  const [jiraSubIssues, setJiraSubIssues] = useState<JiraSubIssueInfo[]>([]);
   const [synced, setSynced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
 
-  const [jiraConnected, setJiraConnected] = useState(false);
+  const siteUrl = useJiraSiteUrl(projectId);
+  const jiraConnected = siteUrl !== null;
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState('');
 
-  useEffect(() => {
-    if (!projectId) return;
-    let cancelled = false;
-    api
-      .get<{ connected: boolean }>(`/api/projects/${projectId}/integrations/jira`)
-      .then(s => !cancelled && setJiraConnected(s.connected))
-      .catch(() => !cancelled && setJiraConnected(false));
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
-
   const syncFromJira = async () => {
-    if (!projectId || !log.ticketLink) return;
+    if (!projectId || !ticketLink.trim()) return;
     setSyncError('');
     setSyncing(true);
     try {
@@ -395,15 +473,19 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
         doneCount: number;
         remainingCount: number;
         reopenedCount: number;
-      }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: log.ticketLink });
+        siteUrl: string;
+        subIssues: JiraSubIssueInfo[];
+      }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: ticketLink.trim() });
       setJiraStatus(result.status);
       setJiraSyncedAt(new Date().toISOString());
+      setJiraSiteUrl(result.siteUrl);
       setIssueCount(result.issueCount);
       setCritical(result.criticalCount);
       setMajor(result.majorCount);
       setMinor(result.minorCount);
       setDone(result.doneCount);
       setReopenedCount(result.reopenedCount);
+      setJiraSubIssues(result.subIssues);
       setSynced(true);
     } catch (e) {
       setSyncError((e as Error).message);
@@ -414,8 +496,9 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
 
   const remaining = Math.max(0, issueCount - done);
   const percent = issueCount === 0 ? 0 : Math.round((done / issueCount) * 100);
-  const code = `QL-${log.id.slice(-4).toUpperCase()}`;
-  const scopePath = [log.moduleName, log.featureName].filter(Boolean).join(' → ') || 'Unscoped';
+  const code = `${isManual ? 'QL' : 'C'}-${log.id.slice(-4).toUpperCase()}`;
+  const scopePath =
+    [log.portalName, log.moduleName, log.featureName].filter(Boolean).join(' › ') || 'Unscoped';
 
   const severities: { label: string; value: number; dot: string; text: string }[] = [
     { label: 'Critical', value: critical, dot: 'bg-danger', text: 'text-danger' },
@@ -424,9 +507,34 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
   ].filter(s => s.value > 0);
 
   const submit = async () => {
+    setError('');
+    if (!name.trim()) {
+      setError('Name is required');
+      return;
+    }
     setSubmitting(true);
     try {
-      const patch: Record<string, unknown> = { doneCount: done, remainingCount: remaining };
+      const patch: Record<string, unknown> = {
+        name: name.trim(),
+        description,
+        environment: environment || null,
+        platform: platform || null,
+        version: version.trim() || null,
+        cycleCategory: cycleCategory || null,
+        ticketLink: ticketLink.trim() || null,
+        doneCount: done,
+        remainingCount: remaining,
+      };
+      // Scope/location reassignment only applies to Manual -- a CaseBased
+      // cycle's scope is fixed once its runs are generated (see this
+      // component's own note above).
+      if (isManual) {
+        patch.scopeType = derivedScope.scopeType;
+        patch.scopeId = derivedScope.scopeId;
+        patch.portalName = portalNameFree || null;
+        patch.moduleName = moduleNameFree || null;
+        patch.featureName = featureNameFree || null;
+      }
       if (synced) {
         patch.issueCount = issueCount;
         patch.criticalCount = critical;
@@ -434,9 +542,13 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
         patch.minorCount = minor;
         patch.jiraStatus = jiraStatus;
         patch.jiraSyncedAt = jiraSyncedAt;
+        patch.jiraSiteUrl = jiraSiteUrl;
         patch.reopenedCount = reopenedCount;
+        patch.jiraSubIssues = jiraSubIssues;
       }
       await onSave(patch);
+    } catch (e) {
+      setError((e as Error).message);
     } finally {
       setSubmitting(false);
     }
@@ -444,25 +556,133 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-[460px] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl">
+      <div className="flex max-h-[92vh] w-full max-w-[540px] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl">
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-[15px] font-semibold text-text">Update {code}</h2>
+          <div className="min-w-0 flex-1">
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="Name"
+              className="w-full truncate bg-transparent text-[15px] font-semibold text-text outline-none focus:underline"
+            />
+            <p className="font-mono text-[10.5px] text-text-3">{code}</p>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-text-3 transition-colors hover:bg-surface-2 hover:text-text"
+            className="flex-shrink-0 rounded p-1 text-text-3 transition-colors hover:bg-surface-2 hover:text-text"
           >
             <i className="ti ti-x text-[16px]" />
           </button>
         </div>
 
         <div className="flex flex-col gap-4 overflow-y-auto px-5 py-4">
+          <Field label="Description">
+            <textarea
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder="What this cycle covers, notes for next time…"
+              rows={2}
+              className={cn(inputCls, 'resize-none')}
+            />
+          </Field>
+
           <div className="rounded-lg border border-border bg-surface-2 px-3.5 py-3">
-            <p className="text-[13.5px] font-semibold text-text">{scopePath}</p>
-            <p className="mt-0.5 text-[11.5px] text-text-3">
+            {isManual ? (
+              <>
+                <p className="mb-1.5 text-[12px] font-medium text-text-2">Where does this apply?</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <select
+                    value={portalIdF}
+                    onChange={e => {
+                      setPortalIdF(e.target.value);
+                      setPortalNameFree(portals.find(p => p.id === e.target.value)?.name ?? '');
+                    }}
+                    className={inputCls}
+                  >
+                    <option value="">No portal</option>
+                    {portals.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={moduleIdF}
+                    onChange={e => {
+                      setModuleIdF(e.target.value);
+                      setModuleNameFree(
+                        visibleModules.find(m => m.id === e.target.value)?.name ?? '',
+                      );
+                    }}
+                    disabled={visibleModules.length === 0}
+                    className={inputCls}
+                  >
+                    <option value="">No module</option>
+                    {visibleModules.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={suiteIdF}
+                    onChange={e => {
+                      setSuiteIdF(e.target.value);
+                      setFeatureNameFree(
+                        visibleSuites.find(s => s.id === e.target.value)?.name ?? '',
+                      );
+                    }}
+                    disabled={visibleSuites.length === 0}
+                    className={inputCls}
+                  >
+                    <option value="">No feature</option>
+                    {visibleSuites.map(s => (
+                      <option key={s.id} value={s.id}>
+                        {moduleIdF ? s.name : `${s.moduleName} — ${s.name}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : (
+              <p className="text-[13.5px] font-semibold text-text">{scopePath}</p>
+            )}
+            <p className="mt-2 text-[11.5px] text-text-3">
+              {localDateStr(new Date(log.createdAt))} · logged by {log.loggedBy || 'Unattributed'}
+            </p>
+
+            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border pt-3">
+              <SelectWithCustom
+                value={environment}
+                onChange={setEnvironment}
+                options={ENVIRONMENTS}
+                placeholder="Environment"
+              />
+              <SelectWithCustom
+                value={platform}
+                onChange={setPlatform}
+                options={PLATFORMS}
+                placeholder="Platform"
+              />
+              <SelectWithCustom
+                value={version}
+                onChange={setVersion}
+                options={[]}
+                placeholder="Version, e.g. v3.8.0"
+              />
+              <SelectWithCustom
+                value={cycleCategory}
+                onChange={setCycleCategory}
+                options={CATEGORIES}
+                placeholder="Category"
+              />
+            </div>
+
+            <p className="mt-3 text-[11.5px] text-text-3">
               {issueCount} issue{issueCount === 1 ? '' : 's'}{' '}
-              {synced ? 'found' : 'originally found'} · logged{' '}
-              {localDateStr(new Date(log.createdAt))} by {log.loggedBy || 'Unattributed'}
+              {synced ? 'found' : 'originally found'}
             </p>
             {severities.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-2">
@@ -482,41 +702,48 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
             )}
           </div>
 
-          {log.ticketLink && (
-            <div className="rounded-lg border border-border bg-surface-2 px-3.5 py-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-text-2">
-                  <i className="ti ti-brand-jira flex-shrink-0 text-[13px] text-text-3" />
-                  <span className="truncate font-mono">
-                    {log.ticketLink.replace(/^https?:\/\//, '')}
-                  </span>
-                </span>
-                {jiraConnected && (
-                  <button
-                    type="button"
-                    disabled={syncing}
-                    onClick={syncFromJira}
-                    className="flex-shrink-0 whitespace-nowrap rounded-[7px] border border-border bg-surface px-2.5 py-1 text-[11.5px] font-medium text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {syncing ? (
-                      <i className="ti ti-loader-2 animate-spin text-[12px]" />
-                    ) : (
-                      'Sync from Jira'
-                    )}
-                  </button>
-                )}
-              </div>
-              {syncError && (
-                <p className="mt-1.5 text-[11px] font-medium text-danger">{syncError}</p>
-              )}
-              {jiraStatus && (
-                <p className="mt-1.5 text-[11px] text-text-3">
-                  Jira status: <span className="font-medium text-text-2">{jiraStatus}</span>
-                  {jiraSyncedAt && ` · synced ${new Date(jiraSyncedAt).toLocaleString()}`}
-                </p>
+          <Field label="Ticket link">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={ticketLink}
+                onChange={e => setTicketLink(e.target.value)}
+                placeholder="NPD-10656 or full URL"
+                className={cn(inputCls, 'flex-1')}
+              />
+              {jiraConnected && (
+                <button
+                  type="button"
+                  disabled={!ticketLink.trim() || syncing}
+                  onClick={syncFromJira}
+                  className="flex-shrink-0 whitespace-nowrap rounded-[7px] border border-border bg-surface px-2.5 py-2 text-[11.5px] font-medium text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {syncing ? (
+                    <i className="ti ti-loader-2 animate-spin text-[12px]" />
+                  ) : (
+                    'Sync from Jira'
+                  )}
+                </button>
               )}
             </div>
-          )}
+            {ticketLink.trim() && (
+              <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-text-3">
+                <i className="ti ti-brand-jira flex-shrink-0 text-[13px]" />
+                <JiraTicketLink
+                  ticketLink={ticketLink.trim()}
+                  siteUrl={jiraSiteUrl || siteUrl}
+                  className="truncate font-mono"
+                />
+              </p>
+            )}
+            {syncError && <p className="mt-1.5 text-[11px] font-medium text-danger">{syncError}</p>}
+            {jiraStatus && (
+              <p className="mt-1.5 text-[11px] text-text-3">
+                Jira status: <span className="font-medium text-text-2">{jiraStatus}</span>
+                {jiraSyncedAt && ` · synced ${new Date(jiraSyncedAt).toLocaleString()}`}
+              </p>
+            )}
+          </Field>
 
           <p className="text-[12px] text-text-3">
             Editing this is the retest — nothing new gets created, Done/Remaining just move.
@@ -589,6 +816,8 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
               Reset Progress
             </button>
           </div>
+
+          {error && <p className="text-[12px] text-danger">{error}</p>}
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">

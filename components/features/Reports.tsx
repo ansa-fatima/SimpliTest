@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/client';
 import { avatarColour, cn, initials, relativeTime, severityBadge } from '@/lib/utils';
+import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
+import { CycleInfoModal } from './CycleInfoModal';
 import { Portal, RunResult, Severity } from '@/types';
 
 interface ReportsProps {
@@ -493,7 +495,6 @@ export function Reports({
                 <CycleHistoryReport
                   projectId={projectId}
                   filters={filters}
-                  onOpenCycle={onOpenCycle}
                   onCsvReady={fn => {
                     csvHandlerRef.current = fn;
                   }}
@@ -1293,6 +1294,7 @@ interface CycleHistoryRow {
   moduleName: string | null;
   scopeName: string | null;
   version: string | null;
+  environment: string | null;
   tester: string;
   date: string;
   issueCount: number;
@@ -1301,7 +1303,7 @@ interface CycleHistoryRow {
   minorCount: number;
   doneCount: number;
   remainingCount: number;
-  /** null = not applicable (case-based cycles have no Jira-synced aggregate). */
+  /** null = not applicable (an unsynced case-based cycle's breakdown comes from runs[]). */
   reopenedCount: number | null;
 }
 interface CycleHistoryPayload {
@@ -1312,22 +1314,23 @@ interface CycleHistoryPayload {
     quickLogCount: number;
     testRunCount: number;
   };
-  cyclesPerModule: { name: string; count: number }[];
 }
+
+type CycleHistoryModeFilter = 'all' | 'CaseBased' | 'Manual';
 
 function CycleHistoryReport({
   projectId,
   filters,
-  onOpenCycle,
   onCsvReady,
 }: {
   projectId: string | null;
   filters: Filters;
-  onOpenCycle?: (cycleId: string) => void;
   onCsvReady: (fn: () => void) => void;
 }) {
   const [data, setData] = useState<CycleHistoryPayload | null>(null);
   const [loading, setLoading] = useState(false);
+  const [modeFilter, setModeFilter] = useState<CycleHistoryModeFilter>('all');
+  const [viewingCycleId, setViewingCycleId] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -1364,6 +1367,10 @@ function CycleHistoryReport({
       .filter((v, i, arr): v is string => !!v && arr.indexOf(v) === i)
       .join(' › ');
 
+  const visibleCycles = (data?.cycles ?? []).filter(
+    c => modeFilter === 'all' || c.mode === modeFilter,
+  );
+
   const onCsv = () => {
     if (!data) return;
     const rows: (string | number)[][] = [
@@ -1372,28 +1379,32 @@ function CycleHistoryReport({
         'Date',
         'Portal-Module-Feature',
         'Version',
+        'Environment',
         'Total Issues',
         'Critical',
         'Major',
         'Minor',
         'Done',
         'Remaining',
+        'Progress %',
         'Reopened',
         'Tester',
       ],
     ];
-    for (const c of data.cycles) {
+    for (const c of visibleCycles) {
       rows.push([
         c.name,
         new Date(c.date).toLocaleDateString('en-GB'),
         scopePath(c),
         c.version ?? '',
+        c.environment ?? '',
         c.issueCount,
         c.criticalCount,
         c.majorCount,
         c.minorCount,
         c.doneCount,
         c.remainingCount,
+        c.issueCount === 0 ? 0 : Math.round((c.doneCount / c.issueCount) * 100),
         c.reopenedCount ?? '',
         c.tester || 'Unattributed',
       ]);
@@ -1401,78 +1412,85 @@ function CycleHistoryReport({
     downloadCsv('cycle-history.csv', rows);
   };
 
-  const maxModuleCount = data?.cyclesPerModule[0]?.count ?? 1;
-
   useEffect(() => {
     onCsvReady(onCsv);
   });
 
+  const allCount = data?.cycles.length ?? 0;
+  const testRunCount = data?.totals.testRunCount ?? 0;
+  const quickLogCount = data?.totals.quickLogCount ?? 0;
+
   return (
     <div>
+      <div className="mb-3 flex items-center gap-4 border-b border-border">
+        {[
+          { key: 'all' as const, label: 'All', count: allCount },
+          { key: 'CaseBased' as const, label: 'Test Runs', count: testRunCount },
+          { key: 'Manual' as const, label: 'Quick Logs', count: quickLogCount },
+        ].map(t => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setModeFilter(t.key)}
+            className={cn(
+              'relative inline-flex items-center gap-1.5 px-1 pb-2.5 text-[13.5px] font-medium transition-colors',
+              modeFilter === t.key ? 'text-text' : 'text-text-3 hover:text-text-2',
+            )}
+          >
+            {t.label}
+            <span
+              className={cn(
+                'rounded-full px-1.5 py-px text-[10.5px]',
+                modeFilter === t.key
+                  ? 'bg-primary-light text-primary-text'
+                  : 'bg-surface-2 text-text-3',
+              )}
+            >
+              {t.count}
+            </span>
+            {modeFilter === t.key && (
+              <span className="absolute inset-x-0 bottom-0 h-[2px] rounded-full bg-primary" />
+            )}
+          </button>
+        ))}
+      </div>
+
       {loading && !data ? (
         <div className="rounded-lg border border-border bg-surface p-8 text-center text-text-3">
           Loading…
         </div>
-      ) : !data || data.cycles.length === 0 ? (
+      ) : visibleCycles.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-surface p-8 text-center text-text-3">
           No cycles match these filters.
         </div>
       ) : (
-        <div className="grid grid-cols-[220px_1fr] gap-3">
-          <div className="rounded-lg border border-border bg-surface p-3">
-            <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-text-3">
-              Cycles per module
-            </div>
-            <div className="flex flex-col gap-1.5">
-              {data.cyclesPerModule.slice(0, 10).map(m => (
-                <div
-                  key={m.name}
-                  className="grid grid-cols-[1fr_auto] items-center gap-2 text-[11px]"
-                >
-                  <div className="min-w-0">
-                    <div className="truncate text-text-2" title={m.name}>
-                      {m.name}
-                    </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
-                      <div
-                        className="h-full rounded-full bg-primary"
-                        style={{ width: `${Math.round((m.count / maxModuleCount) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                  <span className="tabular-nums text-text-3">{m.count}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-            <table className="w-full border-collapse text-[12px]">
-              <thead className="bg-surface-2">
-                <tr>
-                  <Th>Cycle</Th>
-                  <Th>Date</Th>
-                  <Th>Portal-Module-Feature</Th>
-                  <Th>Version</Th>
-                  <Th align="right">Total Issues</Th>
-                  <Th align="right">Critical</Th>
-                  <Th align="right">Major</Th>
-                  <Th align="right">Minor</Th>
-                  <Th align="right">Done</Th>
-                  <Th align="right">Remaining</Th>
-                  <Th align="right">Reopened</Th>
-                  <Th>Tester</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.cycles.map(c => (
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+          <table className="w-full border-collapse text-[12px]">
+            <thead className="bg-surface-2">
+              <tr>
+                <Th>Cycle</Th>
+                <Th>Date</Th>
+                <Th>Portal-Module-Feature</Th>
+                <Th>Version</Th>
+                <Th>Environment</Th>
+                <Th align="right">Total Issues</Th>
+                <Th align="right">Critical</Th>
+                <Th align="right">Major</Th>
+                <Th align="right">Minor</Th>
+                <Th>Progress</Th>
+                <Th align="right">Reopened</Th>
+                <Th>Tester</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleCycles.map(c => {
+                const percent =
+                  c.issueCount === 0 ? 0 : Math.round((c.doneCount / c.issueCount) * 100);
+                return (
                   <tr
                     key={c.id}
-                    onClick={() => c.mode === 'CaseBased' && onOpenCycle?.(c.id)}
-                    className={cn(
-                      'border-b border-border last:border-b-0',
-                      c.mode === 'CaseBased' && 'cursor-pointer hover:bg-surface-2',
-                    )}
+                    onClick={() => setViewingCycleId(c.id)}
+                    className="cursor-pointer border-b border-border last:border-b-0 hover:bg-surface-2"
                   >
                     <td
                       className="max-w-[220px] truncate px-3 py-2 font-medium text-text"
@@ -1489,6 +1507,9 @@ function CycleHistoryReport({
                     <td className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-text-2">
                       {c.version || <span className="text-text-3">—</span>}
                     </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-text-2">
+                      {c.environment || <span className="text-text-3">—</span>}
+                    </td>
                     <td className="px-3 py-2 text-right tabular-nums text-text">
                       {c.issueCount || <span className="text-text-3">—</span>}
                     </td>
@@ -1501,11 +1522,23 @@ function CycleHistoryReport({
                     <td className="px-3 py-2 text-right tabular-nums text-text-2">
                       {c.minorCount || <span className="text-text-3">—</span>}
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-success">
-                      {c.doneCount || <span className="text-text-3">—</span>}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-danger">
-                      {c.remainingCount || <span className="text-text-3">—</span>}
+                    <td className="px-3 py-2">
+                      {c.issueCount === 0 ? (
+                        <span className="text-text-3">—</span>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div className="h-1.5 w-16 flex-shrink-0 overflow-hidden rounded-full bg-surface-3">
+                            <div
+                              className={cn(
+                                'h-full rounded-full',
+                                percent === 100 ? 'bg-success' : 'bg-primary',
+                              )}
+                              style={{ width: `${percent}%` }}
+                            />
+                          </div>
+                          <span className="tabular-nums text-text-2">{percent}%</span>
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-warning">
                       {c.reopenedCount === null ? (
@@ -1518,11 +1551,19 @@ function CycleHistoryReport({
                       {c.tester || <span className="text-text-3">Unattributed</span>}
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
+      )}
+
+      {viewingCycleId && (
+        <CycleInfoModal
+          cycleId={viewingCycleId}
+          projectId={projectId}
+          onClose={() => setViewingCycleId(null)}
+        />
       )}
     </div>
   );
@@ -1546,8 +1587,113 @@ interface RecurringCaseRow {
   ownerName: string | null;
   cycles: RecurringCaseCycle[];
 }
+interface JiraIssueCycleRef {
+  id: string;
+  name: string;
+  ts: string;
+}
+interface JiraIssueRow {
+  issueKey: string;
+  title: string;
+  severity: Severity;
+  status: string;
+  siteUrl: string | null;
+  cycles: JiraIssueCycleRef[];
+  cycleCount: number;
+  reopenedCount: number;
+  lastSeen: string;
+}
 interface RecurringIssuesPayload {
   cases: RecurringCaseRow[];
+  jiraReopened: JiraIssueRow[];
+}
+
+type RecurringTopTab = 'recurring' | 'reopened';
+
+function SourcePill({ source }: { source: 'case' | 'jira' }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium',
+        source === 'jira' ? 'bg-blue-100 text-blue-800' : 'bg-surface-3 text-text-2',
+      )}
+    >
+      {source === 'jira' ? 'Jira' : 'Test Case'}
+    </span>
+  );
+}
+
+function ReopenedBadge({ count }: { count: number }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-800">
+      Reopened {count}×
+    </span>
+  );
+}
+
+function JiraIssueRowView({
+  issue,
+  siteUrl,
+  occurrenceLabel,
+  onOpenCycle,
+}: {
+  issue: JiraIssueRow;
+  siteUrl: string | null;
+  occurrenceLabel: string;
+  onOpenCycle?: (cycleId: string) => void;
+}) {
+  const resolvedSiteUrl = issue.siteUrl ?? siteUrl;
+  return (
+    <div className="px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <SourcePill source="jira" />
+            <span className="inline-flex items-center gap-1">
+              <JiraTicketLink
+                ticketLink={issue.issueKey}
+                siteUrl={resolvedSiteUrl}
+                className="font-mono text-[10.5px] text-text-3"
+              />
+              {resolvedSiteUrl && <i className="ti ti-external-link text-[10px] text-text-3" />}
+            </span>
+            <span
+              className={cn(
+                'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium',
+                severityBadge(issue.severity),
+              )}
+            >
+              {issue.severity}
+            </span>
+            {issue.reopenedCount > 0 && <ReopenedBadge count={issue.reopenedCount} />}
+          </div>
+          <p className="mt-0.5 text-[13px] font-medium text-text">{issue.title}</p>
+          <p className="text-[11.5px] text-text-3">
+            {issue.status} · last synced {relativeTime(issue.lastSeen)}
+          </p>
+        </div>
+        <span className="flex-shrink-0 text-[11px] font-medium text-danger">{occurrenceLabel}</span>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <span className="text-[10.5px] uppercase tracking-wide text-text-3">Synced in</span>
+        {issue.cycles.map(cy => (
+          <button
+            key={cy.id}
+            type="button"
+            disabled={!onOpenCycle}
+            onClick={() => onOpenCycle?.(cy.id)}
+            title={relativeTime(cy.ts)}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[11px] text-text-2 transition-colors',
+              onOpenCycle && 'cursor-pointer hover:border-primary hover:text-primary-text',
+            )}
+          >
+            {cy.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function RecurringIssuesReport({
@@ -1563,6 +1709,8 @@ function RecurringIssuesReport({
 }) {
   const [data, setData] = useState<RecurringIssuesPayload | null>(null);
   const [loading, setLoading] = useState(false);
+  const [topTab, setTopTab] = useState<RecurringTopTab>('recurring');
+  const workspaceSiteUrl = useJiraSiteUrl(projectId);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -1591,12 +1739,29 @@ function RecurringIssuesReport({
     filters.sprintOffset,
   ]);
 
+  // Recurring is test-case-only; Jira only feeds the separate Reopened
+  // signal (see the route) — the two never mix into one list.
+  const recurringCases = data?.cases ?? [];
+  const reopenedJira = data?.jiraReopened ?? [];
+
+  const recurringCount = data?.cases.length ?? 0;
+  const reopenedCount = data?.jiraReopened.length ?? 0;
+  const visibleCount = topTab === 'recurring' ? recurringCases.length : reopenedJira.length;
+
   const onCsv = () => {
     if (!data) return;
+    if (topTab === 'reopened') {
+      const rows: (string | number)[][] = [['Issue', 'Title', 'Status', 'Reopened', 'Last synced']];
+      for (const j of data.jiraReopened) {
+        rows.push([j.issueKey, j.title, j.status, j.reopenedCount, relativeTime(j.lastSeen)]);
+      }
+      downloadCsv('reopened-issues.csv', rows);
+      return;
+    }
     const rows: (string | number)[][] = [
       ['Case', 'Module → Suite', 'Severity', 'Owner', 'Recurred in'],
     ];
-    for (const c of data.cases) {
+    for (const c of recurringCases) {
       rows.push([
         `TC-${String(c.caseNum).padStart(4, '0')} ${c.title}`,
         c.scopePath,
@@ -1614,78 +1779,125 @@ function RecurringIssuesReport({
 
   return (
     <div>
+      <div className="mt-2 flex items-center gap-4 border-b border-border">
+        {[
+          { key: 'recurring' as const, label: 'Recurring', count: recurringCount },
+          { key: 'reopened' as const, label: 'Reopened', count: reopenedCount },
+        ].map(t => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTopTab(t.key)}
+            className={cn(
+              'relative inline-flex items-center gap-1.5 px-1 pb-2.5 text-[13.5px] font-medium transition-colors',
+              topTab === t.key ? 'text-text' : 'text-text-3 hover:text-text-2',
+            )}
+          >
+            {t.label}
+            <span
+              className={cn(
+                'rounded-full px-1.5 py-px text-[10.5px]',
+                topTab === t.key
+                  ? 'bg-primary-light text-primary-text'
+                  : 'bg-surface-2 text-text-3',
+              )}
+            >
+              {t.count}
+            </span>
+            {topTab === t.key && (
+              <span className="absolute inset-x-0 bottom-0 h-[2px] rounded-full bg-primary" />
+            )}
+          </button>
+        ))}
+      </div>
+
       {loading && !data ? (
         <div className="mt-2 rounded-lg border border-border bg-surface p-8 text-center text-text-3">
           Loading…
         </div>
-      ) : !data || data.cases.length === 0 ? (
+      ) : visibleCount === 0 ? (
         <div className="mt-2 rounded-lg border border-dashed border-border bg-surface p-8 text-center text-text-3">
-          No test case keeps failing across separate cycles right now.
+          {topTab === 'recurring'
+            ? 'No test case keeps failing across separate cycles right now.'
+            : 'No synced Jira ticket is currently reopened.'}
         </div>
       ) : (
         <div className="mt-2 rounded-lg border border-border bg-surface">
           <div className="border-b border-border px-4 py-3">
             <p className="text-[11.5px] text-text-3">
-              {data.cases.length} case{data.cases.length === 1 ? '' : 's'} · worst offenders first
+              {visibleCount} {topTab === 'recurring' ? 'issue' : 'ticket'}
+              {visibleCount === 1 ? '' : 's'} · worst offenders first
             </p>
           </div>
           <div className="divide-y divide-border">
-            {data.cases.map(c => (
-              <div key={c.id} className="px-4 py-3">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-mono text-[10.5px] text-text-3">
-                        TC-{String(c.caseNum).padStart(4, '0')}
-                      </span>
-                      <span
+            {topTab === 'recurring' &&
+              recurringCases.map(c => (
+                <div key={`case-${c.id}`} className="px-4 py-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-mono text-[10.5px] text-text-3">
+                          TC-{String(c.caseNum).padStart(4, '0')}
+                        </span>
+                        <span
+                          className={cn(
+                            'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium',
+                            severityBadge(c.severity),
+                          )}
+                        >
+                          {c.severity}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[13px] font-medium text-text">{c.title}</p>
+                      <p className="text-[11.5px] text-text-3">
+                        {c.scopePath}
+                        {c.ownerName && ` · ${c.ownerName}`}
+                      </p>
+                    </div>
+                    <span className="flex-shrink-0 text-[11px] font-medium text-danger">
+                      Failed in {c.cycles.length} cycles
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10.5px] uppercase tracking-wide text-text-3">
+                      Recurred in
+                    </span>
+                    {c.cycles.map(cy => (
+                      <button
+                        key={cy.id}
+                        type="button"
+                        disabled={!onOpenCycle}
+                        onClick={() => onOpenCycle?.(cy.id)}
+                        title={`${cy.result} · ${relativeTime(cy.ts)}`}
                         className={cn(
-                          'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium',
-                          severityBadge(c.severity),
+                          'inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[11px] text-text-2 transition-colors',
+                          onOpenCycle &&
+                            'cursor-pointer hover:border-primary hover:text-primary-text',
                         )}
                       >
-                        {c.severity}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 text-[13px] font-medium text-text">{c.title}</p>
-                    <p className="text-[11.5px] text-text-3">
-                      {c.scopePath}
-                      {c.ownerName && ` · ${c.ownerName}`}
-                    </p>
+                        <span
+                          className={cn(
+                            'h-1.5 w-1.5 flex-shrink-0 rounded-full',
+                            cy.result === 'Failed' ? 'bg-danger' : 'bg-warning',
+                          )}
+                        />
+                        {cy.name}
+                      </button>
+                    ))}
                   </div>
-                  <span className="flex-shrink-0 text-[11px] font-medium text-danger">
-                    {c.cycles.length}x
-                  </span>
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <span className="text-[10.5px] uppercase tracking-wide text-text-3">
-                    Recurred in
-                  </span>
-                  {c.cycles.map(cy => (
-                    <button
-                      key={cy.id}
-                      type="button"
-                      disabled={!onOpenCycle}
-                      onClick={() => onOpenCycle?.(cy.id)}
-                      title={`${cy.result} · ${relativeTime(cy.ts)}`}
-                      className={cn(
-                        'inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[11px] text-text-2 transition-colors',
-                        onOpenCycle &&
-                          'cursor-pointer hover:border-primary hover:text-primary-text',
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          'h-1.5 w-1.5 flex-shrink-0 rounded-full',
-                          cy.result === 'Failed' ? 'bg-danger' : 'bg-warning',
-                        )}
-                      />
-                      {cy.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
+              ))}
+
+            {topTab === 'reopened' &&
+              reopenedJira.map(j => (
+                <JiraIssueRowView
+                  key={`jira-${j.issueKey}`}
+                  issue={j}
+                  siteUrl={workspaceSiteUrl}
+                  occurrenceLabel={`Synced in ${j.cycleCount} ${j.cycleCount === 1 ? 'cycle' : 'cycles'}`}
+                  onOpenCycle={onOpenCycle}
+                />
+              ))}
           </div>
         </div>
       )}

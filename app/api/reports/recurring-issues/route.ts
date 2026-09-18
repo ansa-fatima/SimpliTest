@@ -9,10 +9,13 @@ export const dynamic = 'force-dynamic';
 // GET /api/reports/recurring-issues
 //   ?projectId=&portalId=&moduleId=&suiteId=&version=&tester=&period=&sprintOffset=
 //
-// Test cases that have Failed/Blocked in 2+ distinct cycles, each with the
-// actual cycles it recurred in (same "2+ distinct cycles" rule as
-// lib/recurringIssues.ts, computed fresh here for a workspace-wide,
-// unlimited list instead of that helper's top-N).
+// Two independent signals:
+//  - `cases`: test cases that have Failed/Blocked in 2+ distinct cycles, each
+//    with the actual cycles it recurred in (same "2+ distinct cycles" rule as
+//    lib/recurringIssues.ts, computed fresh here for a workspace-wide,
+//    unlimited list instead of that helper's top-N). This is Recurring.
+//  - `jiraReopened`: synced Jira sub-issues currently showing a Reopened
+//    status. Jira-only, unrelated to the cases list above.
 
 interface CaseCycle {
   id: string;
@@ -31,6 +34,23 @@ interface CaseRow {
   scopePath: string;
   ownerName: string | null;
   cycles: CaseCycle[];
+}
+
+interface JiraIssueCycle {
+  id: string;
+  name: string;
+  ts: string;
+}
+interface JiraIssueRow {
+  issueKey: string;
+  title: string;
+  severity: string;
+  status: string;
+  siteUrl: string | null;
+  cycles: JiraIssueCycle[];
+  cycleCount: number;
+  reopenedCount: number;
+  lastSeen: string;
 }
 
 function caseModuleName(tc: {
@@ -155,7 +175,87 @@ export async function GET(req: Request) {
       })
       .sort((a, b) => b.cycles.length - a.cycles.length);
 
-    return ok({ cases });
+    // ── Jira-sourced signals ─────────────────────────────────────────────
+    // Workspace-wide, from the JiraSubIssue snapshot table (one row per
+    // cycle x sub-issue, replaced on every re-sync -- see JiraSyncPanel /
+    // the cycles PATCH route). Not scoped by portal/module/version/tester:
+    // a sub-issue only carries its parent cycle's id, and the user chose
+    // "workspace-wide" for this detection rather than per-module scoping.
+    const subIssueRows = projectId
+      ? await prisma.jiraSubIssue.findMany({
+          where: { projectId },
+          orderBy: { syncedAt: 'desc' },
+          select: {
+            issueKey: true,
+            title: true,
+            severity: true,
+            status: true,
+            isReopened: true,
+            syncedAt: true,
+            cycleId: true,
+            cycle: { select: { name: true, jiraSiteUrl: true } },
+          },
+        })
+      : [];
+
+    const byIssue = new Map<
+      string,
+      {
+        issueKey: string;
+        title: string;
+        severity: string;
+        status: string;
+        siteUrl: string | null;
+        cycles: Map<string, JiraIssueCycle>;
+        reopenedCount: number;
+        lastSeen: Date;
+      }
+    >();
+    for (const s of subIssueRows) {
+      const entry = byIssue.get(s.issueKey) ?? {
+        issueKey: s.issueKey,
+        title: s.title ?? s.issueKey,
+        severity: s.severity,
+        status: s.status,
+        siteUrl: s.cycle.jiraSiteUrl,
+        cycles: new Map<string, JiraIssueCycle>(),
+        reopenedCount: 0,
+        lastSeen: s.syncedAt,
+      };
+      // Rows arrive newest-first (orderBy syncedAt desc), so the first time
+      // we see an issueKey it's already carrying the latest title/severity/
+      // status/siteUrl -- only cycles/reopenedCount accumulate below.
+      entry.cycles.set(s.cycleId, {
+        id: s.cycleId,
+        name: s.cycle.name,
+        ts: s.syncedAt.toISOString(),
+      });
+      if (s.isReopened) entry.reopenedCount++;
+      byIssue.set(s.issueKey, entry);
+    }
+
+    const allJiraIssues = Array.from(byIssue.values()).map(v => ({
+      issueKey: v.issueKey,
+      title: v.title,
+      severity: v.severity,
+      status: v.status,
+      siteUrl: v.siteUrl,
+      cycles: Array.from(v.cycles.values()).sort(
+        (a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime(),
+      ),
+      cycleCount: v.cycles.size,
+      reopenedCount: v.reopenedCount,
+      lastSeen: v.lastSeen.toISOString(),
+    }));
+
+    // No minimum occurrence threshold -- a ticket reopened even once matters.
+    // Recurring stays test-case-only (the `cases` list above); Jira issues
+    // are only surfaced here for Reopened, not folded into Recurring too.
+    const jiraReopened: JiraIssueRow[] = allJiraIssues
+      .filter(v => v.reopenedCount >= 1)
+      .sort((a, b) => b.reopenedCount - a.reopenedCount);
+
+    return ok({ cases, jiraReopened });
   } catch (e) {
     return serverError(e);
   }

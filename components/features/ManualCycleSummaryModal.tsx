@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { TestCycle } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/utils';
+import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 
 // ─── Manual cycle summary modal ─────────────────────────────
 // Visually mirrors CycleReportModal exactly — same header, count cards, pass-rate /
@@ -17,14 +18,17 @@ import { cn } from '@/lib/utils';
 
 export function ManualCycleSummaryModal({
   cycle,
+  projectId,
   onClose,
   onEdit,
 }: {
   cycle: TestCycle;
+  projectId: string | null;
   onClose: () => void;
   onEdit: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const siteUrl = useJiraSiteUrl(projectId);
 
   // Derived numbers (use 0 when fields are null/undefined).
   const critical = cycle.criticalCount ?? 0;
@@ -136,7 +140,11 @@ export function ManualCycleSummaryModal({
               {cycle.ticketLink && (
                 <>
                   <span>·</span>
-                  <span className="font-mono text-slate-600">{cycle.ticketLink}</span>
+                  <JiraTicketLink
+                    ticketLink={cycle.ticketLink}
+                    siteUrl={cycle.jiraSiteUrl ?? siteUrl}
+                    className="font-mono text-slate-600"
+                  />
                 </>
               )}
               {cycle.jiraStatus && (

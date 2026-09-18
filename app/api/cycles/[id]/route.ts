@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { CycleStatus, CycleScopeType } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
+import { deriveSiteUrlFromTicketLink, withReopenHistory, JiraSubIssueInfo } from '@/lib/jira';
 
 interface Ctx {
   params: { id: string };
@@ -98,6 +99,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
       'cycleCategory',
       'ticketLink',
       'jiraStatus',
+      'jiraSiteUrl',
     ] as const;
     for (const k of stringFields) {
       const v = body[k];
@@ -108,6 +110,15 @@ export async function PATCH(req: Request, { params }: Ctx) {
     // Set by "Sync from Jira" alongside jiraStatus/the count fields above.
     if (body.jiraSyncedAt !== undefined) {
       data.jiraSyncedAt = body.jiraSyncedAt ? new Date(body.jiraSyncedAt as string) : null;
+    }
+
+    // ticketLink being edited directly (not via a sync, which never resends
+    // ticketLink) to a full URL -- derive and cache its site so the link
+    // keeps resolving even if this gets shortened to a bare key later.
+    // An explicit jiraSiteUrl in this same request (an actual sync) wins.
+    if (typeof body.ticketLink === 'string' && body.jiraSiteUrl === undefined) {
+      const derived = deriveSiteUrlFromTicketLink(body.ticketLink.trim());
+      if (derived) data.jiraSiteUrl = derived;
     }
 
     // Numeric counts (clamped to non-negative integers).
@@ -132,9 +143,53 @@ export async function PATCH(req: Request, { params }: Ctx) {
       data[k] = Math.floor(v);
     }
 
-    if (Object.keys(data).length === 0) return bad('nothing to update');
+    // Per-sub-issue snapshot from a fresh "Sync from Jira" -- replaces the
+    // whole set for this cycle (not accumulated) so it always reflects only
+    // the most recent sync. A request with no jiraSubIssues key at all
+    // leaves existing rows untouched, matching every other Jira field above.
+    const subIssues = Array.isArray(body.jiraSubIssues)
+      ? (body.jiraSubIssues as JiraSubIssueInfo[])
+      : undefined;
 
-    const cycle = await prisma.testCycle.update({ where: { id: params.id }, data });
+    if (Object.keys(data).length === 0 && subIssues === undefined) {
+      return bad('nothing to update');
+    }
+
+    const cycle =
+      Object.keys(data).length > 0
+        ? await prisma.testCycle.update({ where: { id: params.id }, data })
+        : await prisma.testCycle.findUnique({ where: { id: params.id } });
+    if (!cycle) return notFound('Cycle not found');
+
+    if (subIssues !== undefined) {
+      // Read the rows this sync is about to replace FIRST -- timesReopened
+      // has to carry forward across the delete+recreate below, or every
+      // re-sync would reset it to 0/1 and a ticket reopened 3-4 times over
+      // its life would never show more than "Reopened 1x".
+      const previous = await prisma.jiraSubIssue.findMany({
+        where: { cycleId: params.id },
+        select: { issueKey: true, isReopened: true, timesReopened: true },
+      });
+      const enriched = withReopenHistory(subIssues, previous);
+
+      await prisma.jiraSubIssue.deleteMany({ where: { cycleId: params.id } });
+      if (enriched.length > 0) {
+        await prisma.jiraSubIssue.createMany({
+          data: enriched.map(s => ({
+            projectId: cycle.projectId,
+            cycleId: params.id,
+            issueKey: s.key,
+            title: s.title,
+            severity: s.severity,
+            status: s.status,
+            isDone: s.isDone,
+            isReopened: s.isReopened,
+            timesReopened: s.timesReopened,
+          })),
+        });
+      }
+    }
+
     return ok(cycle);
   } catch (e) {
     return prismaError(e) ?? serverError(e);

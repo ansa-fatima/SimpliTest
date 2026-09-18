@@ -38,7 +38,10 @@ export async function POST(req: Request, { params }: Ctx) {
         { siteUrl: conn.siteUrl, email: conn.email, apiToken: conn.apiToken },
         ticketLink,
       );
-      return ok(result);
+      // Cache the site this sync used alongside the result -- see
+      // TestCycle.jiraSiteUrl -- so the caller can persist it and keep the
+      // ticket link resolvable even after this connection is later removed.
+      return ok({ ...result, siteUrl: conn.siteUrl });
     } catch (e) {
       if (e instanceof JiraApiError)
         return bad(e.message, e.status && e.status < 500 ? e.status : 400);

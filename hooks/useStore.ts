@@ -137,12 +137,6 @@ export interface AppState {
   // showReports(tab). null means land on the tile picker, same as today.
   reportsInitialTab: 'stability' | 'cycleHistory' | null;
 
-  // Which sidebar item the Execution screen (page 'cycle') was reached from
-  // -- so the sidebar keeps highlighting wherever the user actually came
-  // from instead of always jumping to Test Cycles. Set by openCycle /
-  // openCycleOverview based on the page they were called from.
-  cycleOrigin: 'testRuns' | 'cycles';
-
   // Monotonic counter — bumped on test-case create/edit/delete so any subscribed
   // list (e.g. TestCaseList) refetches from the API.
   dataVersion: number;
@@ -176,7 +170,6 @@ export function useStore() {
     cycleOverviewLoading: false,
     quickLogCycle: null,
     reportsInitialTab: null,
-    cycleOrigin: 'cycles',
     dataVersion: 0,
   });
 
@@ -825,11 +818,6 @@ export function useStore() {
     }
   }, [showToast, state.currentProjectId]);
 
-  const showCycles = useCallback(() => {
-    setState(s => ({ ...s, page: 'cycles' }));
-    loadCycles();
-  }, [loadCycles]);
-
   const showTestRunsBoard = useCallback(() => {
     setState(s => ({ ...s, page: 'testRuns' }));
     loadCycles();
@@ -857,11 +845,6 @@ export function useStore() {
       setState(s => ({
         ...s,
         page: 'cycle',
-        // The board is the only place that should make Execution read as
-        // "Test Runs" in the sidebar — every other entry point (Test
-        // Cycles, Cycle Overview, Dashboard) keeps the prior "Test Cycles"
-        // default.
-        cycleOrigin: s.page === 'testRuns' ? 'testRuns' : 'cycles',
         currentCycle: cycle,
         runs: [],
         summary: null,
@@ -905,7 +888,6 @@ export function useStore() {
       setState(s => ({
         ...s,
         page: 'cycleOverview',
-        cycleOrigin: 'cycles',
         cycleOverview: null,
         cycleOverviewLoading: true,
       }));
@@ -924,14 +906,12 @@ export function useStore() {
     setState(s => ({ ...s, quickLogCycle: null }));
   }, []);
 
-  // Leaves a cycle/overview screen for wherever the user actually came from
-  // -- the Test Runs board if that's what opened it (cycleOrigin), Test
-  // Cycles otherwise. Named for what it does, not a fixed destination, since
-  // that destination now varies.
+  // Leaves a cycle/overview screen back to the Test Runs board -- the only
+  // place either one is reached from now.
   const backFromCycle = useCallback(() => {
     setState(s => ({
       ...s,
-      page: s.cycleOrigin === 'testRuns' ? 'testRuns' : 'cycles',
+      page: 'testRuns',
       currentCycle: null,
       runs: [],
       summary: null,
@@ -959,6 +939,7 @@ export function useStore() {
       ticketLink?: string;
       jiraStatus?: string;
       jiraSyncedAt?: string | null;
+      jiraSiteUrl?: string | null;
       issueCount?: number;
       criticalCount?: number;
       majorCount?: number;
@@ -1178,7 +1159,6 @@ export function useStore() {
     showToast,
     showDashboard,
     showTestCases,
-    showCycles,
     showTestRunsBoard,
     openCycle,
     openCycleOverview,

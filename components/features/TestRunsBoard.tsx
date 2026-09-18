@@ -6,6 +6,7 @@ import { pointFromQuickLog } from '@/lib/stability';
 import { avatarColour, cn, initials, localDateStr } from '@/lib/utils';
 import { NewCycleModal, CycleFormPayload } from './NewCycleModal';
 import { NewQuickLogModal, UpdateQuickLogModal } from './QuickLogModal';
+import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 
 interface TestRunsBoardProps {
   cycles: TestCycle[];
@@ -55,8 +56,11 @@ export function TestRunsBoard({
   const [tab, setTab] = useState<BoardTab>('all');
   const [createRun, setCreateRun] = useState(false);
   const [showQuickLog, setShowQuickLog] = useState(false);
-  const [editingLog, setEditingLog] = useState<TestCycle | null>(null);
-  const [editingRun, setEditingRun] = useState<TestCycle | null>(null);
+  // One edit modal for both quick logs and case-based runs -- see
+  // UpdateQuickLogModal's own note on why this is the single place either
+  // gets edited from, instead of two differently-shaped forms.
+  const [editingCycle, setEditingCycle] = useState<TestCycle | null>(null);
+  const siteUrl = useJiraSiteUrl(projectId);
 
   const caseBased = cycles.filter(
     c => (c.mode ?? 'CaseBased') === 'CaseBased' && c.status !== 'Archived',
@@ -171,7 +175,7 @@ export function TestRunsBoard({
                     key={c.id}
                     cycle={c}
                     onOpen={() => onOpenRun(c.id)}
-                    onEdit={() => setEditingRun(c)}
+                    onEdit={() => setEditingCycle(c)}
                   />
                 ))}
               </div>
@@ -190,7 +194,12 @@ export function TestRunsBoard({
             ) : (
               <div className="flex flex-col gap-2">
                 {quickLogs.map(log => (
-                  <QuickLogRow key={log.id} log={log} onEdit={() => setEditingLog(log)} />
+                  <QuickLogRow
+                    key={log.id}
+                    log={log}
+                    siteUrl={siteUrl}
+                    onEdit={() => setEditingCycle(log)}
+                  />
                 ))}
               </div>
             )}
@@ -223,33 +232,14 @@ export function TestRunsBoard({
         />
       )}
 
-      {editingLog && (
+      {editingCycle && (
         <UpdateQuickLogModal
-          log={editingLog}
+          log={editingCycle}
           projectId={projectId}
-          onClose={() => setEditingLog(null)}
+          onClose={() => setEditingCycle(null)}
           onSave={async patch => {
-            await onUpdate(editingLog.id, patch);
-            setEditingLog(null);
-          }}
-        />
-      )}
-
-      {editingRun && (
-        <NewCycleModal
-          modules={modules}
-          projectId={projectId}
-          initial={editingRun}
-          onClose={() => setEditingRun(null)}
-          onSave={async input => {
-            // Scope/mode aren't editable here — the run's cases were already
-            // generated against the original scope, and changing it here
-            // wouldn't regenerate them, so it'd just leave scope and actual
-            // runs disagreeing. Repopulate (on the card's own cycle) is the
-            // supported way to change what a run covers.
-            const { mode: _mode, scopeType: _scopeType, scopeId: _scopeId, ...patch } = input;
-            await onUpdate(editingRun.id, patch);
-            setEditingRun(null);
+            await onUpdate(editingCycle.id, patch);
+            setEditingCycle(null);
           }}
         />
       )}
@@ -435,7 +425,15 @@ function RunCard({
 
 // ─── Quick Logs list ────────────────────────────────────────
 
-function QuickLogRow({ log, onEdit }: { log: TestCycle; onEdit: () => void }) {
+function QuickLogRow({
+  log,
+  siteUrl,
+  onEdit,
+}: {
+  log: TestCycle;
+  siteUrl: string | null;
+  onEdit: () => void;
+}) {
   const point = pointFromQuickLog({
     id: log.id,
     name: log.name,
@@ -503,7 +501,7 @@ function QuickLogRow({ log, onEdit }: { log: TestCycle; onEdit: () => void }) {
             {log.ticketLink && (
               <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] text-text-2">
                 <i className="ti ti-brand-jira text-[11px] text-text-3" />
-                {log.ticketLink.replace(/^https?:\/\//, '')}
+                <JiraTicketLink ticketLink={log.ticketLink} siteUrl={log.jiraSiteUrl ?? siteUrl} />
               </span>
             )}
           </div>

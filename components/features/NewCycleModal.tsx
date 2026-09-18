@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { CycleScopeType, CycleMode, Module, TestCycle } from '@/types';
 import { api } from '@/lib/client';
 import { cn, localDateStr } from '@/lib/utils';
+import { useJiraSiteUrl } from '@/lib/jiraLink';
+import type { JiraSubIssueInfo } from '@/lib/jira';
 
 interface ApiModule {
   id: string;
@@ -37,6 +39,9 @@ export interface CycleFormPayload {
   ticketLink?: string;
   jiraStatus?: string;
   jiraSyncedAt?: string | null;
+  jiraSiteUrl?: string | null;
+  /** Per-sub-issue snapshot from the last sync, for Recurring/Reopened detection. */
+  jiraSubIssues?: JiraSubIssueInfo[];
   issueCount?: number;
   criticalCount?: number;
   majorCount?: number;
@@ -153,21 +158,16 @@ export function NewCycleModal({
   // "Sync from Jira" below, persisted alongside the counts on save.
   const [jiraStatus, setJiraStatus] = useState(initial?.jiraStatus ?? '');
   const [jiraSyncedAt, setJiraSyncedAt] = useState(initial?.jiraSyncedAt ?? '');
-  const [jiraConnected, setJiraConnected] = useState(false);
+  const [jiraSiteUrl, setJiraSiteUrl] = useState(initial?.jiraSiteUrl ?? '');
+  // Only set by a fresh "Sync from Jira" this session -- not reloaded from
+  // `initial`, since the per-issue snapshot lives in the JiraSubIssue table,
+  // not on TestCycle itself. Editing without re-syncing leaves this empty,
+  // so the save payload omits jiraSubIssues and existing rows are untouched.
+  const [jiraSubIssues, setJiraSubIssues] = useState<JiraSubIssueInfo[]>([]);
+  const siteUrl = useJiraSiteUrl(projectId);
+  const jiraConnected = siteUrl !== null;
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState('');
-
-  useEffect(() => {
-    if (!projectId) return;
-    let cancelled = false;
-    api
-      .get<{ connected: boolean }>(`/api/projects/${projectId}/integrations/jira`)
-      .then(s => !cancelled && setJiraConnected(s.connected))
-      .catch(() => !cancelled && setJiraConnected(false));
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
 
   const syncFromJira = async () => {
     if (!projectId || !ticketLink.trim()) return;
@@ -183,9 +183,13 @@ export function NewCycleModal({
         doneCount: number;
         remainingCount: number;
         reopenedCount: number;
+        siteUrl: string;
+        subIssues: JiraSubIssueInfo[];
       }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: ticketLink.trim() });
       setJiraStatus(result.status);
       setJiraSyncedAt(new Date().toISOString());
+      setJiraSiteUrl(result.siteUrl);
+      setJiraSubIssues(result.subIssues);
       setIssueCount(result.issueCount);
       setCriticalCount(result.criticalCount);
       setMajorCount(result.majorCount);
@@ -432,6 +436,8 @@ export function NewCycleModal({
       payload.ticketLink = ticketLink.trim() || undefined;
       payload.jiraStatus = jiraStatus || undefined;
       payload.jiraSyncedAt = jiraSyncedAt || undefined;
+      payload.jiraSiteUrl = jiraSiteUrl || undefined;
+      if (jiraSubIssues.length > 0) payload.jiraSubIssues = jiraSubIssues;
       payload.issueCount = issueCount;
       payload.criticalCount = criticalCount;
       payload.majorCount = majorCount;

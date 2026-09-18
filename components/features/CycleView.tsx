@@ -5,7 +5,7 @@ import { TestCycle, ApiTestRun, CycleSummary, RunResult, Module } from '@/types'
 import { api } from '@/lib/client';
 import { exportCycleResults } from '@/lib/export';
 import { CycleReportModal } from './CycleReportModal';
-import { NewCycleModal } from './NewCycleModal';
+import { UpdateQuickLogModal } from './QuickLogModal';
 import {
   avatarColour,
   cn,
@@ -18,6 +18,8 @@ import {
   typeDisplay,
 } from '@/lib/utils';
 import { colorClassesOf } from '@/lib/colors';
+import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
+import type { JiraSubIssueInfo } from '@/lib/jira';
 
 interface CycleViewProps {
   cycle: TestCycle;
@@ -117,6 +119,10 @@ export function CycleView({
   // Only a recurring-issue row expands — the chevron there opens its cross-cycle history.
   const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
   const [recurring, setRecurring] = useState<RecurringItem[] | null>(null);
+  // Fetched once here and threaded down to the ticket pill, the Jira sync
+  // panel, and the Summary/Report modals -- one fetch per screen instead of
+  // each display spot re-checking the connection itself.
+  const siteUrl = useJiraSiteUrl(projectId);
 
   // Same "failed here and failed/blocked in 2+ distinct cycles" rule as the
   // Cycle Overview screen -- fetched from the same endpoint so the two
@@ -257,7 +263,10 @@ export function CycleView({
               {cycle.ticketLink && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-2">
                   <i className="ti ti-brand-jira text-[12px] text-text-3" />
-                  {cycle.ticketLink.replace(/^https?:\/\//, '')}
+                  <JiraTicketLink
+                    ticketLink={cycle.ticketLink}
+                    siteUrl={cycle.jiraSiteUrl ?? siteUrl}
+                  />
                 </span>
               )}
             </div>
@@ -366,6 +375,15 @@ export function CycleView({
           </div>
           <SegmentedProgressBar counts={counts} total={total} height={8} />
         </div>
+
+        {cycle.ticketLink && (
+          <JiraSyncPanel
+            cycle={cycle}
+            projectId={projectId}
+            siteUrl={siteUrl}
+            onUpdate={onUpdate}
+          />
+        )}
 
         {/* Module Breakdown */}
         <div className="mb-4 rounded-lg border border-border bg-surface p-4">
@@ -591,25 +609,174 @@ export function CycleView({
         </div>
       </div>
 
-      {showReport && <CycleReportModal cycleId={cycle.id} onClose={() => setShowReport(false)} />}
+      {showReport && (
+        <CycleReportModal
+          cycleId={cycle.id}
+          projectId={projectId}
+          onClose={() => setShowReport(false)}
+        />
+      )}
 
       {showEdit && (
-        <NewCycleModal
-          modules={modules}
+        <UpdateQuickLogModal
+          log={cycle}
           projectId={projectId}
-          initial={cycle}
           onClose={() => setShowEdit(false)}
-          onSave={async input => {
-            // Scope/mode aren't editable here — this run's cases were already
-            // generated against the original scope, and changing it here
-            // wouldn't regenerate them, so it'd just leave scope and actual
-            // runs disagreeing. Repopulate is the supported way to change
-            // what a run covers.
-            const { mode: _mode, scopeType: _scopeType, scopeId: _scopeId, ...patch } = input;
+          onSave={async patch => {
             await onUpdate(cycle.id, patch);
             setShowEdit(false);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+// ─── Jira sync panel ─────────────────────────────────────────
+// Shown whenever this run has a ticket link. "Sync from Jira" pulls the
+// ticket's status and its sub-issues' Critical/Major/Minor and Done/
+// Remaining/Reopened breakdown into this SAME cycle's count columns (see
+// lib/jira.ts) -- the columns normally hold a Manual quick log's manually-
+// entered counts, but nothing stops a case-based run from having its own
+// Jira-synced snapshot alongside the live pass/fail stats above, which stay
+// driven by the actual TestRun rows regardless.
+function JiraSyncPanel({
+  cycle,
+  projectId,
+  siteUrl,
+  onUpdate,
+}: {
+  cycle: TestCycle;
+  projectId: string | null;
+  siteUrl: string | null;
+  onUpdate: (id: string, patch: Record<string, unknown>) => Promise<void>;
+}) {
+  const jiraConnected = siteUrl !== null;
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState('');
+
+  const syncFromJira = async () => {
+    if (!projectId || !cycle.ticketLink) return;
+    setSyncError('');
+    setSyncing(true);
+    try {
+      const result = await api.post<{
+        status: string;
+        issueCount: number;
+        criticalCount: number;
+        majorCount: number;
+        minorCount: number;
+        doneCount: number;
+        remainingCount: number;
+        reopenedCount: number;
+        siteUrl: string;
+        subIssues: JiraSubIssueInfo[];
+      }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: cycle.ticketLink });
+      await onUpdate(cycle.id, {
+        issueCount: result.issueCount,
+        criticalCount: result.criticalCount,
+        majorCount: result.majorCount,
+        minorCount: result.minorCount,
+        doneCount: result.doneCount,
+        remainingCount: result.remainingCount,
+        reopenedCount: result.reopenedCount,
+        jiraStatus: result.status,
+        jiraSyncedAt: new Date().toISOString(),
+        jiraSiteUrl: result.siteUrl,
+        jiraSubIssues: result.subIssues,
+      });
+    } catch (e) {
+      setSyncError((e as Error).message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const issueCount = cycle.issueCount ?? 0;
+  const critical = cycle.criticalCount ?? 0;
+  const major = cycle.majorCount ?? 0;
+  const minor = cycle.minorCount ?? 0;
+  const done = cycle.doneCount ?? 0;
+  const remaining = cycle.remainingCount ?? 0;
+  const reopened = cycle.reopenedCount ?? 0;
+  const synced = !!cycle.jiraSyncedAt;
+  const progress = done + remaining === 0 ? 0 : Math.round((done / (done + remaining)) * 100);
+
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-surface px-5 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[13px] font-medium text-text">
+          <i className="ti ti-brand-jira text-[15px] text-text-3" />
+          <JiraTicketLink
+            ticketLink={cycle.ticketLink!}
+            siteUrl={cycle.jiraSiteUrl ?? siteUrl}
+            className="truncate font-mono text-[12px] text-text-2"
+          />
+        </div>
+        {jiraConnected && (
+          <button
+            type="button"
+            disabled={syncing}
+            onClick={syncFromJira}
+            className="flex-shrink-0 whitespace-nowrap rounded-[7px] border border-border bg-surface px-3 py-1.5 text-[12px] font-medium text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {syncing ? (
+              <i className="ti ti-loader-2 animate-spin text-[13px]" />
+            ) : synced ? (
+              'Re-sync from Jira'
+            ) : (
+              'Sync from Jira'
+            )}
+          </button>
+        )}
+      </div>
+
+      {syncError && <p className="mt-2 text-[11.5px] font-medium text-danger">{syncError}</p>}
+
+      {synced && (
+        <div className="mt-3 border-t border-border pt-3">
+          <p className="mb-2 text-[11px] text-text-3">
+            Jira status: <span className="font-medium text-text-2">{cycle.jiraStatus}</span>
+            {cycle.jiraSyncedAt && ` · synced ${new Date(cycle.jiraSyncedAt).toLocaleString()}`}
+          </p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div>
+              <p className="text-[10.5px] uppercase tracking-wider text-text-3">Total issues</p>
+              <p className="mt-0.5 text-[16px] font-bold tabular-nums text-text">{issueCount}</p>
+            </div>
+            <div>
+              <p className="text-[10.5px] uppercase tracking-wider text-text-3">Severity</p>
+              <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[12px] font-medium">
+                <span className="text-danger">{critical} Critical</span>
+                <span className="text-warning">{major} Major</span>
+                <span className="text-text-2">{minor} Minor</span>
+              </div>
+            </div>
+            <div>
+              <p className="text-[10.5px] uppercase tracking-wider text-text-3">Progress</p>
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="h-1.5 w-16 flex-shrink-0 overflow-hidden rounded-full bg-surface-3">
+                  <span
+                    className={cn(
+                      'block h-full rounded-full',
+                      progress === 100 ? 'bg-success' : 'bg-primary',
+                    )}
+                    style={{ width: `${progress}%` }}
+                  />
+                </span>
+                <span className="flex-shrink-0 text-[12px] tabular-nums text-text-2">
+                  {done}/{done + remaining} done
+                </span>
+              </div>
+            </div>
+            {reopened > 0 && (
+              <div>
+                <p className="text-[10.5px] uppercase tracking-wider text-text-3">Reopened</p>
+                <p className="mt-0.5 text-[16px] font-bold tabular-nums text-warning">{reopened}</p>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

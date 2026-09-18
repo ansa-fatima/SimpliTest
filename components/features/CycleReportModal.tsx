@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/client';
+import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 
 interface CycleCase {
   id: string;
@@ -39,6 +40,7 @@ interface CycleReport {
     version?: string | null;
     cycleCategory?: string | null;
     ticketLink?: string | null;
+    jiraSiteUrl?: string | null;
     moduleName?: string | null;
     featureName?: string | null;
   };
@@ -54,14 +56,16 @@ interface CycleReport {
 
 interface CycleReportModalProps {
   cycleId: string;
+  projectId: string | null;
   onClose: () => void;
 }
 
-export function CycleReportModal({ cycleId, onClose }: CycleReportModalProps) {
+export function CycleReportModal({ cycleId, projectId, onClose }: CycleReportModalProps) {
   const [report, setReport] = useState<CycleReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const siteUrl = useJiraSiteUrl(projectId);
 
   useEffect(() => {
     (async () => {
@@ -160,7 +164,11 @@ export function CycleReportModal({ cycleId, onClose }: CycleReportModalProps) {
                 {report.cycle.ticketLink && (
                   <>
                     <span>·</span>
-                    <span className="font-mono">{report.cycle.ticketLink}</span>
+                    <JiraTicketLink
+                      ticketLink={report.cycle.ticketLink}
+                      siteUrl={report.cycle.jiraSiteUrl ?? siteUrl}
+                      className="font-mono"
+                    />
                   </>
                 )}
               </div>

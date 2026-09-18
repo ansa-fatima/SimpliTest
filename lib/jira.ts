@@ -75,9 +75,25 @@ export function parseIssueKey(ticketLink: string | null | undefined): string | n
   return m ? m[1] : null;
 }
 
+// Derives a Jira site's origin from a full ticket URL someone pasted into
+// ticketLink -- cached onto TestCycle.jiraSiteUrl (see the cycles POST/PATCH
+// routes) so that if they later shorten the field down to just the bare key
+// ("NPD-12167"), the link stays resolvable without ever needing an active
+// JiraConnection or a "Sync from Jira" to have run.
+export function deriveSiteUrlFromTicketLink(ticketLink: string): string | null {
+  if (!/^https?:\/\//i.test(ticketLink)) return null;
+  try {
+    const u = new URL(ticketLink);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return null;
+  }
+}
+
 interface JiraIssueFields {
   status?: { name?: string; statusCategory?: { key?: string } };
   priority?: { name?: string };
+  summary?: string;
   subtasks?: { key: string }[];
   // Custom fields are keyed by id ("customfield_10119"), looked up
   // dynamically per site -- see findSeverityFieldId(). A select-list custom
@@ -161,6 +177,19 @@ function isReopened(statusName: string | undefined): boolean {
   return !!statusName && statusName.toLowerCase().includes('reopen');
 }
 
+// One synced sub-issue -- persisted verbatim into JiraSubIssue (see
+// prisma/schema.prisma) so Recurring/Reopened detection can query across
+// every cycle's last sync without re-hitting Jira. `key` is the CHILD's own
+// issue key (e.g. "NPD-12168"), not the parent ticket's.
+export interface JiraSubIssueInfo {
+  key: string;
+  title: string;
+  severity: Bucket;
+  status: string;
+  isDone: boolean;
+  isReopened: boolean;
+}
+
 export interface JiraSyncResult {
   issueKey: string;
   status: string;
@@ -174,12 +203,13 @@ export interface JiraSyncResult {
   // marked Done (see isReopened) -- a subset of remainingCount, not
   // additional to it, so doneCount + remainingCount still equals issueCount.
   reopenedCount: number;
+  subIssues: JiraSubIssueInfo[];
 }
 
 function tally(
   issueKey: string,
   status: string,
-  children: { fields: JiraIssueFields }[],
+  children: JiraIssueLike[],
   severityFieldId: string | null,
 ): JiraSyncResult {
   let critical = 0;
@@ -188,17 +218,28 @@ function tally(
   let done = 0;
   let remaining = 0;
   let reopened = 0;
+  const subIssues: JiraSubIssueInfo[] = [];
   for (const c of children) {
     const bucket = bucketOf(c.fields, severityFieldId);
     if (bucket === 'Critical') critical++;
     else if (bucket === 'Major') major++;
     else minor++;
-    if (isDone(c.fields.status?.statusCategory?.key)) {
-      done++;
-    } else {
+    const childIsDone = isDone(c.fields.status?.statusCategory?.key);
+    const childStatus = c.fields.status?.name || 'Unknown';
+    const childIsReopened = !childIsDone && isReopened(childStatus);
+    if (childIsDone) done++;
+    else {
       remaining++;
-      if (isReopened(c.fields.status?.name)) reopened++;
+      if (childIsReopened) reopened++;
     }
+    subIssues.push({
+      key: c.key,
+      title: c.fields.summary || c.key,
+      severity: bucket,
+      status: childStatus,
+      isDone: childIsDone,
+      isReopened: childIsReopened,
+    });
   }
   return {
     issueKey,
@@ -210,6 +251,7 @@ function tally(
     doneCount: done,
     remainingCount: remaining,
     reopenedCount: reopened,
+    subIssues,
   };
 }
 
@@ -229,7 +271,12 @@ export async function syncFromJira(creds: JiraCreds, ticketLink: string): Promis
   }
 
   const severityFieldId = await findSeverityFieldId(creds).catch(() => null);
-  const childFields = ['priority', 'status', ...(severityFieldId ? [severityFieldId] : [])];
+  const childFields = [
+    'priority',
+    'status',
+    'summary',
+    ...(severityFieldId ? [severityFieldId] : []),
+  ];
 
   const issue = (await jiraFetch(
     creds,
@@ -268,4 +315,24 @@ export async function syncFromJira(creds: JiraCreds, ticketLink: string): Promis
     ),
   );
   return tally(issueKey, status, children, severityFieldId);
+}
+
+// A sync only ever sees THIS MOMENT's status -- syncing twice while a ticket
+// sits in Reopened the whole time must not double-count, but going
+// Reopened -> Done -> Reopened again is a second, real event and should.
+// Called by the cycles routes with the row about to be overwritten (or none,
+// for a sub-issue synced for the first time), since that history lives in
+// the DB, not in anything the Jira API call itself has access to.
+export function withReopenHistory<T extends JiraSubIssueInfo>(
+  fresh: T[],
+  previous: { issueKey: string; isReopened: boolean; timesReopened: number }[],
+): (T & { timesReopened: number })[] {
+  const prevByKey = new Map(previous.map(p => [p.issueKey, p]));
+  return fresh.map(s => {
+    const prev = prevByKey.get(s.key);
+    const wasReopened = prev?.isReopened ?? false;
+    const priorCount = prev?.timesReopened ?? 0;
+    const timesReopened = s.isReopened && !wasReopened ? priorCount + 1 : priorCount;
+    return { ...s, timesReopened };
+  });
 }
