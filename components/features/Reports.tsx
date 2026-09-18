@@ -1292,10 +1292,17 @@ interface CycleHistoryRow {
   portalName: string | null;
   moduleName: string | null;
   scopeName: string | null;
+  version: string | null;
   tester: string;
   date: string;
   issueCount: number;
-  status: 'Active' | 'Pass' | 'Fail';
+  criticalCount: number;
+  majorCount: number;
+  minorCount: number;
+  doneCount: number;
+  remainingCount: number;
+  /** null = not applicable (case-based cycles have no Jira-synced aggregate). */
+  reopenedCount: number | null;
 }
 interface CycleHistoryPayload {
   cycles: CycleHistoryRow[];
@@ -1349,22 +1356,46 @@ function CycleHistoryReport({
     filters.tester,
   ]);
 
+  // A cycle scoped exactly at Portal or Module level has its own scopeName
+  // equal to that same portal/module -- dedupe by value so "Web / Payments"
+  // doesn't render as "Web › Payments › Payments".
+  const scopePath = (c: CycleHistoryRow) =>
+    [c.portalName, c.moduleName, c.scopeName]
+      .filter((v, i, arr): v is string => !!v && arr.indexOf(v) === i)
+      .join(' › ');
+
   const onCsv = () => {
     if (!data) return;
     const rows: (string | number)[][] = [
-      ['Cycle', 'Type', 'Portal', 'Module', 'Feature', 'Tester', 'Date', 'Issues', 'Status'],
+      [
+        'Cycle',
+        'Date',
+        'Portal-Module-Feature',
+        'Version',
+        'Total Issues',
+        'Critical',
+        'Major',
+        'Minor',
+        'Done',
+        'Remaining',
+        'Reopened',
+        'Tester',
+      ],
     ];
     for (const c of data.cycles) {
       rows.push([
         c.name,
-        c.mode === 'Manual' ? 'Quick log' : 'Test run',
-        c.portalName ?? '',
-        c.moduleName ?? '',
-        c.scopeName ?? '',
-        c.tester || 'Unattributed',
         new Date(c.date).toLocaleDateString('en-GB'),
+        scopePath(c),
+        c.version ?? '',
         c.issueCount,
-        c.status,
+        c.criticalCount,
+        c.majorCount,
+        c.minorCount,
+        c.doneCount,
+        c.remainingCount,
+        c.reopenedCount ?? '',
+        c.tester || 'Unattributed',
       ]);
     }
     downloadCsv('cycle-history.csv', rows);
@@ -1420,11 +1451,17 @@ function CycleHistoryReport({
               <thead className="bg-surface-2">
                 <tr>
                   <Th>Cycle</Th>
-                  <Th>Type</Th>
-                  <Th>Module</Th>
+                  <Th>Date</Th>
+                  <Th>Portal-Module-Feature</Th>
+                  <Th>Version</Th>
+                  <Th align="right">Total Issues</Th>
+                  <Th align="right">Critical</Th>
+                  <Th align="right">Major</Th>
+                  <Th align="right">Minor</Th>
+                  <Th align="right">Done</Th>
+                  <Th align="right">Remaining</Th>
+                  <Th align="right">Reopened</Th>
                   <Th>Tester</Th>
-                  <Th align="right">Issues</Th>
-                  <Th>Result</Th>
                 </tr>
               </thead>
               <tbody>
@@ -1443,43 +1480,42 @@ function CycleHistoryReport({
                     >
                       {c.name}
                     </td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={cn(
-                          'inline-flex rounded-full px-2 py-0.5 text-[10.5px] font-medium',
-                          c.mode === 'Manual'
-                            ? 'bg-surface-3 text-text-2'
-                            : 'bg-primary-light text-primary-text',
-                        )}
-                      >
-                        {c.mode === 'Manual' ? 'Quick log' : 'Test run'}
-                      </span>
+                    <td className="whitespace-nowrap px-3 py-2 text-text-2">
+                      {new Date(c.date).toLocaleDateString('en-GB')}
                     </td>
                     <td className="px-3 py-2 text-text-2">
-                      {[c.moduleName, c.scopeName].filter(Boolean).join(' › ') || (
-                        <span className="text-text-3">—</span>
-                      )}
+                      {scopePath(c) || <span className="text-text-3">—</span>}
                     </td>
-                    <td className="px-3 py-2 text-text-2">
-                      {c.tester || <span className="text-text-3">Unattributed</span>}
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-[11px] text-text-2">
+                      {c.version || <span className="text-text-3">—</span>}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-text">
                       {c.issueCount || <span className="text-text-3">—</span>}
                     </td>
-                    <td className="px-3 py-2">
-                      {c.status === 'Active' ? (
-                        <span className="inline-flex rounded-full bg-primary-light px-2 py-0.5 text-[10.5px] font-semibold text-primary-text">
-                          Active
-                        </span>
-                      ) : c.status === 'Pass' ? (
-                        <span className="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-700">
-                          Pass
-                        </span>
+                    <td className="px-3 py-2 text-right tabular-nums text-danger">
+                      {c.criticalCount || <span className="text-text-3">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-warning">
+                      {c.majorCount || <span className="text-text-3">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-text-2">
+                      {c.minorCount || <span className="text-text-3">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-success">
+                      {c.doneCount || <span className="text-text-3">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-danger">
+                      {c.remainingCount || <span className="text-text-3">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-warning">
+                      {c.reopenedCount === null ? (
+                        <span className="text-text-3">—</span>
                       ) : (
-                        <span className="inline-flex rounded-full bg-red-50 px-2 py-0.5 text-[10.5px] font-semibold text-red-700">
-                          Fail
-                        </span>
+                        c.reopenedCount || <span className="text-text-3">—</span>
                       )}
+                    </td>
+                    <td className="px-3 py-2 text-text-2">
+                      {c.tester || <span className="text-text-3">Unattributed</span>}
                     </td>
                   </tr>
                 ))}

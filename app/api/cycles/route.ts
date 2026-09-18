@@ -221,6 +221,7 @@ export async function POST(req: Request) {
       minorCount?: number;
       doneCount?: number;
       remainingCount?: number;
+      reopenedCount?: number;
       passedCount?: number;
       failedCount?: number;
       blockedCount?: number;
@@ -274,6 +275,7 @@ export async function POST(req: Request) {
           minorCount: nz(body.minorCount),
           doneCount: nz(body.doneCount),
           remainingCount: nz(body.remainingCount),
+          reopenedCount: nz(body.reopenedCount),
           passedCount: nz(body.passedCount),
           failedCount: nz(body.failedCount),
           blockedCount: nz(body.blockedCount),

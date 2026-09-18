@@ -554,7 +554,12 @@ model TestCycle {
   majorCount     Int @default(0)
   minorCount     Int @default(0)
   doneCount      Int @default(0) // defects resolved
-  remainingCount Int @default(0) // defects still open
+  remainingCount Int @default(0) // defects still open (includes reopenedCount below)
+  // Of remainingCount, how many were Done and have since regressed -- from
+  // Jira sync only (a sub-issue whose status name contains "Reopened"; see
+  // lib/jira.ts). Manual entry has no way to express this, so it stays 0
+  // until a sync sets it.
+  reopenedCount  Int @default(0)
   passedCount    Int @default(0) // test cases passed
   failedCount    Int @default(0) // test cases failed
   blockedCount   Int @default(0) // test cases blocked

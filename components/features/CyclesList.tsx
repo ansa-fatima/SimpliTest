@@ -26,7 +26,7 @@ function isoDate(iso: string | null | undefined): string {
 }
 
 type ModeFilter = 'all' | 'CaseBased' | 'Manual';
-type SortKey = 'date' | 'portal' | 'module' | 'status';
+type SortKey = 'date' | 'module' | 'status';
 
 // Cycles with no name on a field (e.g. an 'All'-scoped run has no portal/module)
 // always sort to the end, regardless of direction — a blank isn't "less than"
@@ -97,8 +97,6 @@ export function CyclesList({
     const dir = sortDir === 'asc' ? 1 : -1;
     return [...filtered].sort((a, b) => {
       switch (sortKey) {
-        case 'portal':
-          return compareNullsLast(a.portalName, b.portalName, dir);
         case 'module':
           return compareNullsLast(a.moduleName, b.moduleName, dir);
         case 'status':
@@ -172,7 +170,6 @@ export function CyclesList({
               className="rounded-[7px] border border-border bg-surface px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
             >
               <option value="date">Date</option>
-              <option value="portal">Portal</option>
               <option value="module">Module</option>
               <option value="status">Status</option>
             </select>
@@ -220,27 +217,15 @@ export function CyclesList({
               <thead className="bg-surface-2">
                 <tr>
                   <Th width="78px">Date</Th>
-                  <Th width="150px">Cycle</Th>
-                  <Th width="100px">Portal</Th>
-                  <Th width="110px">Module</Th>
-                  <Th width="110px">Suite</Th>
-                  <Th width="68px">Version</Th>
-                  <Th width="85px">Environment</Th>
-                  <Th width="52px" align="right">
-                    Total
-                  </Th>
-                  <Th width="50px" align="right">
-                    Crit
-                  </Th>
-                  <Th width="50px" align="right">
-                    Major
-                  </Th>
-                  <Th width="50px" align="right">
-                    Minor
-                  </Th>
-                  <Th width="112px">Tester</Th>
-                  <Th width="68px">Ticket</Th>
-                  <Th width="80px">Status</Th>
+                  <Th width="170px">Cycle name</Th>
+                  <Th width="120px">Module</Th>
+                  <Th width="70px">Version</Th>
+                  <Th width="85px">Platform</Th>
+                  <Th width="90px">Environment</Th>
+                  <Th width="85px">Type</Th>
+                  <Th width="90px">Status</Th>
+                  <Th width="90px">Progress</Th>
+                  <Th width="130px">Owner</Th>
                   <th className="w-[80px] border-b border-border px-2 py-2.5" />
                 </tr>
               </thead>
@@ -257,28 +242,25 @@ export function CyclesList({
                     : `C-${c.id.slice(-4).toUpperCase()}`;
                   const summary = c.summary;
 
-                  // Manual cycles have no per-case "total" the way a case-based
-                  // cycle does -- Passed+Failed+Blocked (the only counts a quick
-                  // log actually tracks) stands in for it.
-                  const total = isManual
-                    ? (c.passedCount ?? 0) + (c.failedCount ?? 0) + (c.blockedCount ?? 0)
-                    : (summary?.total ?? 0);
-
-                  // Severity breakdown of issues found -- for case-based
-                  // cycles this is the summary's ever-Failed/Blocked baseline
-                  // (see /api/cycles), for a quick log it's the counts
-                  // recorded directly on the cycle.
-                  const critical = isManual
-                    ? (c.criticalCount ?? 0)
-                    : (summary?.severity?.Critical ?? 0);
-                  const major = isManual ? (c.majorCount ?? 0) : (summary?.severity?.Major ?? 0);
-                  const minor = isManual ? (c.minorCount ?? 0) : (summary?.severity?.Minor ?? 0);
-
                   // Case-based cycles have no single "owner" field -- `tester`
                   // is the most-frequent executor across its runs (see
                   // /api/cycles). Manual quick logs already have one: whoever
                   // logged it.
-                  const tester = isManual ? c.loggedBy || null : (c.tester ?? null);
+                  const owner = isManual ? c.loggedBy || null : (c.tester ?? null);
+
+                  // Execution progress (case-based) vs issue resolution (quick
+                  // log) -- same tracked/untracked rule as the Quick Log Summary
+                  // modal: a log with no Done/Remaining entered yet has nothing
+                  // to show progress on.
+                  const progress = isManual
+                    ? (() => {
+                        const done = c.doneCount ?? 0;
+                        const remaining = c.remainingCount ?? 0;
+                        return done + remaining === 0
+                          ? null
+                          : Math.round((done / (done + remaining)) * 100);
+                      })()
+                    : (summary?.percent ?? null);
 
                   const start = isoDate(c.createdAt);
 
@@ -302,21 +284,9 @@ export function CyclesList({
                       </td>
                       <td
                         className="truncate px-2 py-2.5 align-middle text-text-2"
-                        title={c.portalName || undefined}
-                      >
-                        {c.portalName || <span className="text-text-3">—</span>}
-                      </td>
-                      <td
-                        className="truncate px-2 py-2.5 align-middle text-text-2"
                         title={c.moduleName || undefined}
                       >
                         {c.moduleName || <span className="text-text-3">—</span>}
-                      </td>
-                      <td
-                        className="truncate px-2 py-2.5 align-middle text-text-2"
-                        title={c.featureName || undefined}
-                      >
-                        {c.featureName || <span className="text-text-3">—</span>}
                       </td>
                       <td
                         className="truncate px-2 py-2.5 align-middle font-mono text-[11.5px] text-text-2"
@@ -326,51 +296,27 @@ export function CyclesList({
                       </td>
                       <td
                         className="truncate px-2 py-2.5 align-middle text-text-2"
+                        title={c.platform || undefined}
+                      >
+                        {c.platform || <span className="text-text-3">—</span>}
+                      </td>
+                      <td
+                        className="truncate px-2 py-2.5 align-middle text-text-2"
                         title={c.environment || undefined}
                       >
                         {c.environment || <span className="text-text-3">—</span>}
                       </td>
-                      <td className="px-3 py-2.5 text-right align-middle font-medium tabular-nums text-text">
-                        {total || <span className="font-normal text-text-3">—</span>}
-                      </td>
-                      <td className="px-3 py-2.5 text-right align-middle tabular-nums text-danger">
-                        {critical || <span className="text-text-3">—</span>}
-                      </td>
-                      <td className="px-3 py-2.5 text-right align-middle tabular-nums text-warning">
-                        {major || <span className="text-text-3">—</span>}
-                      </td>
-                      <td className="px-3 py-2.5 text-right align-middle tabular-nums text-text-2">
-                        {minor || <span className="text-text-3">—</span>}
-                      </td>
                       <td className="overflow-hidden px-2 py-2.5 align-middle">
-                        {tester ? (
-                          <span className="flex items-center gap-1.5" title={tester}>
-                            <span
-                              className={cn(
-                                'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[8.5px] font-bold',
-                                avatarColour(tester),
-                              )}
-                            >
-                              {initials(tester)}
-                            </span>
-                            <span className="truncate text-text-2">{tester}</span>
-                          </span>
-                        ) : (
-                          <span className="text-text-3">Unattributed</span>
-                        )}
-                      </td>
-                      <td
-                        className="overflow-hidden px-2 py-2.5 align-middle text-[11.5px]"
-                        title={c.ticketLink || undefined}
-                      >
-                        {c.ticketLink ? (
-                          <span className="flex max-w-full items-center gap-1">
-                            <i className="ti ti-brand-jira flex-shrink-0 text-[13px] text-text-3" />
-                            <span className="truncate">{renderTicketLink(c.ticketLink)}</span>
-                          </span>
-                        ) : (
-                          <span className="text-text-3">—</span>
-                        )}
+                        <span
+                          className={cn(
+                            'inline-flex rounded-full px-2 py-0.5 text-[10.5px] font-medium',
+                            isManual
+                              ? 'bg-surface-3 text-text-2'
+                              : 'bg-primary-light text-primary-text',
+                          )}
+                        >
+                          {isManual ? 'Quick log' : 'Test run'}
+                        </span>
                       </td>
                       <td className="overflow-hidden px-1.5 py-2.5 align-middle">
                         <span
@@ -384,6 +330,43 @@ export function CyclesList({
                           />
                           {status.label}
                         </span>
+                      </td>
+                      <td className="px-3 py-2.5 align-middle">
+                        {progress === null ? (
+                          <span className="text-text-3">—</span>
+                        ) : (
+                          <span className="flex items-center gap-1.5">
+                            <span className="h-1.5 w-12 flex-shrink-0 overflow-hidden rounded-full bg-surface-3">
+                              <span
+                                className={cn(
+                                  'block h-full rounded-full',
+                                  progress === 100 ? 'bg-success' : 'bg-primary',
+                                )}
+                                style={{ width: `${progress}%` }}
+                              />
+                            </span>
+                            <span className="flex-shrink-0 tabular-nums text-text-2">
+                              {progress}%
+                            </span>
+                          </span>
+                        )}
+                      </td>
+                      <td className="overflow-hidden px-2 py-2.5 align-middle">
+                        {owner ? (
+                          <span className="flex items-center gap-1.5" title={owner}>
+                            <span
+                              className={cn(
+                                'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[8.5px] font-bold',
+                                avatarColour(owner),
+                              )}
+                            >
+                              {initials(owner)}
+                            </span>
+                            <span className="truncate text-text-2">{owner}</span>
+                          </span>
+                        ) : (
+                          <span className="text-text-3">Unattributed</span>
+                        )}
                       </td>
                       <td
                         className="whitespace-nowrap px-2 py-2.5 text-right align-middle"
@@ -544,23 +527,4 @@ function Th({
       {children}
     </th>
   );
-}
-
-function renderTicketLink(value: string) {
-  // If it looks like a URL, render as link. Otherwise show the text (e.g. NPD-10656) plain.
-  const isUrl = /^https?:\/\//i.test(value);
-  if (isUrl) {
-    return (
-      <a
-        href={value}
-        target="_blank"
-        rel="noreferrer"
-        onClick={e => e.stopPropagation()}
-        className="text-primary hover:underline"
-      >
-        {value.replace(/^https?:\/\//, '').slice(0, 40)}
-      </a>
-    );
-  }
-  return <span className="font-mono text-text-2">{value}</span>;
 }

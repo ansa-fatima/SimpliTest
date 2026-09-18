@@ -65,6 +65,7 @@ export function NewQuickLogModal({
   const [jiraStatus, setJiraStatus] = useState('');
   const [jiraDone, setJiraDone] = useState<number | null>(null);
   const [jiraRemaining, setJiraRemaining] = useState<number | null>(null);
+  const [jiraReopened, setJiraReopened] = useState<number | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState('');
 
@@ -98,6 +99,7 @@ export function NewQuickLogModal({
         minorCount: number;
         doneCount: number;
         remainingCount: number;
+        reopenedCount: number;
       }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: ticketLink.trim() });
       setJiraStatus(result.status);
       setCritical(result.criticalCount);
@@ -105,6 +107,7 @@ export function NewQuickLogModal({
       setMinor(result.minorCount);
       setJiraDone(result.doneCount);
       setJiraRemaining(result.remainingCount);
+      setJiraReopened(result.reopenedCount);
     } catch (e) {
       setSyncError((e as Error).message);
     } finally {
@@ -146,6 +149,7 @@ export function NewQuickLogModal({
         minorCount: minor,
         doneCount: jiraDone ?? undefined,
         remainingCount: jiraRemaining ?? undefined,
+        reopenedCount: jiraReopened ?? undefined,
       });
     } catch (e) {
       setError((e as Error).message);
@@ -357,6 +361,7 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
   const [minor, setMinor] = useState(log.minorCount ?? 0);
   const [jiraStatus, setJiraStatus] = useState(log.jiraStatus ?? '');
   const [jiraSyncedAt, setJiraSyncedAt] = useState(log.jiraSyncedAt ?? '');
+  const [reopenedCount, setReopenedCount] = useState(log.reopenedCount ?? 0);
   const [synced, setSynced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -389,6 +394,7 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
         minorCount: number;
         doneCount: number;
         remainingCount: number;
+        reopenedCount: number;
       }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: log.ticketLink });
       setJiraStatus(result.status);
       setJiraSyncedAt(new Date().toISOString());
@@ -397,6 +403,7 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
       setMajor(result.majorCount);
       setMinor(result.minorCount);
       setDone(result.doneCount);
+      setReopenedCount(result.reopenedCount);
       setSynced(true);
     } catch (e) {
       setSyncError((e as Error).message);
@@ -427,6 +434,7 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
         patch.minorCount = minor;
         patch.jiraStatus = jiraStatus;
         patch.jiraSyncedAt = jiraSyncedAt;
+        patch.reopenedCount = reopenedCount;
       }
       await onSave(patch);
     } finally {

@@ -153,6 +153,14 @@ function isDone(statusCategoryKey: string | undefined): boolean {
   return statusCategoryKey === 'done';
 }
 
+// "Reopened" isn't a statusCategory Jira standardizes -- it's a workflow
+// status name a team defines itself (distinct from "To Do"/"Open"). Matched
+// by name rather than category since a reopened issue's category is still
+// 'new' or 'indeterminate', same as any other not-done status.
+function isReopened(statusName: string | undefined): boolean {
+  return !!statusName && statusName.toLowerCase().includes('reopen');
+}
+
 export interface JiraSyncResult {
   issueKey: string;
   status: string;
@@ -162,6 +170,10 @@ export interface JiraSyncResult {
   minorCount: number;
   doneCount: number;
   remainingCount: number;
+  // Of remainingCount, how many are specifically back-open after being
+  // marked Done (see isReopened) -- a subset of remainingCount, not
+  // additional to it, so doneCount + remainingCount still equals issueCount.
+  reopenedCount: number;
 }
 
 function tally(
@@ -175,13 +187,18 @@ function tally(
   let minor = 0;
   let done = 0;
   let remaining = 0;
+  let reopened = 0;
   for (const c of children) {
     const bucket = bucketOf(c.fields, severityFieldId);
     if (bucket === 'Critical') critical++;
     else if (bucket === 'Major') major++;
     else minor++;
-    if (isDone(c.fields.status?.statusCategory?.key)) done++;
-    else remaining++;
+    if (isDone(c.fields.status?.statusCategory?.key)) {
+      done++;
+    } else {
+      remaining++;
+      if (isReopened(c.fields.status?.name)) reopened++;
+    }
   }
   return {
     issueKey,
@@ -192,6 +209,7 @@ function tally(
     minorCount: minor,
     doneCount: done,
     remainingCount: remaining,
+    reopenedCount: reopened,
   };
 }
 

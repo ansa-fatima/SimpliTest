@@ -25,31 +25,20 @@ type Row = {
   portalName: string | null;
   moduleName: string | null;
   scopeName: string | null;
+  version: string | null;
   tester: string;
   date: string;
   issueCount: number;
-  status: 'Active' | 'Pass' | 'Fail';
+  criticalCount: number;
+  majorCount: number;
+  minorCount: number;
+  doneCount: number;
+  remainingCount: number;
+  // Of remainingCount, how many regressed after being marked done -- Jira
+  // sync only (see lib/jira.ts). null means "not applicable": a case-based
+  // cycle has no Jira-synced aggregate, only Manual quick logs do.
+  reopenedCount: number | null;
 };
-
-function manualVerdict(log: {
-  issueCount: number | null;
-  doneCount?: number | null;
-  remainingCount?: number | null;
-  failedCount?: number | null;
-  blockedCount?: number | null;
-}): 'Pass' | 'Fail' {
-  // Same tracked/untracked + case-failure rule as the Quick Log Summary
-  // modal, the Dashboard, and the Stability report -- kept here as its own
-  // small copy rather than a shared import, since this route already has
-  // several other cycle-history-specific concerns; worth consolidating if
-  // a fifth place ever needs this same rule.
-  const done = log.doneCount ?? 0;
-  const remaining = log.remainingCount ?? 0;
-  const tracked = done > 0 || remaining > 0;
-  const issuesOpen = tracked ? remaining > 0 : (log.issueCount ?? 0) > 0;
-  const hasCaseFailure = (log.failedCount ?? 0) > 0 || (log.blockedCount ?? 0) > 0;
-  return !issuesOpen && !hasCaseFailure ? 'Pass' : 'Fail';
-}
 
 export async function GET(req: Request) {
   try {
@@ -136,9 +125,16 @@ export async function GET(req: Request) {
           status: true,
           scopeType: true,
           scopeId: true,
+          version: true,
           createdAt: true,
           runs: {
-            select: { result: true, customResultId: true, executedBy: true, wasEverIssue: true },
+            select: {
+              result: true,
+              customResultId: true,
+              executedBy: true,
+              wasEverIssue: true,
+              testCase: { select: { severity: true, customSeverityId: true } },
+            },
           },
         },
       }),
@@ -152,11 +148,14 @@ export async function GET(req: Request) {
           portalName: true,
           moduleName: true,
           featureName: true,
+          version: true,
           issueCount: true,
+          criticalCount: true,
+          majorCount: true,
+          minorCount: true,
           doneCount: true,
           remainingCount: true,
-          failedCount: true,
-          blockedCount: true,
+          reopenedCount: true,
           completedAt: true,
           createdAt: true,
           loggedBy: true,
@@ -178,10 +177,24 @@ export async function GET(req: Request) {
       if (periodStart && date < periodStart) continue;
       if (periodEnd && date >= periodEnd) continue;
 
-      const issueCount = c.runs.filter(r => r.wasEverIssue).length;
-      const openIssues = c.runs.filter(isFailLike).length;
-      const status: Row['status'] =
-        c.status === 'Active' ? 'Active' : openIssues === 0 ? 'Pass' : 'Fail';
+      let critical = 0;
+      let major = 0;
+      let minor = 0;
+      let done = 0;
+      let remaining = 0;
+      for (const r of c.runs) {
+        if (!r.wasEverIssue) continue;
+        if (isFailLike(r)) remaining++;
+        else done++;
+        // A custom-severity case's legacy `severity` column holds an
+        // unrelated placeholder value -- skip it here rather than
+        // misattributing it, same guard used by /api/cycles and the
+        // detailed cycle report.
+        if (r.testCase.customSeverityId) continue;
+        if (r.testCase.severity === 'Critical') critical++;
+        else if (r.testCase.severity === 'Major') major++;
+        else if (r.testCase.severity === 'Minor') minor++;
+      }
 
       rows.push({
         id: c.id,
@@ -190,6 +203,7 @@ export async function GET(req: Request) {
         portalName: portalId ? (portalNameById.get(portalId) ?? null) : null,
         moduleName: moduleId ? (moduleNameById.get(moduleId) ?? null) : null,
         scopeName,
+        version: c.version,
         tester:
           testers.length === 0
             ? ''
@@ -197,8 +211,13 @@ export async function GET(req: Request) {
               ? testers[0]
               : `${testers.length} testers`,
         date: date.toISOString(),
-        issueCount,
-        status,
+        issueCount: done + remaining,
+        criticalCount: critical,
+        majorCount: major,
+        minorCount: minor,
+        doneCount: done,
+        remainingCount: remaining,
+        reopenedCount: null,
       });
     }
 
@@ -222,10 +241,16 @@ export async function GET(req: Request) {
         portalName: log.portalName || (portalId ? (portalNameById.get(portalId) ?? null) : null),
         moduleName: log.moduleName || (moduleId ? (moduleNameById.get(moduleId) ?? null) : null),
         scopeName: log.featureName || scopeName,
+        version: log.version,
         tester: log.loggedBy,
         date: date.toISOString(),
         issueCount: log.issueCount ?? 0,
-        status: manualVerdict(log),
+        criticalCount: log.criticalCount ?? 0,
+        majorCount: log.majorCount ?? 0,
+        minorCount: log.minorCount ?? 0,
+        doneCount: log.doneCount ?? 0,
+        remainingCount: log.remainingCount ?? 0,
+        reopenedCount: log.reopenedCount ?? 0,
       });
     }
 

@@ -118,6 +118,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
       'minorCount',
       'doneCount',
       'remainingCount',
+      'reopenedCount',
       'passedCount',
       'failedCount',
       'blockedCount',

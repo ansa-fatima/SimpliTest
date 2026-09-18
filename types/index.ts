@@ -105,6 +105,8 @@ export interface TestCycle {
   minorCount?: number;
   doneCount?: number;
   remainingCount?: number;
+  /** Of remainingCount, how many regressed after being marked done (Jira sync only). */
+  reopenedCount?: number;
   passedCount?: number;
   failedCount?: number;
   blockedCount?: number;

@@ -965,6 +965,7 @@ export function useStore() {
       minorCount?: number;
       doneCount?: number;
       remainingCount?: number;
+      reopenedCount?: number;
       passedCount?: number;
       failedCount?: number;
       blockedCount?: number;

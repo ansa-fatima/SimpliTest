@@ -43,6 +43,7 @@ export interface CycleFormPayload {
   minorCount?: number;
   doneCount?: number;
   remainingCount?: number;
+  reopenedCount?: number;
   passedCount?: number;
   failedCount?: number;
   blockedCount?: number;
@@ -140,6 +141,9 @@ export function NewCycleModal({
   const [doneCount, setDoneCount] = useState(initial?.doneCount ?? 0);
   const [remainingCount, setRemainingCount] = useState(initial?.remainingCount ?? 0);
   const [remainingTouched, setRemainingTouched] = useState(initial != null);
+  // Of remainingCount, how many regressed after being marked done -- set only
+  // by "Sync from Jira" (see lib/jira.ts's isReopened); no manual equivalent.
+  const [reopenedCount, setReopenedCount] = useState(initial?.reopenedCount ?? 0);
   const [passedCount, setPassedCount] = useState(initial?.passedCount ?? 0);
   const [failedCount, setFailedCount] = useState(initial?.failedCount ?? 0);
   const [blockedCount, setBlockedCount] = useState(initial?.blockedCount ?? 0);
@@ -178,6 +182,7 @@ export function NewCycleModal({
         minorCount: number;
         doneCount: number;
         remainingCount: number;
+        reopenedCount: number;
       }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: ticketLink.trim() });
       setJiraStatus(result.status);
       setJiraSyncedAt(new Date().toISOString());
@@ -187,6 +192,7 @@ export function NewCycleModal({
       setMinorCount(result.minorCount);
       setDoneCount(result.doneCount);
       setRemainingCount(result.remainingCount);
+      setReopenedCount(result.reopenedCount);
       setRemainingTouched(true);
     } catch (e) {
       setSyncError((e as Error).message);
@@ -432,6 +438,7 @@ export function NewCycleModal({
       payload.minorCount = minorCount;
       payload.doneCount = doneCount;
       payload.remainingCount = remainingCount;
+      payload.reopenedCount = reopenedCount;
       payload.passedCount = passedCount;
       payload.failedCount = failedCount;
       payload.blockedCount = blockedCount;
