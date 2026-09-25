@@ -128,6 +128,7 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
     setSyncing(true);
     try {
       const result = await api.post<{
+        title: string;
         status: string;
         issueCount: number;
         criticalCount: number;
@@ -140,6 +141,9 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
         subIssues: JiraSubIssueInfo[];
       }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: cycle.ticketLink });
       await api.patch(`/api/cycles/${cycleId}`, {
+        // Auto-fills the cycle's own name from the parent ticket's title --
+        // this view shows the name it patches, so a resync updates both.
+        ...(result.title ? { name: result.title } : {}),
         jiraStatus: result.status,
         jiraSyncedAt: new Date().toISOString(),
         jiraSiteUrl: result.siteUrl,

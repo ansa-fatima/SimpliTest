@@ -216,7 +216,6 @@ export function TestRunsBoard({
                     log={log}
                     siteUrl={siteUrl}
                     onView={() => setViewingCycleId(log.id)}
-                    onEdit={() => setEditingCycle(log)}
                     onDelete={() => handleDelete(log)}
                   />
                 ))}
@@ -466,13 +465,11 @@ function QuickLogRow({
   log,
   siteUrl,
   onView,
-  onEdit,
   onDelete,
 }: {
   log: TestCycle;
   siteUrl: string | null;
   onView: () => void;
-  onEdit: () => void;
   onDelete: () => void;
 }) {
   const point = pointFromQuickLog({
@@ -610,17 +607,6 @@ function QuickLogRow({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={e => {
-            e.stopPropagation();
-            onEdit();
-          }}
-          className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-1.5 text-[12px] text-text transition-colors hover:bg-surface-2"
-        >
-          <i className={cn('ti text-[13px]', issueCount === 0 ? 'ti-flag' : 'ti-refresh')} />
-          {issueCount === 0 ? 'Track' : 'Reopen / Update'}
-        </button>
         <button
           type="button"
           onClick={e => {
