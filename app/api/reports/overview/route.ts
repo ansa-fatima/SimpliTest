@@ -42,71 +42,84 @@ export async function GET(req: Request) {
       : { result: { in: ['Failed', 'Blocked'] } };
     const resultClassMap = projectId ? await loadRunResultClassMap(projectId) : new Map();
 
-    const [completedCycles, totalLoggedEntries, caseCycles, manualLogs, runs, recurringRuns] =
-      await Promise.all([
-        prisma.testCycle.count({ where: { mode: 'CaseBased', status: 'Completed', ...wsCycle } }),
-        prisma.testCycle.count({ where: { ...wsCycle } }),
-        // Execution rate needs each cycle's own done/total, not a workspace
-        // total — a 500-case cycle and a 3-case cycle should count equally
-        // toward the average, the same way a per-module average would.
-        prisma.testCycle.findMany({
-          where: { mode: 'CaseBased', ...wsCycle },
-          select: { runs: { select: { result: true } } },
-        }),
-        prisma.testCycle.findMany({
-          where: { mode: 'Manual', ...wsCycle },
-          select: {
-            id: true,
-            name: true,
-            scopeType: true,
-            scopeId: true,
-            portalName: true,
-            moduleName: true,
-            featureName: true,
-            issueCount: true,
-            doneCount: true,
-            remainingCount: true,
-            failedCount: true,
-            blockedCount: true,
-            completedAt: true,
-            createdAt: true,
-          },
-        }),
-        // Blended pass rate -- same two signals + same rule Dashboard and
-        // Stability already use (see lib/stability.ts), unfiltered here since
-        // this is a workspace-wide headline number, not a drill-down.
-        prisma.testRun.findMany({
-          where: { cycle: { mode: 'CaseBased', ...wsCycle }, ...passFailFilter },
-          select: {
-            result: true,
-            customResultId: true,
-            executedAt: true,
-            updatedAt: true,
-            cycleId: true,
-            cycle: { select: { name: true } },
-            testCase: {
-              select: {
-                title: true,
-                moduleId: true,
-                suiteId: true,
-                module: { select: { name: true } },
-                suite: { select: { module: { select: { name: true } } } },
-              },
+    const [
+      completedCycles,
+      totalLoggedEntries,
+      caseCycles,
+      manualLogs,
+      runs,
+      recurringRuns,
+      jiraSubIssues,
+    ] = await Promise.all([
+      prisma.testCycle.count({ where: { mode: 'CaseBased', status: 'Completed', ...wsCycle } }),
+      prisma.testCycle.count({ where: { ...wsCycle } }),
+      // Execution rate needs each cycle's own done/total, not a workspace
+      // total — a 500-case cycle and a 3-case cycle should count equally
+      // toward the average, the same way a per-module average would.
+      prisma.testCycle.findMany({
+        where: { mode: 'CaseBased', ...wsCycle },
+        select: { runs: { select: { result: true } } },
+      }),
+      prisma.testCycle.findMany({
+        where: { mode: 'Manual', ...wsCycle },
+        select: {
+          id: true,
+          name: true,
+          moduleName: true,
+          issueCount: true,
+          doneCount: true,
+          remainingCount: true,
+          failedCount: true,
+          blockedCount: true,
+          completedAt: true,
+          createdAt: true,
+        },
+      }),
+      // Blended pass rate -- same two signals + same rule Dashboard and
+      // Stability already use (see lib/stability.ts), unfiltered here since
+      // this is a workspace-wide headline number, not a drill-down.
+      prisma.testRun.findMany({
+        where: { cycle: { mode: 'CaseBased', ...wsCycle }, ...passFailFilter },
+        select: {
+          result: true,
+          customResultId: true,
+          executedAt: true,
+          updatedAt: true,
+          cycleId: true,
+          cycle: { select: { name: true } },
+          testCase: {
+            select: {
+              title: true,
+              moduleId: true,
+              suiteId: true,
+              module: { select: { name: true } },
+              suite: { select: { module: { select: { name: true } } } },
             },
           },
-        }),
-        // Recurring test cases -- same "Failed/Blocked in 2+ distinct cycles"
-        // rule as /api/reports/recurring-issues, just counted here rather
-        // than listed.
-        prisma.testRun.findMany({
-          where: {
-            ...failLikeFilter,
-            executedAt: { not: null },
-            cycle: wsCycle,
-          },
-          select: { testCaseId: true, cycleId: true },
-        }),
-      ]);
+        },
+      }),
+      // Recurring test cases -- same "Failed/Blocked in 2+ distinct cycles"
+      // rule as /api/reports/recurring-issues, just counted here rather
+      // than listed.
+      prisma.testRun.findMany({
+        where: {
+          ...failLikeFilter,
+          executedAt: { not: null },
+          cycle: wsCycle,
+        },
+        select: { testCaseId: true, cycleId: true },
+      }),
+      // Reopened Jira tickets -- same "sum each cycle's own timesReopened
+      // per issueKey" rule as /api/reports/recurring-issues, just counted
+      // here rather than listed. Workspace-wide like that report's own
+      // Jira signal, not scoped by module/version/tester.
+      projectId
+        ? prisma.jiraSubIssue.findMany({
+            where: { projectId },
+            select: { issueKey: true, isReopened: true, timesReopened: true },
+          })
+        : Promise.resolve([]),
+    ]);
 
     // Execution rate: average, across CaseBased cycles that have at least
     // one run, of how much of that cycle's cases have been executed.
@@ -165,19 +178,19 @@ export async function GET(req: Request) {
     }
     const recurringCaseCount = Array.from(casesByCycles.values()).filter(s => s.size >= 2).length;
 
-    // Recurring QL suites -- same scope-key + "issueCount > 0 in 2+ separate
-    // logs" rule as /api/reports/recurring-issues used before it was
-    // trimmed down to just the case list; recomputed here since this
-    // landing stat is the only place that still needs the count.
-    const qlGroups = new Map<string, number>();
-    for (const log of manualLogs) {
-      if ((log.issueCount ?? 0) <= 0) continue;
-      const key =
-        log.scopeId ??
-        `free:${log.portalName ?? ''}|${log.moduleName ?? ''}|${log.featureName ?? ''}`;
-      qlGroups.set(key, (qlGroups.get(key) ?? 0) + 1);
+    // Reopened Jira tickets -- sum each cycle's own persistent
+    // timesReopened per issueKey (see JiraSubIssue.timesReopened), same
+    // number /api/reports/recurring-issues' Reopened tab and the Cycle
+    // History info modal's "Reopened Nx" badge already show.
+    const reopenedByKey = new Map<string, number>();
+    for (const s of jiraSubIssues) {
+      // Floor of 1 when isReopened is true but timesReopened hasn't caught
+      // up yet (a row synced before that field existed) -- same fallback
+      // the Cycle History info modal's badge and the Reopened tab use.
+      const count = Math.max(s.timesReopened, s.isReopened ? 1 : 0);
+      reopenedByKey.set(s.issueKey, (reopenedByKey.get(s.issueKey) ?? 0) + count);
     }
-    const recurringQlSuiteCount = Array.from(qlGroups.values()).filter(n => n >= 2).length;
+    const jiraReopenedCount = Array.from(reopenedByKey.values()).filter(n => n >= 1).length;
 
     return ok({
       completedCycles,
@@ -185,7 +198,10 @@ export async function GET(req: Request) {
       avgExecutionRate: executionRate,
       avgModuleStability,
       openQuickLogIssues,
-      recurringIssuesTotal: recurringCaseCount + recurringQlSuiteCount,
+      // Recurring (test cases) + Reopened (Jira) -- exactly the two tabs
+      // the Recurring Issues report itself has, so this landing-page number
+      // always adds up to what clicking through actually shows.
+      recurringIssuesTotal: recurringCaseCount + jiraReopenedCount,
       totalLoggedEntries,
     });
   } catch (e) {

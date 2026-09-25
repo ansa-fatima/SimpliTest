@@ -465,6 +465,7 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
     setSyncing(true);
     try {
       const result = await api.post<{
+        title: string;
         status: string;
         issueCount: number;
         criticalCount: number;
@@ -476,6 +477,10 @@ export function UpdateQuickLogModal({ log, projectId, onClose, onSave }: UpdateQ
         siteUrl: string;
         subIssues: JiraSubIssueInfo[];
       }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: ticketLink.trim() });
+      // Auto-fills the Name field from the parent ticket's own title -- Name
+      // stays a normal editable field either way, so typing over it (before
+      // or after a sync) always works too.
+      if (result.title) setName(result.title);
       setJiraStatus(result.status);
       setJiraSyncedAt(new Date().toISOString());
       setJiraSiteUrl(result.siteUrl);

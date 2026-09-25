@@ -177,6 +177,17 @@ function isReopened(statusName: string | undefined): boolean {
   return !!statusName && statusName.toLowerCase().includes('reopen');
 }
 
+// Status -> {status, isDone, isReopened}, factored out of tally()'s loop
+// purely to keep that loop readable.
+function classifyIssueStatus(fields: {
+  status?: { name?: string; statusCategory?: { key?: string } };
+}): { status: string; isDone: boolean; isReopened: boolean } {
+  const status = fields.status?.name || 'Unknown';
+  const done = isDone(fields.status?.statusCategory?.key);
+  const reopened = !done && isReopened(status);
+  return { status, isDone: done, isReopened: reopened };
+}
+
 // One synced sub-issue -- persisted verbatim into JiraSubIssue (see
 // prisma/schema.prisma) so Recurring/Reopened detection can query across
 // every cycle's last sync without re-hitting Jira. `key` is the CHILD's own
@@ -192,6 +203,7 @@ export interface JiraSubIssueInfo {
 
 export interface JiraSyncResult {
   issueKey: string;
+  title: string;
   status: string;
   issueCount: number;
   criticalCount: number;
@@ -208,6 +220,7 @@ export interface JiraSyncResult {
 
 function tally(
   issueKey: string,
+  title: string,
   status: string,
   children: JiraIssueLike[],
   severityFieldId: string | null,
@@ -224,9 +237,11 @@ function tally(
     if (bucket === 'Critical') critical++;
     else if (bucket === 'Major') major++;
     else minor++;
-    const childIsDone = isDone(c.fields.status?.statusCategory?.key);
-    const childStatus = c.fields.status?.name || 'Unknown';
-    const childIsReopened = !childIsDone && isReopened(childStatus);
+    const {
+      status: childStatus,
+      isDone: childIsDone,
+      isReopened: childIsReopened,
+    } = classifyIssueStatus(c.fields);
     if (childIsDone) done++;
     else {
       remaining++;
@@ -243,6 +258,7 @@ function tally(
   }
   return {
     issueKey,
+    title,
     status,
     issueCount: children.length,
     criticalCount: critical,
@@ -280,9 +296,10 @@ export async function syncFromJira(creds: JiraCreds, ticketLink: string): Promis
 
   const issue = (await jiraFetch(
     creds,
-    `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=status,subtasks`,
+    `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=status,subtasks,summary`,
   )) as JiraIssueLike;
   const status = issue.fields.status?.name || 'Unknown';
+  const title = issue.fields.summary || issueKey;
 
   try {
     const search = (await jiraFetch(creds, '/rest/api/3/search/jql', {
@@ -294,7 +311,7 @@ export async function syncFromJira(creds: JiraCreds, ticketLink: string): Promis
       },
     })) as { issues?: JiraIssueLike[] };
     if (search.issues) {
-      return tally(issueKey, status, search.issues, severityFieldId);
+      return tally(issueKey, title, status, search.issues, severityFieldId);
     }
   } catch {
     // JQL search unavailable on this instance (older API, permissions) --
@@ -303,7 +320,7 @@ export async function syncFromJira(creds: JiraCreds, ticketLink: string): Promis
 
   const subtaskKeys = (issue.fields.subtasks ?? []).map(s => s.key);
   if (subtaskKeys.length === 0) {
-    return tally(issueKey, status, [], severityFieldId);
+    return tally(issueKey, title, status, [], severityFieldId);
   }
   const children = await Promise.all(
     subtaskKeys.map(
@@ -314,7 +331,7 @@ export async function syncFromJira(creds: JiraCreds, ticketLink: string): Promis
         ) as Promise<JiraIssueLike>,
     ),
   );
-  return tally(issueKey, status, children, severityFieldId);
+  return tally(issueKey, title, status, children, severityFieldId);
 }
 
 // A sync only ever sees THIS MOMENT's status -- syncing twice while a ticket

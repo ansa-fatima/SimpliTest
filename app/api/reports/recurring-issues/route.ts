@@ -14,8 +14,11 @@ export const dynamic = 'force-dynamic';
 //    with the actual cycles it recurred in (same "2+ distinct cycles" rule as
 //    lib/recurringIssues.ts, computed fresh here for a workspace-wide,
 //    unlimited list instead of that helper's top-N). This is Recurring.
-//  - `jiraReopened`: synced Jira sub-issues currently showing a Reopened
-//    status. Jira-only, unrelated to the cases list above.
+//  - `jiraReopened`: synced Jira sub-issues with a nonzero timesReopened
+//    (see JiraSubIssue.timesReopened) -- the real per-ticket count of how
+//    many times it's actually flipped into Reopened, same number the
+//    Cycle History info modal's "Reopened Nx" badge shows. Jira-only,
+//    unrelated to the cases list above.
 
 interface CaseCycle {
   id: string;
@@ -191,6 +194,7 @@ export async function GET(req: Request) {
             severity: true,
             status: true,
             isReopened: true,
+            timesReopened: true,
             syncedAt: true,
             cycleId: true,
             cycle: { select: { name: true, jiraSiteUrl: true } },
@@ -230,7 +234,14 @@ export async function GET(req: Request) {
         name: s.cycle.name,
         ts: s.syncedAt.toISOString(),
       });
-      if (s.isReopened) entry.reopenedCount++;
+      // Sum each cycle's own persistent timesReopened (see the cycles PATCH
+      // route), not just "is it currently sitting in Reopened" -- otherwise
+      // this count silently disagrees with the same ticket's "Reopened Nx"
+      // badge in the Cycle History info modal, which already shows the real
+      // per-ticket history. Floor of 1 when isReopened is true but
+      // timesReopened hasn't caught up yet (a row synced before that field
+      // existed) -- same fallback the info modal's badge uses.
+      entry.reopenedCount += Math.max(s.timesReopened, s.isReopened ? 1 : 0);
       byIssue.set(s.issueKey, entry);
     }
 

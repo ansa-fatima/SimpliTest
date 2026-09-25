@@ -6,6 +6,7 @@ import { pointFromQuickLog } from '@/lib/stability';
 import { avatarColour, cn, initials, localDateStr } from '@/lib/utils';
 import { NewCycleModal, CycleFormPayload } from './NewCycleModal';
 import { NewQuickLogModal, UpdateQuickLogModal } from './QuickLogModal';
+import { CycleInfoModal } from './CycleInfoModal';
 import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 
 interface TestRunsBoardProps {
@@ -18,6 +19,7 @@ interface TestRunsBoardProps {
   onOpenRun: (id: string) => void;
   onCreate: (input: CycleFormPayload) => Promise<void>;
   onUpdate: (id: string, patch: Record<string, unknown>) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
 }
 
 type BoardTab = 'all' | 'inprogress' | 'planned' | 'completed';
@@ -51,6 +53,7 @@ export function TestRunsBoard({
   onOpenRun,
   onCreate,
   onUpdate,
+  onDelete,
 }: TestRunsBoardProps) {
   const [mainTab, setMainTab] = useState<MainTab>('runs');
   const [tab, setTab] = useState<BoardTab>('all');
@@ -60,7 +63,20 @@ export function TestRunsBoard({
   // UpdateQuickLogModal's own note on why this is the single place either
   // gets edited from, instead of two differently-shaped forms.
   const [editingCycle, setEditingCycle] = useState<TestCycle | null>(null);
+  // Clicking a quick log opens the SAME read-only info modal Analytics'
+  // Cycle History / Issue Tracking reports use, instead of jumping straight
+  // into the edit form -- "Reopen / Update" (or the pencil icon) remain the
+  // explicit way to actually edit.
+  const [viewingCycleId, setViewingCycleId] = useState<string | null>(null);
   const siteUrl = useJiraSiteUrl(projectId);
+
+  // Delete lives directly on each card/row -- not buried in the edit modal,
+  // since deleting is a "look at the list, act on it" move, not an edit.
+  const handleDelete = (c: TestCycle) => {
+    const kind = (c.mode ?? 'CaseBased') === 'Manual' ? 'quick log' : 'test run';
+    if (!window.confirm(`Delete this ${kind} — "${c.name}"?\n\nThis cannot be undone.`)) return;
+    onDelete(c.id);
+  };
 
   const caseBased = cycles.filter(
     c => (c.mode ?? 'CaseBased') === 'CaseBased' && c.status !== 'Archived',
@@ -176,6 +192,7 @@ export function TestRunsBoard({
                     cycle={c}
                     onOpen={() => onOpenRun(c.id)}
                     onEdit={() => setEditingCycle(c)}
+                    onDelete={() => handleDelete(c)}
                   />
                 ))}
               </div>
@@ -198,7 +215,9 @@ export function TestRunsBoard({
                     key={log.id}
                     log={log}
                     siteUrl={siteUrl}
+                    onView={() => setViewingCycleId(log.id)}
                     onEdit={() => setEditingCycle(log)}
+                    onDelete={() => handleDelete(log)}
                   />
                 ))}
               </div>
@@ -241,6 +260,14 @@ export function TestRunsBoard({
             await onUpdate(editingCycle.id, patch);
             setEditingCycle(null);
           }}
+        />
+      )}
+
+      {viewingCycleId && (
+        <CycleInfoModal
+          cycleId={viewingCycleId}
+          projectId={projectId}
+          onClose={() => setViewingCycleId(null)}
         />
       )}
     </div>
@@ -322,10 +349,12 @@ function RunCard({
   cycle,
   onOpen,
   onEdit,
+  onDelete,
 }: {
   cycle: TestCycle;
   onOpen: () => void;
   onEdit: () => void;
+  onDelete: () => void;
 }) {
   const summary = cycle.summary;
   const total = summary?.total ?? 0;
@@ -373,6 +402,14 @@ function RunCard({
             className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-3 hover:bg-surface-2 hover:text-text"
           >
             <i className="ti ti-pencil text-[12px]" />
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            title="Delete test run"
+            className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-3 hover:bg-danger-bg hover:text-danger"
+          >
+            <i className="ti ti-trash text-[12px]" />
           </button>
         </div>
       </div>
@@ -428,11 +465,15 @@ function RunCard({
 function QuickLogRow({
   log,
   siteUrl,
+  onView,
   onEdit,
+  onDelete,
 }: {
   log: TestCycle;
   siteUrl: string | null;
+  onView: () => void;
   onEdit: () => void;
+  onDelete: () => void;
 }) {
   const point = pointFromQuickLog({
     id: log.id,
@@ -471,7 +512,7 @@ function QuickLogRow({
 
   return (
     <div
-      onClick={onEdit}
+      onClick={onView}
       className={cn(
         'flex cursor-pointer items-center justify-between gap-3 rounded-lg border-y border-l-4 border-r border-border bg-surface px-3.5 py-2.5 transition-colors hover:bg-surface-2',
         point.pass ? 'border-l-success' : 'border-l-danger',
@@ -571,11 +612,25 @@ function QuickLogRow({
 
         <button
           type="button"
-          onClick={onEdit}
+          onClick={e => {
+            e.stopPropagation();
+            onEdit();
+          }}
           className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-1.5 text-[12px] text-text transition-colors hover:bg-surface-2"
         >
           <i className={cn('ti text-[13px]', issueCount === 0 ? 'ti-flag' : 'ti-refresh')} />
           {issueCount === 0 ? 'Track' : 'Reopen / Update'}
+        </button>
+        <button
+          type="button"
+          onClick={e => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          title="Delete quick log"
+          className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[7px] border border-border bg-surface text-text-3 transition-colors hover:bg-danger-bg hover:text-danger"
+        >
+          <i className="ti ti-trash text-[13px]" />
         </button>
       </div>
     </div>

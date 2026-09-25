@@ -242,6 +242,7 @@ export default function Home() {
               onOpenRun={openCycle}
               onCreate={createCycle}
               onUpdate={updateCycle}
+              onDelete={deleteCycle}
             />
           )}
 
@@ -254,6 +255,7 @@ export default function Home() {
               onBack={backFromCycle}
               onOpenTestRun={() => cycleOverview && openCycle(cycleOverview.cycle.id)}
               onUpdate={updateCycle}
+              onDelete={deleteCycle}
             />
           )}
 
@@ -270,6 +272,7 @@ export default function Home() {
               onCloseRun={closeCycle}
               onRegenerate={regenerateCycle}
               onUpdate={updateCycle}
+              onDelete={deleteCycle}
             />
           )}
         </main>

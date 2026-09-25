@@ -78,7 +78,7 @@ export function Sidebar({
         active={onReports}
         onClick={onShowReports}
         icon={<ChartIcon />}
-        label="Reports"
+        label="Analytics"
       />
 
       <div className="my-1.5 h-px w-8 flex-shrink-0 bg-border" />

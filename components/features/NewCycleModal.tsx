@@ -175,6 +175,7 @@ export function NewCycleModal({
     setSyncing(true);
     try {
       const result = await api.post<{
+        title: string;
         status: string;
         issueCount: number;
         criticalCount: number;
@@ -186,6 +187,10 @@ export function NewCycleModal({
         siteUrl: string;
         subIssues: JiraSubIssueInfo[];
       }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: ticketLink.trim() });
+      // Auto-fills the Cycle Name from the parent ticket's own title -- Name
+      // stays a normal editable field either way, so typing over it (before
+      // or after a sync) always works too.
+      if (result.title) setName(result.title);
       setJiraStatus(result.status);
       setJiraSyncedAt(new Date().toISOString());
       setJiraSiteUrl(result.siteUrl);
@@ -924,16 +929,42 @@ export function NewCycleModal({
                 </div>
 
                 <Field label="Jira ticket link (optional)">
-                  <input
-                    type="text"
-                    value={ticketLink}
-                    onChange={e => setTicketLink(e.target.value)}
-                    placeholder="JIRA-1234 or a full URL"
-                    className="input"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={ticketLink}
+                      onChange={e => setTicketLink(e.target.value)}
+                      placeholder="JIRA-1234 or a full URL"
+                      className="input flex-1"
+                    />
+                    {jiraConnected && (
+                      <button
+                        type="button"
+                        disabled={!ticketLink.trim() || syncing}
+                        onClick={syncFromJira}
+                        className="flex-shrink-0 whitespace-nowrap rounded-[7px] border border-border bg-surface px-3 py-1.5 text-[12px] font-medium text-text hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {syncing ? (
+                          <i className="ti ti-loader-2 animate-spin text-[13px]" />
+                        ) : (
+                          'Sync from Jira'
+                        )}
+                      </button>
+                    )}
+                  </div>
+                  {syncError && (
+                    <p className="mt-1 text-[11px] font-medium text-danger">{syncError}</p>
+                  )}
+                  {jiraStatus && (
+                    <p className="mt-1 text-[11px] text-text-3">
+                      Jira status: <span className="font-medium text-text-2">{jiraStatus}</span>
+                      {jiraSyncedAt && ` · synced ${new Date(jiraSyncedAt).toLocaleString()}`}
+                    </p>
+                  )}
                 </Field>
                 <p className="-mt-2 text-[11px] text-text-3">
-                  Points out to your tracker — Simplitest doesn&apos;t manage a ticket workflow.
+                  Sync pulls the ticket&apos;s title in as the Cycle Name — Simplitest doesn&apos;t
+                  manage a ticket workflow beyond that.
                 </p>
               </>
             )}

@@ -16,6 +16,7 @@ interface CycleOverviewProps {
   onBack: () => void;
   onOpenTestRun: () => void;
   onUpdate: (id: string, patch: Record<string, unknown>) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
 }
 
 // The screen a case-based cycle opens to first -- a KPI summary, who mostly
@@ -29,10 +30,26 @@ export function CycleOverview({
   onBack,
   onOpenTestRun,
   onUpdate,
+  onDelete,
 }: CycleOverviewProps) {
   const [editing, setEditing] = useState<TestCycle | null>(null);
   const [editLoading, setEditLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const siteUrl = useJiraSiteUrl(projectId);
+
+  const handleDelete = async () => {
+    if (!data) return;
+    if (!window.confirm(`Delete this test run — "${data.cycle.name}"?\n\nThis cannot be undone.`))
+      return;
+    setDeleting(true);
+    try {
+      // Nothing left to show on this screen once the cycle is gone.
+      await onDelete(data.cycle.id);
+      onBack();
+    } catch {
+      setDeleting(false);
+    }
+  };
 
   const openEdit = async () => {
     if (!data) return;
@@ -146,6 +163,22 @@ export function CycleOverview({
                 className={cn(
                   'ti',
                   editLoading ? 'ti-loader-2 animate-spin' : 'ti-pencil',
+                  'text-[15px]',
+                )}
+              />
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting}
+              title="Delete test run"
+              aria-label="Delete test run"
+              className="flex h-[37px] w-[37px] items-center justify-center rounded-[7px] border border-border bg-surface text-danger transition-colors hover:bg-danger-bg disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <i
+                className={cn(
+                  'ti',
+                  deleting ? 'ti-loader-2 animate-spin' : 'ti-trash',
                   'text-[15px]',
                 )}
               />

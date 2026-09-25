@@ -35,6 +35,7 @@ interface CycleViewProps {
   onCloseRun?: (cycleId: string) => void;
   onRegenerate?: (cycleId: string) => void;
   onUpdate: (id: string, patch: Record<string, unknown>) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
 }
 
 const RESULT_BTN: Partial<Record<RunResult, string>> = {
@@ -109,12 +110,14 @@ export function CycleView({
   onCloseRun,
   onRegenerate,
   onUpdate,
+  onDelete,
 }: CycleViewProps) {
   const [filter, setFilter] = useState<FilterTab>('All');
   const [moduleFilter, setModuleFilter] = useState('');
   const [search, setSearch] = useState('');
   const [showEdit, setShowEdit] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   // Only a recurring-issue row expands — the chevron there opens its cross-cycle history.
   const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
@@ -230,6 +233,20 @@ export function CycleView({
     { key: 'Recurring', label: 'Recurring Issues', count: recurring?.length ?? 0 },
   ];
 
+  const handleDelete = async () => {
+    if (!window.confirm(`Delete this test run — "${cycle.name}"?\n\nThis cannot be undone.`))
+      return;
+    setDeleting(true);
+    try {
+      // The cycle being viewed no longer exists once deleted -- leave this
+      // screen instead of staying on a dead record.
+      await onDelete(cycle.id);
+      onBack();
+    } catch {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-bg">
       <div className="flex-1 overflow-y-auto px-44 py-6">
@@ -314,6 +331,21 @@ export function CycleView({
               >
                 <i className="ti ti-pencil text-[15px]" />
                 Edit
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+                className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-danger transition-colors hover:bg-danger-bg disabled:cursor-not-allowed disabled:opacity-50"
+                title="Delete test run"
+              >
+                <i
+                  className={cn(
+                    'ti text-[15px]',
+                    deleting ? 'ti-loader-2 animate-spin' : 'ti-trash',
+                  )}
+                />
+                Delete
               </button>
               <button
                 type="button"

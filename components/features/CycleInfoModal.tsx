@@ -404,9 +404,9 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                           >
                             {s.severity}
                           </span>
-                          {s.isReopened && (
+                          {(s.timesReopened > 0 || s.isReopened) && (
                             <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-800">
-                              Reopened {s.timesReopened}×
+                              Reopened {Math.max(s.timesReopened, s.isReopened ? 1 : 0)}×
                             </span>
                           )}
                         </div>

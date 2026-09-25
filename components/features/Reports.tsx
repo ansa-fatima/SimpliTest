@@ -118,10 +118,9 @@ const REPORT_TYPES: ReportTypeMeta[] = [
   },
   {
     key: 'recurringIssues',
-    label: 'Recurring Issues',
+    label: 'Issue Tracking',
     sub: 'The stuff that keeps coming back',
-    description:
-      'What keeps coming back instead of getting fixed for good — repeat failures and repeat quick logs.',
+    description: 'What keeps coming back instead of getting fixed for good — repeat failures.',
     icon: 'ti-repeat',
     iconColor: 'bg-amber-100 text-amber-700',
   },
@@ -208,7 +207,7 @@ export function Reports({
             {/* Header */}
             <div className="mb-5">
               <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
-                Reports &amp; Analytics
+                Analytics
               </h1>
               <p className="text-[13px] text-text-2">
                 Three reports cover it all: is the product stable, what keeps coming back, and what
@@ -253,7 +252,7 @@ export function Reports({
                 icon="ti-repeat"
                 iconColor="bg-amber-100 text-amber-700"
                 value={overview?.recurringIssuesTotal ?? 0}
-                label="Recurring Issues"
+                label="Issue Tracking"
               />
             </div>
 
@@ -275,7 +274,7 @@ export function Reports({
                     rt.key === 'stability'
                       ? 'avg. module stability'
                       : rt.key === 'recurringIssues'
-                        ? 'recurring cases + suites'
+                        ? 'recurring cases + reopened tickets'
                         : 'total logged entries'
                   }
                   onClick={() => setActiveTab(rt.key)}
@@ -288,7 +287,7 @@ export function Reports({
             {/* Breadcrumb */}
             <div className="flex items-center gap-1.5 text-[12px] text-text-3">
               <button type="button" onClick={() => setActiveTab(null)} className="hover:text-text">
-                Reports
+                Analytics
               </button>
               <span>/</span>
               <span className="font-medium text-text">
@@ -504,7 +503,6 @@ export function Reports({
                 <RecurringIssuesReport
                   projectId={projectId}
                   filters={filters}
-                  onOpenCycle={onOpenCycle}
                   onCsvReady={fn => {
                     csvHandlerRef.current = fn;
                   }}
@@ -1569,7 +1567,7 @@ function CycleHistoryReport({
   );
 }
 
-// ─── Recurring Issues report ──────────────────────────────────
+// ─── Issue Tracking report (Recurring test cases + Reopened Jira) ─────
 
 interface RecurringCaseCycle {
   id: string;
@@ -1699,17 +1697,16 @@ function JiraIssueRowView({
 function RecurringIssuesReport({
   projectId,
   filters,
-  onOpenCycle,
   onCsvReady,
 }: {
   projectId: string | null;
   filters: Filters;
-  onOpenCycle?: (cycleId: string) => void;
   onCsvReady: (fn: () => void) => void;
 }) {
   const [data, setData] = useState<RecurringIssuesPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [topTab, setTopTab] = useState<RecurringTopTab>('recurring');
+  const [viewingCycleId, setViewingCycleId] = useState<string | null>(null);
   const workspaceSiteUrl = useJiraSiteUrl(projectId);
 
   useEffect(() => {
@@ -1866,14 +1863,9 @@ function RecurringIssuesReport({
                       <button
                         key={cy.id}
                         type="button"
-                        disabled={!onOpenCycle}
-                        onClick={() => onOpenCycle?.(cy.id)}
+                        onClick={() => setViewingCycleId(cy.id)}
                         title={`${cy.result} · ${relativeTime(cy.ts)}`}
-                        className={cn(
-                          'inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[11px] text-text-2 transition-colors',
-                          onOpenCycle &&
-                            'cursor-pointer hover:border-primary hover:text-primary-text',
-                        )}
+                        className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[11px] text-text-2 transition-colors hover:border-primary hover:text-primary-text"
                       >
                         <span
                           className={cn(
@@ -1895,11 +1887,19 @@ function RecurringIssuesReport({
                   issue={j}
                   siteUrl={workspaceSiteUrl}
                   occurrenceLabel={`Synced in ${j.cycleCount} ${j.cycleCount === 1 ? 'cycle' : 'cycles'}`}
-                  onOpenCycle={onOpenCycle}
+                  onOpenCycle={setViewingCycleId}
                 />
               ))}
           </div>
         </div>
+      )}
+
+      {viewingCycleId && (
+        <CycleInfoModal
+          cycleId={viewingCycleId}
+          projectId={projectId}
+          onClose={() => setViewingCycleId(null)}
+        />
       )}
     </div>
   );

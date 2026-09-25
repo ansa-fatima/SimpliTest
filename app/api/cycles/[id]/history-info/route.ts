@@ -26,7 +26,11 @@ interface Ctx {
 // timesReopened is the one field on JiraSubIssue that survives a re-sync's
 // delete+recreate (see the cycles PATCH route) -- a per-ticket count of
 // how many times it's actually flipped into Reopened, not just "is it
-// Reopened right now."
+// Reopened right now." `isReopened` rides along as a floor: a row synced
+// before timesReopened existed (or whose only-ever Reopened sync predates
+// it) sits at timesReopened=0 despite genuinely being reopened right now --
+// the UI shows the badge whenever EITHER is true, using timesReopened once
+// it's actually counted something.
 export async function GET(_req: Request, { params }: Ctx) {
   try {
     const cycle = await prisma.testCycle.findUnique({ where: { id: params.id } });
