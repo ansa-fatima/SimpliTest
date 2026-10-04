@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { TestCase, TestCycle, ApiTestRun, ApiTestCase } from '@/types';
 import { formatCaseId } from './utils';
+import { CYCLE_COLUMNS, deriveOutcome } from './cycleOutcome';
 
 function stripHtml(html: string): string {
   return html
@@ -281,6 +282,119 @@ export function exportApiTestCases(cases: ApiTestCase[], ctx: ApiExportContext =
   const filename = `Simplitest_${segments || 'TestCases'}_${stamp}.xlsx`;
 
   XLSX.writeFile(wb, filename);
+}
+
+// ────────────────────────────────────────────────────────────
+// Testing Cycles (Quick Logs) export + sample import template
+// ────────────────────────────────────────────────────────────
+
+function cycleDateStr(c: TestCycle): string {
+  const iso = c.completedAt ?? c.createdAt;
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate(),
+  ).padStart(2, '0')}`;
+}
+
+// Maps one cycle to the canonical header→value shape the import understands,
+// so an exported file round-trips straight back through the importer. Keyed by
+// CYCLE_COLUMNS so export, sample, and import always share one column set.
+function cycleToSheetRow(c: TestCycle): Record<string, string | number> {
+  const open = c.remainingCount ?? Math.max(0, (c.issueCount ?? 0) - (c.doneCount ?? 0));
+  const byKey: Record<string, string | number> = {
+    date: cycleDateStr(c),
+    portal: c.portalName ?? '',
+    module: c.moduleName ?? '',
+    feature: c.featureName ?? '',
+    environment: c.environment ?? '',
+    cycleType: c.cycleCategory ?? '',
+    platform: c.platform ?? '',
+    version: c.version ?? '',
+    ticket: c.ticketLink ?? '',
+    outcome: deriveOutcome(c),
+    qaEngineer: c.loggedBy ?? '',
+    critical: c.criticalCount ?? 0,
+    major: c.majorCount ?? 0,
+    minor: c.minorCount ?? 0,
+    openIssues: open,
+    testRunLink: c.testRunLink ?? '',
+    notes: c.description ?? '',
+  };
+  const row: Record<string, string | number> = {};
+  for (const col of CYCLE_COLUMNS) row[col.header] = byKey[col.key];
+  return row;
+}
+
+export function exportCycles(cycles: TestCycle[]) {
+  if (cycles.length === 0) {
+    alert('No testing cycles to export.');
+    return;
+  }
+  const rows = cycles.map(cycleToSheetRow);
+  const ws = XLSX.utils.json_to_sheet(rows, { header: CYCLE_COLUMNS.map(c => c.header) });
+  ws['!cols'] = CYCLE_COLUMNS.map(c => ({ wch: c.width }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Testing Cycles');
+  const stamp = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `SimpliTest_TestingCycles_${stamp}.xlsx`);
+}
+
+// A ready-to-fill .xlsx: the header row, a one-line guidance row per column
+// (prefixed so it's obviously not data and is easy to delete), and two
+// realistic example rows. Re-imports cleanly after the guidance row is removed
+// -- the importer skips rows with no parseable date, which the guidance row has.
+export function downloadCycleSampleTemplate() {
+  const header = CYCLE_COLUMNS.map(c => c.header);
+  const guidance: Record<string, string> = {};
+  for (const col of CYCLE_COLUMNS) guidance[col.header] = `↳ ${col.note}`;
+
+  const example1: Record<string, string | number> = {
+    Date: '2026-07-29',
+    Module: 'Setting',
+    Feature: 'Activity Log',
+    Portal: 'Admin (Web)',
+    Environment: 'QA',
+    'Cycle Type': 'Functional',
+    Platform: 'Web',
+    Version: 'v3.0.140',
+    'Parent Ticket': 'NPD-11801',
+    Outcome: 'Open',
+    'QA Engineer': 'Kanwal Kothari',
+    Critical: 0,
+    Major: 1,
+    Minor: 2,
+    'Open Issues': 3,
+    'Test-Run Link': 'https://example.testrail.io/runs/view/1234',
+    Notes: 'Second QA fixes cycle — 3 issues still open.',
+  };
+  const example2: Record<string, string | number> = {
+    Date: '2026-02-11',
+    Module: 'QR Attendance',
+    Feature: 'QR Attendance',
+    Portal: 'QR Attendance App',
+    Environment: 'Production',
+    'Cycle Type': 'Functional',
+    Platform: 'All',
+    Version: 'v2.4.0',
+    'Parent Ticket': 'NPD-10771',
+    Outcome: 'Pass',
+    'QA Engineer': 'Kanwal Kothari',
+    Critical: 0,
+    Major: 0,
+    Minor: 0,
+    'Open Issues': 0,
+    'Test-Run Link': '',
+    Notes: 'All functional checks passed.',
+  };
+
+  const ws = XLSX.utils.json_to_sheet([guidance, example1, example2], { header });
+  ws['!cols'] = CYCLE_COLUMNS.map(c => ({ wch: c.width }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Testing Cycles');
+  XLSX.writeFile(wb, 'SimpliTest_TestingCycles_Sample.xlsx');
 }
 
 function tallyBy<T>(items: T[], key: (item: T) => string): Record<string, number> {

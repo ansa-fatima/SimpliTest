@@ -594,6 +594,17 @@ model TestCycle {
   // narrows test runs. Existing rows predate this field and stay blank.
   loggedBy      String    @default("")
 
+  // Explicit cycle outcome for Manual (quick-log / testing-cycle) entries:
+  // "Open" (still in progress), "Pass", or "Fail". Null on rows that predate
+  // this field — the UI derives a display value from the counts below in that
+  // case (0 remaining -> Pass, remaining > 0 -> Fail), so existing data reads
+  // correctly without a backfill. A user-chosen value always wins.
+  outcome       String?
+  // External test-run URL (TestRail/Xray/doc), separate from the Jira
+  // ticketLink above — the parent ticket and the test-run record are two
+  // different links in the testing-cycle form.
+  testRunLink   String?
+
   // Aggregate counts for Manual cycles. CaseBased cycles derive these from runs[].
   issueCount     Int @default(0) // total defects found
   criticalCount  Int @default(0)

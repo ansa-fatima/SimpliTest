@@ -29,11 +29,16 @@ COPY --from=builder /app/node_modules ./node_modules
 EXPOSE 3000
 
 # Bring the DB in line with prisma/schema.prisma on startup, then start the app.
-# schema.prisma is the single source of truth — the entrypoint uses
+# By default schema.prisma is the single source of truth — the entrypoint uses
 # `prisma db push` (not migrations), so any table/column/constraint you add to
 # the schema is created automatically on the next deploy. See docker-entrypoint.sh.
 #
 # Env flags:
+#   RUN_MIGRATIONS=true  (default false, non-destructive)
+#       Apply the versioned migrations in prisma/migrations via
+#       `prisma migrate deploy` instead of the inferred `db push`. Falls back to
+#       a non-destructive `db push` if the DB has no migration history.
+#
 #   SEED_DATA=true  (default false, non-destructive)
 #       After the schema sync, run the idempotent seed (prisma db seed).
 #       Safe to leave on: seed.js upserts and skips existing rows. Toggle this

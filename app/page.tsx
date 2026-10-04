@@ -70,6 +70,7 @@ export default function Home() {
     viewApiCase,
     regenerateCycle,
     updateCycle,
+    loadCycles,
   } = useStore();
 
   const {
@@ -239,10 +240,12 @@ export default function Home() {
               loading={cyclesLoading}
               modules={modules}
               projectId={currentProjectId}
+              currentUserName={user?.name || user?.username || ''}
               onOpenRun={openCycle}
               onCreate={createCycle}
               onUpdate={updateCycle}
               onDelete={deleteCycle}
+              onReload={loadCycles}
             />
           )}
 

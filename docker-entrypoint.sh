@@ -3,7 +3,8 @@
 # seed, then start Next.js. See the Dockerfile comment block for the full story.
 #
 # Three env-controlled stages (all default OFF except the always-on sync):
-#   1. Schema sync   — ALWAYS runs (`prisma db push`, non-destructive).
+#   1. Schema sync   — db push (non-destructive) OR, with RUN_MIGRATIONS=true,
+#                      `prisma migrate deploy` (apply versioned migrations).
 #   2. RESET_DB=true — DESTRUCTIVE opt-in: drop schema, rebuild, force-seed.
 #   3. SEED_DATA=true — non-destructive idempotent seed after the sync.
 set -u
@@ -25,8 +26,32 @@ if [ "${RESET_DB:-false}" = "true" ]; then
   else
     echo "!! reset path failed — starting app anyway, check DATABASE_URL and the logs above"
   fi
+elif [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
+  # ── Stage 1a: Versioned migrations (opt-in) ─────────────────────────────────
+  # `prisma migrate deploy` applies every pending migration in prisma/migrations
+  # in order — the path to take when schema/DB changes should land through real,
+  # reviewable migration files rather than an inferred schema push.
+  #
+  # One caveat it handles automatically: a database that was first provisioned
+  # by `prisma db push` has no _prisma_migrations history, so `migrate deploy`
+  # can't tell which migrations already ran and refuses (P3005, "schema is not
+  # empty"). Rather than fail the boot, we fall back to a non-destructive
+  # `db push` so the existing DB still gets any new columns. Fresh databases
+  # apply cleanly and keep a proper migration history.
+  echo "RUN_MIGRATIONS=true — applying migrations (prisma migrate deploy)…"
+  if npx prisma migrate deploy 2>&1; then
+    echo "migrate deploy OK"
+  else
+    echo "!! migrate deploy could not run (likely a db-push-provisioned DB with no"
+    echo "!! migration history). Falling back to a non-destructive 'prisma db push'…"
+    if npx prisma db push --skip-generate 2>&1; then
+      echo "schema sync (fallback) OK"
+    else
+      echo "!! fallback schema sync also failed — starting the app anyway, check the logs above."
+    fi
+  fi
 else
-  # ── Stage 1: Schema sync (ALWAYS, non-destructive) ──────────────────────────
+  # ── Stage 1b: Schema sync (default, non-destructive) ────────────────────────
   # `prisma db push` reconciles the live DB to match schema.prisma exactly:
   # it creates missing tables/columns and applies constraints/indexes. This
   # covers the current schema and every FUTURE schema change with no migration

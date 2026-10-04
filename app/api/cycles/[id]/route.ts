@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { CycleStatus, CycleScopeType } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 import { deriveSiteUrlFromTicketLink, withReopenHistory, JiraSubIssueInfo } from '@/lib/jira';
+import { normalizeOutcome } from '@/lib/cycleOutcome';
 
 interface Ctx {
   params: { id: string };
@@ -98,6 +99,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
       'version',
       'cycleCategory',
       'ticketLink',
+      'testRunLink',
       'jiraStatus',
       'jiraSiteUrl',
     ] as const;
@@ -106,6 +108,17 @@ export async function PATCH(req: Request, { params }: Ctx) {
       if (v === null) data[k] = null;
       else if (typeof v === 'string') data[k] = v.trim() || null;
     }
+
+    // Who ran the cycle (editable QA Engineer field). Unlike the free-text
+    // fields above, loggedBy is a non-null column, so clearing it stores '',
+    // not null.
+    if (body.loggedBy === null) data.loggedBy = '';
+    else if (typeof body.loggedBy === 'string') data.loggedBy = body.loggedBy.trim();
+
+    // Explicit outcome (Open/Pass/Fail). null or an unrecognized value clears
+    // it back to count-derived display; a recognized value is stored canonical.
+    if (body.outcome === null) data.outcome = null;
+    else if (typeof body.outcome === 'string') data.outcome = normalizeOutcome(body.outcome);
 
     // Set by "Sync from Jira" alongside jiraStatus/the count fields above.
     if (body.jiraSyncedAt !== undefined) {

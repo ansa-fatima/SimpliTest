@@ -37,6 +37,11 @@ export interface CycleFormPayload {
   version?: string;
   cycleCategory?: string;
   ticketLink?: string;
+  testRunLink?: string;
+  /** Explicit cycle outcome (Manual mode): "Open" | "Pass" | "Fail". */
+  outcome?: string;
+  /** Who ran this cycle (QA Engineer). Overrides the session default when set. */
+  loggedBy?: string;
   jiraStatus?: string;
   jiraSyncedAt?: string | null;
   jiraSiteUrl?: string | null;

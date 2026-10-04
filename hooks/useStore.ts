@@ -937,6 +937,9 @@ export function useStore() {
       version?: string;
       cycleCategory?: string;
       ticketLink?: string;
+      testRunLink?: string;
+      outcome?: string;
+      loggedBy?: string;
       jiraStatus?: string;
       jiraSyncedAt?: string | null;
       jiraSiteUrl?: string | null;
@@ -958,9 +961,12 @@ export function useStore() {
       }
       try {
         // Attributed the same way executedBy is on a test run — from the
-        // logged-in session, not a field the tester fills in — so the
-        // Reports Tester filter can narrow quick logs too.
-        const loggedBy = state.user?.name || state.user?.username || '';
+        // logged-in session by default, so the Reports Tester filter can
+        // narrow quick logs too. The Testing Cycles form lets the user name a
+        // different QA Engineer, so a value the form supplies wins over the
+        // session default.
+        const sessionLoggedBy = state.user?.name || state.user?.username || '';
+        const loggedBy = input.loggedBy?.trim() || sessionLoggedBy;
         await api.post<TestCycle>('/api/cycles', { ...input, projectId, loggedBy });
         showToast(
           input.mode === 'Manual' ? 'Quick-log cycle saved ✓' : 'Cycle created ✓',

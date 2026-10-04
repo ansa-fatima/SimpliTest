@@ -100,6 +100,10 @@ export interface TestCycle {
   jiraSiteUrl?: string | null;
   /** Who logged this quick log (Manual mode only). */
   loggedBy?: string;
+  /** Explicit cycle outcome (Manual mode): "Open" | "Pass" | "Fail". Null-derived from counts when unset. */
+  outcome?: string | null;
+  /** External test-run URL, separate from the Jira ticketLink. */
+  testRunLink?: string | null;
   issueCount?: number;
   criticalCount?: number;
   majorCount?: number;

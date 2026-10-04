@@ -3,6 +3,7 @@ import { Prisma, CycleScopeType, CycleStatus, CycleMode } from '@prisma/client';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 import { loadRunResultClassMap } from '@/lib/options';
 import { deriveSiteUrlFromTicketLink, JiraSubIssueInfo } from '@/lib/jira';
+import { normalizeOutcome } from '@/lib/cycleOutcome';
 
 const SCOPE_TYPES: CycleScopeType[] = ['All', 'Portal', 'Module', 'Suite', 'Custom'];
 const MODES: CycleMode[] = ['CaseBased', 'Manual'];
@@ -213,6 +214,8 @@ export async function POST(req: Request) {
       version?: string;
       cycleCategory?: string;
       ticketLink?: string;
+      testRunLink?: string;
+      outcome?: string;
       jiraStatus?: string;
       jiraSyncedAt?: string | null;
       jiraSiteUrl?: string | null;
@@ -269,6 +272,8 @@ export async function POST(req: Request) {
           version: body.version?.trim() || null,
           cycleCategory: body.cycleCategory?.trim() || null,
           ticketLink: body.ticketLink?.trim() || null,
+          testRunLink: body.testRunLink?.trim() || null,
+          outcome: normalizeOutcome(body.outcome),
           jiraStatus: body.jiraStatus?.trim() || null,
           jiraSyncedAt: body.jiraSyncedAt ? new Date(body.jiraSyncedAt) : null,
           // Explicit value (from an actual sync) wins; otherwise, if
