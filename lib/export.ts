@@ -305,6 +305,7 @@ function cycleToSheetRow(c: TestCycle): Record<string, string | number> {
   const open = c.remainingCount ?? Math.max(0, (c.issueCount ?? 0) - (c.doneCount ?? 0));
   const byKey: Record<string, string | number> = {
     date: cycleDateStr(c),
+    name: c.name ?? '',
     portal: c.portalName ?? '',
     module: c.moduleName ?? '',
     feature: c.featureName ?? '',
@@ -353,6 +354,7 @@ export function downloadCycleSampleTemplate() {
 
   const example1: Record<string, string | number> = {
     Date: '2026-07-29',
+    'Cycle Name': 'School Admin/Super User - Setting - Activity Log - QA Fixes 2nd Cycle',
     Module: 'Setting',
     Feature: 'Activity Log',
     Portal: 'Admin (Web)',
@@ -372,6 +374,7 @@ export function downloadCycleSampleTemplate() {
   };
   const example2: Record<string, string | number> = {
     Date: '2026-02-11',
+    'Cycle Name': 'QR Attendance App - Functional Regression',
     Module: 'QR Attendance',
     Feature: 'QR Attendance',
     Portal: 'QR Attendance App',

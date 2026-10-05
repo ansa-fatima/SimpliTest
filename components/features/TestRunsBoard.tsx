@@ -814,14 +814,18 @@ function CycleRow({
       </td>
       <td className="px-3 py-2.5">
         <div className="flex items-center gap-2">
-          <span className="font-medium text-text">{moduleName}</span>
+          <span className="font-medium text-text">{c.name || moduleName}</span>
           {unmapped && (
             <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[9.5px] text-text-3">
               Unmapped
             </span>
           )}
         </div>
-        {c.featureName && <p className="text-[11px] text-text-3">{c.featureName}</p>}
+        {(c.moduleName || c.featureName) && (
+          <p className="text-[11px] text-text-3">
+            {[c.moduleName, c.featureName].filter(Boolean).join(' · ')}
+          </p>
+        )}
       </td>
       <td className="whitespace-nowrap px-3 py-2.5 text-text-2">{c.environment || '—'}</td>
       <td className="whitespace-nowrap px-3 py-2.5 text-text-2">{c.cycleCategory || '—'}</td>

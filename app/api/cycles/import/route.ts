@@ -97,6 +97,7 @@ export async function POST(req: Request) {
       const done = Math.max(0, issueCount - remaining);
       const date = new Date(`${row.date}T00:00:00`);
       const name =
+        row.name ||
         [row.module, row.feature].filter(Boolean).join(' → ') ||
         row.module ||
         `Testing cycle — ${row.date}`;

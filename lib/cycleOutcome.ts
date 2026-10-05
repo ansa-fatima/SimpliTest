@@ -65,6 +65,7 @@ export interface CycleColumn {
 
 export interface CycleImportRow {
   date: string;
+  name: string;
   portal: string;
   module: string;
   feature: string;
@@ -85,6 +86,12 @@ export interface CycleImportRow {
 
 export const CYCLE_COLUMNS: CycleColumn[] = [
   { key: 'date', header: 'Date', width: 12, note: 'YYYY-MM-DD. Required.' },
+  {
+    key: 'name',
+    header: 'Cycle Name',
+    width: 50,
+    note: 'Title shown on the log, e.g. School Admin - Setting - Activity Log - QA Fixes 2nd Cycle. Optional — blank = Module → Feature.',
+  },
   { key: 'module', header: 'Module', width: 22, note: 'Module name. Required.' },
   { key: 'feature', header: 'Feature', width: 22, note: 'Feature / suite name. Optional.' },
   { key: 'portal', header: 'Portal', width: 18, note: 'Portal name. Optional — helps linking.' },
@@ -139,6 +146,8 @@ const HEADER_LOOKUP: Record<string, keyof CycleImportRow> = (() => {
   map[canon('Engineer')] = 'qaEngineer';
   map[canon('Test Run')] = 'testRunLink';
   map[canon('Suite')] = 'feature';
+  map[canon('Title')] = 'name';
+  map[canon('Name')] = 'name';
   return map;
 })();
 
@@ -167,6 +176,7 @@ export function mapSheetRow(raw: Record<string, unknown>): CycleImportRow {
   }
   return {
     date: normalizeDate(toStr(row.date)),
+    name: toStr(row.name),
     portal: toStr(row.portal),
     module: toStr(row.module),
     feature: toStr(row.feature),
