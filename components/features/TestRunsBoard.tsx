@@ -88,6 +88,8 @@ export function TestRunsBoard({
   const [moduleFilter, setModuleFilter] = useState('');
   const [engineerFilter, setEngineerFilter] = useState('');
   const [portalFilter, setPortalFilter] = useState('');
+  const [outcomeFilter, setOutcomeFilter] = useState<'' | CycleOutcome>('');
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Pull the sprint number out of version strings like "v3.0.140" or
   // "Version: 4.0.140" -- the third dotted segment is the sprint. Anything
@@ -210,6 +212,7 @@ export function TestRunsBoard({
     const startMs = useCustom && periodStart ? new Date(`${periodStart}T00:00:00`).getTime() : null;
     // End is inclusive of the whole day.
     const endMs = useCustom && periodEnd ? new Date(`${periodEnd}T23:59:59`).getTime() : null;
+    const q = searchQuery.trim().toLowerCase();
     return quickLogs.filter(c => {
       const ts = new Date(c.completedAt ?? c.createdAt).getTime();
       if (startMs !== null && ts < startMs) return false;
@@ -218,6 +221,17 @@ export function TestRunsBoard({
       if (moduleFilter && c.moduleName !== moduleFilter) return false;
       if (engineerFilter && c.loggedBy !== engineerFilter) return false;
       if (portalFilter && c.portalName !== portalFilter) return false;
+      if (outcomeFilter && deriveOutcome(c) !== outcomeFilter) return false;
+      if (q) {
+        // Search sweeps the fields a reader scans visually -- title,
+        // module/feature, ticket key, tester name -- so typing part of any
+        // one of them narrows the list the way they'd expect.
+        const hay = [c.name, c.moduleName, c.featureName, c.ticketLink, c.loggedBy]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
       return true;
     });
   }, [
@@ -229,6 +243,8 @@ export function TestRunsBoard({
     moduleFilter,
     engineerFilter,
     portalFilter,
+    outcomeFilter,
+    searchQuery,
   ]);
 
   const inProgress = caseBased.filter(c => c.status === 'Active' && isStarted(c));
@@ -394,6 +410,10 @@ export function TestRunsBoard({
                 setEngineerFilter={setEngineerFilter}
                 portalFilter={portalFilter}
                 setPortalFilter={setPortalFilter}
+                outcomeFilter={outcomeFilter}
+                setOutcomeFilter={setOutcomeFilter}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
                 moduleOptions={moduleOptions}
                 engineerOptions={engineerOptions}
                 portalOptions={portalOptions}
@@ -711,6 +731,10 @@ function CycleFilters({
   setEngineerFilter,
   portalFilter,
   setPortalFilter,
+  outcomeFilter,
+  setOutcomeFilter,
+  searchQuery,
+  setSearchQuery,
   moduleOptions,
   engineerOptions,
   portalOptions,
@@ -730,6 +754,10 @@ function CycleFilters({
   setEngineerFilter: (v: string) => void;
   portalFilter: string;
   setPortalFilter: (v: string) => void;
+  outcomeFilter: '' | CycleOutcome;
+  setOutcomeFilter: (v: '' | CycleOutcome) => void;
+  searchQuery: string;
+  setSearchQuery: (v: string) => void;
   moduleOptions: string[];
   engineerOptions: string[];
   portalOptions: string[];
@@ -740,6 +768,46 @@ function CycleFilters({
   const labelCls = 'text-[10.5px] font-semibold uppercase tracking-wide text-text-3';
   return (
     <div className="mb-4 flex flex-col gap-3 rounded-lg border border-border bg-surface p-3">
+      {/* Row 0 -- Search box + Outcome chips. Search covers title, module,
+          feature, ticket and tester, so the keyboard-first way to find a
+          cycle is the one typists expect. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="relative min-w-[220px] flex-1">
+          <i className="ti ti-search pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-text-3" />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search title, module, feature, ticket or tester…"
+            className="w-full rounded-full border border-border bg-surface py-1.5 pl-8 pr-3 text-[12.5px] text-text outline-none focus:border-primary"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-3 hover:text-text"
+              title="Clear search"
+            >
+              <i className="ti ti-x text-[12px]" />
+            </button>
+          )}
+        </div>
+        <span className={labelCls}>Outcome</span>
+        <FilterChip
+          active={outcomeFilter === ''}
+          onClick={() => setOutcomeFilter('')}
+          label="All"
+        />
+        {(['Pass', 'Fail', 'Blocked', 'Open'] as const).map(o => (
+          <FilterChip
+            key={o}
+            active={outcomeFilter === o}
+            onClick={() => setOutcomeFilter(outcomeFilter === o ? '' : o)}
+            label={o}
+          />
+        ))}
+      </div>
+
       {/* Row 1 -- Period pills + Sprints dropdown */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span className={labelCls}>Period</span>
@@ -881,6 +949,7 @@ function FilterChip({
 function outcomeTone(outcome: CycleOutcome): { bg: string; text: string } {
   if (outcome === 'Pass') return { bg: 'bg-success-bg', text: 'text-success-text' };
   if (outcome === 'Fail') return { bg: 'bg-danger-bg', text: 'text-danger-text' };
+  if (outcome === 'Blocked') return { bg: 'bg-slate-500/15', text: 'text-slate-600' };
   return { bg: 'bg-warning-bg', text: 'text-warning-text' }; // Open
 }
 
