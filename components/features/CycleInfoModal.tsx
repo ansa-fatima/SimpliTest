@@ -205,6 +205,63 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
     subRollup[st]++;
     if (st !== 'Done' && st !== 'Verified') stillOpen++;
   }
+  // Jira-palette status styles -- same tokens for the per-row badge, the
+  // left border, and the dots in the rollup summary, so a quick scan reads
+  // the colour the same way everywhere. Chosen to match Atlassian's
+  // Lozenge semantics: Done + Verified green (success), To-Do grey
+  // (default), Reopened orange (moved/attention), with the Reopened case
+  // deliberately NOT red so a healthy row full of Reopens doesn't scream
+  // "failed".
+  const JIRA_STATUS: Record<
+    'Verified' | 'Done' | 'Open-to-do' | 'Reopened',
+    { badge: string; border: string; dot: string }
+  > = {
+    Verified: {
+      badge: 'bg-emerald-500/15 text-emerald-600',
+      border: 'border-l-emerald-500',
+      dot: 'bg-emerald-500',
+    },
+    Done: {
+      badge: 'bg-emerald-500/15 text-emerald-700',
+      border: 'border-l-emerald-600',
+      dot: 'bg-emerald-600',
+    },
+    'Open-to-do': {
+      badge: 'bg-slate-500/15 text-slate-500',
+      border: 'border-l-slate-400',
+      dot: 'bg-slate-400',
+    },
+    Reopened: {
+      badge: 'bg-orange-500/15 text-orange-600',
+      border: 'border-l-orange-500',
+      dot: 'bg-orange-500',
+    },
+  };
+
+  // Derived "QA Status" -- the single word that answers "is this cycle
+  // closed?" without the reader having to count sub-tasks. Rules kept
+  // simple so the chip is explainable in one line:
+  //   any Reopened -> Reopened (requires a retest)
+  //   any Open-to-do -> QA In Progress
+  //   all Done + at least one Verified -> QA Approved
+  //   all Done, nothing Verified -> QA Passed
+  //   no sub-tasks -> fall back to the cycle.status (New / Active / Completed)
+  const subTotal = cycle?.jiraSubIssues.length ?? 0;
+  const qaStatus: { label: string; cls: string } = (() => {
+    // Jira-palette lozenges: Done + Verified green (Jira "success"),
+    // In-progress / QA light blue (Jira "inprogress"), Reopened orange
+    // (Jira "moved"). Matches the Status column of a real Jira sub-task
+    // list, so a reader coming from Jira doesn't have to re-learn colours.
+    if (!cycle) return { label: '—', cls: 'bg-surface-3 text-text-2' };
+    if (subTotal === 0) return { label: cycle.status, cls: 'bg-surface-3 text-text-2' };
+    if (subRollup.Reopened > 0)
+      return { label: 'Reopened', cls: 'bg-orange-500/15 text-orange-600' };
+    if (subRollup['Open-to-do'] > 0)
+      return { label: 'QA In Progress', cls: 'bg-sky-500/15 text-sky-700' };
+    if (subRollup.Verified > 0)
+      return { label: 'QA Approved', cls: 'bg-emerald-500/15 text-emerald-700' };
+    return { label: 'QA Passed', cls: 'bg-emerald-500/15 text-emerald-600' };
+  })();
   const outcomeTone =
     cycle?.status === 'Completed' && cycle?.remainingCount === 0
       ? { label: 'Pass', bg: 'bg-success/15 text-success' }
@@ -217,6 +274,10 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
         {
           k: outcomeTone.label,
           cls: `rounded-full px-2.5 py-1 text-[11px] font-semibold ${outcomeTone.bg}`,
+        },
+        {
+          k: qaStatus.label,
+          cls: `rounded-full px-2.5 py-1 text-[11px] font-semibold ${qaStatus.cls}`,
         },
         ...(cycle.cycleCategory
           ? [
@@ -479,16 +540,26 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                     )}
                   </p>
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[11px]">
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text-3">
-                      {[
-                        { k: 'Verified' as const, dot: 'bg-success' },
-                        { k: 'Done' as const, dot: 'bg-primary' },
-                        { k: 'Open-to-do' as const, dot: 'bg-warning' },
-                        { k: 'Reopened' as const, dot: 'bg-danger' },
-                      ].map(({ k, dot }) => (
-                        <span key={k} className="inline-flex items-center gap-1">
-                          <span className={cn('h-1.5 w-1.5 rounded-full', dot)} />
-                          <span className="font-semibold text-text">{subRollup[k]}</span> {k}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span
+                        className={cn(
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide',
+                          qaStatus.cls,
+                        )}
+                      >
+                        {qaStatus.label}
+                      </span>
+                      <span className="mx-1 h-3 w-px bg-border" />
+                      {(['Verified', 'Done', 'Open-to-do', 'Reopened'] as const).map(k => (
+                        <span
+                          key={k}
+                          className={cn(
+                            'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium',
+                            JIRA_STATUS[k].badge,
+                          )}
+                        >
+                          <span className="font-bold">{subRollup[k]}</span>
+                          {k}
                         </span>
                       ))}
                     </div>
@@ -497,22 +568,8 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                   <div className="flex flex-col gap-1.5">
                     {cycle.jiraSubIssues.map(s => {
                       const st = statusOf(s);
-                      const borderCls =
-                        st === 'Reopened'
-                          ? 'border-l-danger'
-                          : st === 'Open-to-do'
-                            ? 'border-l-warning'
-                            : st === 'Done'
-                              ? 'border-l-primary'
-                              : 'border-l-success';
-                      const badgeCls =
-                        st === 'Reopened'
-                          ? 'bg-danger/15 text-danger'
-                          : st === 'Open-to-do'
-                            ? 'bg-warning/15 text-warning'
-                            : st === 'Done'
-                              ? 'bg-primary/15 text-primary'
-                              : 'bg-success/15 text-success';
+                      const borderCls = JIRA_STATUS[st].border;
+                      const badgeCls = JIRA_STATUS[st].badge;
                       return (
                         <div
                           key={s.issueKey}
