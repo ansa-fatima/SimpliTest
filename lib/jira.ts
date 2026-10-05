@@ -69,6 +69,24 @@ export async function testConnection(creds: JiraCreds): Promise<{ displayName: s
 // full URL" -- users already paste either form there, so Jira sync reads
 // straight from that existing field instead of a redundant new one.
 const ISSUE_KEY_RE = /([A-Z][A-Z0-9]+-\d+)/;
+const ISSUE_KEY_RE_G = /([A-Z][A-Z0-9]+-\d+)/g;
+
+// Grabs every Jira key out of a ticket link that may list several ("NPD-10656,
+// NPD-10700", "https://.../NPD-123 and NPD-124") -- de-duplicated, in the
+// order they appear. Sync-from-Jira walks each one and merges the sub-tasks,
+// so a QA cycle driven by more than one parent ticket shows all of them.
+export function parseIssueKeys(ticketLink: string | null | undefined): string[] {
+  if (!ticketLink) return [];
+  const out: string[] = [];
+  const upper = ticketLink.toUpperCase();
+  let m: RegExpExecArray | null;
+  ISSUE_KEY_RE_G.lastIndex = 0;
+  while ((m = ISSUE_KEY_RE_G.exec(upper))) {
+    if (!out.includes(m[1])) out.push(m[1]);
+  }
+  return out;
+}
+
 export function parseIssueKey(ticketLink: string | null | undefined): string | null {
   if (!ticketLink) return null;
   const m = ticketLink.toUpperCase().match(ISSUE_KEY_RE);
@@ -281,8 +299,8 @@ function tally(
 // issue's `subtasks` field doesn't include priority/severity/status -- if
 // that search isn't available on the connected instance.
 export async function syncFromJira(creds: JiraCreds, ticketLink: string): Promise<JiraSyncResult> {
-  const issueKey = parseIssueKey(ticketLink);
-  if (!issueKey) {
+  const keys = parseIssueKeys(ticketLink);
+  if (keys.length === 0) {
     throw new JiraApiError('Could not find a Jira issue key in the ticket link (e.g. "NPD-10656")');
   }
 
@@ -294,44 +312,79 @@ export async function syncFromJira(creds: JiraCreds, ticketLink: string): Promis
     ...(severityFieldId ? [severityFieldId] : []),
   ];
 
-  const issue = (await jiraFetch(
-    creds,
-    `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=status,subtasks,summary`,
-  )) as JiraIssueLike;
-  const status = issue.fields.status?.name || 'Unknown';
-  const title = issue.fields.summary || issueKey;
-
-  try {
-    const search = (await jiraFetch(creds, '/rest/api/3/search/jql', {
-      method: 'POST',
-      body: {
-        jql: `parent = ${issueKey}`,
-        fields: childFields,
-        maxResults: 200,
-      },
-    })) as { issues?: JiraIssueLike[] };
-    if (search.issues) {
-      return tally(issueKey, title, status, search.issues, severityFieldId);
+  // Pull the children for ONE ticket -- JQL first, classic sub-tasks fallback.
+  // When the ticket has no children at all it IS the work item (a bare bug,
+  // not an epic/parent), so it rolls up as a one-row "sub-task" set using
+  // its own severity/status -- the cycle count and badges then reflect that
+  // single ticket instead of showing 0 issues and masking the state.
+  const childrenFor = async (
+    key: string,
+    issue: JiraIssueLike,
+  ): Promise<{ title: string; status: string; children: JiraIssueLike[] }> => {
+    const status = issue.fields.status?.name || 'Unknown';
+    const title = issue.fields.summary || key;
+    try {
+      const search = (await jiraFetch(creds, '/rest/api/3/search/jql', {
+        method: 'POST',
+        body: { jql: `parent = ${key}`, fields: childFields, maxResults: 200 },
+      })) as { issues?: JiraIssueLike[] };
+      if (search.issues && search.issues.length > 0) {
+        return { title, status, children: search.issues };
+      }
+    } catch {
+      // JQL search unavailable on this instance (older API, permissions) --
+      // fall back to classic sub-tasks below.
     }
-  } catch {
-    // JQL search unavailable on this instance (older API, permissions) --
-    // fall back to classic sub-tasks below.
+    const subtaskKeys = (issue.fields.subtasks ?? []).map(s => s.key);
+    if (subtaskKeys.length > 0) {
+      const children = await Promise.all(
+        subtaskKeys.map(
+          k =>
+            jiraFetch(
+              creds,
+              `/rest/api/3/issue/${encodeURIComponent(k)}?fields=${childFields.join(',')}`,
+            ) as Promise<JiraIssueLike>,
+        ),
+      );
+      return { title, status, children };
+    }
+    // No children -- the parent itself is the work item.
+    return { title, status, children: [issue] };
+  };
+
+  // Fetch every linked ticket in parallel; one failing ticket shouldn't
+  // sink the whole sync -- it just contributes nothing to the roll-up and
+  // the UI shows what we COULD read.
+  const perTicket = await Promise.all(
+    keys.map(async key => {
+      try {
+        const issue = (await jiraFetch(
+          creds,
+          `/rest/api/3/issue/${encodeURIComponent(key)}?fields=status,subtasks,summary,priority${
+            severityFieldId ? `,${severityFieldId}` : ''
+          }`,
+        )) as JiraIssueLike;
+        return { key, ...(await childrenFor(key, issue)) };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const good = perTicket.filter((r): r is NonNullable<typeof r> => !!r);
+  if (good.length === 0) {
+    throw new JiraApiError(`None of the ${keys.length} linked tickets could be fetched.`);
   }
 
-  const subtaskKeys = (issue.fields.subtasks ?? []).map(s => s.key);
-  if (subtaskKeys.length === 0) {
-    return tally(issueKey, title, status, [], severityFieldId);
-  }
-  const children = await Promise.all(
-    subtaskKeys.map(
-      k =>
-        jiraFetch(
-          creds,
-          `/rest/api/3/issue/${encodeURIComponent(k)}?fields=${childFields.join(',')}`,
-        ) as Promise<JiraIssueLike>,
-    ),
-  );
-  return tally(issueKey, title, status, children, severityFieldId);
+  // The reported `issueKey` / `title` / `status` of the sync is the first
+  // ticket's -- that's the one the row's "parent ticket" chip points at --
+  // but the roll-up (counts + sub-issues) merges every ticket's children.
+  const mergedChildren = good.flatMap(g => g.children);
+  const first = good[0];
+  const title =
+    good.length === 1
+      ? first.title
+      : `${first.title} (+${good.length - 1} linked ticket${good.length - 1 === 1 ? '' : 's'})`;
+  return tally(first.key, title, first.status, mergedChildren, severityFieldId);
 }
 
 // A sync only ever sees THIS MOMENT's status -- syncing twice while a ticket

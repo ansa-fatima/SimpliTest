@@ -5,12 +5,12 @@
 // one place the "what does Open/Pass/Fail mean" and "what columns does the
 // template have" questions are answered.
 
-export type CycleOutcome = 'Open' | 'Pass' | 'Fail';
+export type CycleOutcome = 'Open' | 'Pass' | 'Fail' | 'Blocked';
 
-export const CYCLE_OUTCOMES: CycleOutcome[] = ['Open', 'Pass', 'Fail'];
+export const CYCLE_OUTCOMES: CycleOutcome[] = ['Open', 'Pass', 'Fail', 'Blocked'];
 
 function isOutcome(v: unknown): v is CycleOutcome {
-  return v === 'Open' || v === 'Pass' || v === 'Fail';
+  return v === 'Open' || v === 'Pass' || v === 'Fail' || v === 'Blocked';
 }
 
 // Counts a cycle's outcome from what's stored. An explicit, user-chosen
@@ -21,6 +21,7 @@ function isOutcome(v: unknown): v is CycleOutcome {
 // derivation only ever yields Pass or Fail.
 export function deriveOutcome(c: {
   outcome?: string | null;
+  ticketLink?: string | null;
   issueCount?: number | null;
   doneCount?: number | null;
   remainingCount?: number | null;
@@ -28,6 +29,11 @@ export function deriveOutcome(c: {
   blockedCount?: number | null;
 }): CycleOutcome {
   if (isOutcome(c.outcome)) return c.outcome;
+  // No parent ticket means there's no issue tracker to be "open" against --
+  // a Manual cycle logged without a ticket is a smoke-test note, so it
+  // reads as Pass straight away instead of inheriting the "any issues ->
+  // Fail" rule meant for ticket-anchored runs.
+  if (!c.ticketLink || !c.ticketLink.trim()) return 'Pass';
   const done = c.doneCount ?? 0;
   const remaining = c.remainingCount ?? 0;
   const tracked = done > 0 || remaining > 0;
@@ -45,6 +51,7 @@ export function normalizeOutcome(raw: unknown): CycleOutcome | null {
   if (!s) return null;
   if (s.startsWith('pass')) return 'Pass';
   if (s.startsWith('fail')) return 'Fail';
+  if (s.startsWith('block')) return 'Blocked';
   if (s.startsWith('open') || s.includes('progress')) return 'Open';
   return null;
 }
