@@ -11,6 +11,7 @@ import { CycleFormPanel } from './CycleFormPanel';
 import { ImportCyclesModal } from './ImportCyclesModal';
 import { CycleInfoModal } from './CycleInfoModal';
 import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
+import { api } from '@/lib/client';
 
 interface TestRunsBoardProps {
   cycles: TestCycle[];
@@ -99,6 +100,73 @@ export function TestRunsBoard({
   };
 
   const siteUrl = useJiraSiteUrl(projectId);
+  const [syncAllState, setSyncAllState] = useState<{
+    running: boolean;
+    done: number;
+    total: number;
+    failed: number;
+  }>({ running: false, done: 0, total: 0, failed: 0 });
+
+  // Resync EVERY filtered quick log against its parent Jira ticket. Runs
+  // one call at a time deliberately -- Atlassian rate-limits the Cloud
+  // REST API hard enough that a parallel burst gets 429'd and leaves half
+  // the cycles unsynced, which is worse than a slower, complete run.
+  const syncAll = async () => {
+    if (!projectId) return;
+    const targets = filteredQuickLogs.filter(c => c.ticketLink);
+    if (targets.length === 0) {
+      alert('Nothing to sync — no filtered rows have a parent ticket.');
+      return;
+    }
+    if (
+      !window.confirm(
+        `Sync ${targets.length} quick log${targets.length === 1 ? '' : 's'} from Jira?`,
+      )
+    )
+      return;
+    setSyncAllState({ running: true, done: 0, total: targets.length, failed: 0 });
+    let done = 0;
+    let failed = 0;
+    for (const c of targets) {
+      try {
+        const result = await api.post<{
+          title: string;
+          status: string;
+          issueCount: number;
+          criticalCount: number;
+          majorCount: number;
+          minorCount: number;
+          doneCount: number;
+          remainingCount: number;
+          reopenedCount: number;
+          siteUrl: string;
+          subIssues: unknown[];
+        }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: c.ticketLink });
+        await api.patch(`/api/cycles/${c.id}`, {
+          ...(result.title ? { name: result.title } : {}),
+          jiraStatus: result.status,
+          jiraSyncedAt: new Date().toISOString(),
+          jiraSiteUrl: result.siteUrl,
+          issueCount: result.issueCount,
+          criticalCount: result.criticalCount,
+          majorCount: result.majorCount,
+          minorCount: result.minorCount,
+          doneCount: result.doneCount,
+          remainingCount: result.remainingCount,
+          reopenedCount: result.reopenedCount,
+          jiraSubIssues: result.subIssues,
+        });
+        done++;
+      } catch {
+        failed++;
+      }
+      setSyncAllState({ running: true, done: done + failed, total: targets.length, failed });
+    }
+    setSyncAllState({ running: false, done, total: targets.length, failed });
+    // The cycles list is served from the parent; a quick page refresh is
+    // the cheapest way to see every PATCH land in the row.
+    window.location.reload();
+  };
 
   // Delete lives directly on each card/row -- not buried in the edit modal,
   // since deleting is a "look at the list, act on it" move, not an edit.
@@ -278,6 +346,22 @@ export function TestRunsBoard({
                 retesting moves Done/Remaining on the same record.
               </p>
               <div className="flex flex-shrink-0 items-center gap-1.5">
+                <ToolbarButton
+                  icon={syncAllState.running ? 'ti-loader-2' : 'ti-refresh'}
+                  label={
+                    syncAllState.running
+                      ? `Syncing ${syncAllState.done} / ${syncAllState.total}${
+                          syncAllState.failed > 0 ? ` · ${syncAllState.failed} failed` : ''
+                        }`
+                      : 'Sync all'
+                  }
+                  onClick={syncAll}
+                  disabled={
+                    !projectId ||
+                    syncAllState.running ||
+                    filteredQuickLogs.filter(c => c.ticketLink).length === 0
+                  }
+                />
                 <ToolbarButton
                   icon="ti-upload"
                   label="Import"
@@ -820,6 +904,7 @@ function CyclesTable({
           <tr className="border-b border-border bg-surface-2 text-[10.5px] uppercase tracking-wide text-text-3">
             <th className="px-3 py-2.5 text-left font-semibold">Date</th>
             <th className="px-3 py-2.5 text-left font-semibold">Module · Feature</th>
+            <th className="px-3 py-2.5 text-left font-semibold">Tested by</th>
             <th className="px-3 py-2.5 text-left font-semibold">Env</th>
             <th className="px-3 py-2.5 text-left font-semibold">Type</th>
             <th className="px-3 py-2.5 text-left font-semibold">Ticket</th>
@@ -885,17 +970,28 @@ function CycleRow({
       <td className="px-3 py-2.5">
         <div className="flex items-center gap-2">
           <span className="font-medium text-text">{c.name || moduleName}</span>
-          {tester && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
-              <i className="ti ti-user text-[10px]" />
-              {tester}
-            </span>
-          )}
         </div>
         {(c.moduleName || c.featureName) && (
           <p className="text-[11px] text-text-3">
             {[c.moduleName, c.featureName].filter(Boolean).join(' · ')}
           </p>
+        )}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2.5">
+        {tester ? (
+          <span className="inline-flex items-center gap-1.5 text-[12px] text-text-2">
+            <span className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-primary/15 text-[9.5px] font-semibold uppercase text-primary">
+              {tester
+                .split(/\s+/)
+                .map(w => w[0])
+                .filter(Boolean)
+                .slice(0, 2)
+                .join('')}
+            </span>
+            {tester}
+          </span>
+        ) : (
+          <span className="text-text-3">—</span>
         )}
       </td>
       <td className="whitespace-nowrap px-3 py-2.5 text-text-2">{c.environment || '—'}</td>
