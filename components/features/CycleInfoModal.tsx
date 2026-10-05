@@ -373,22 +373,9 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                 </div>
               )}
 
-              {/* Cycle meta -- kept for the fields the mockup doesn't surface at the top. */}
-              <div className="rounded-lg border border-border bg-surface-2 px-3.5 py-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <InfoRow label="Location" value={scopePath} />
-                  <InfoRow
-                    label={isManual ? 'Logged by' : 'Tester'}
-                    value={(isManual ? cycle.loggedBy : cycle.runSummary?.tester) || 'Unattributed'}
-                  />
-                  <InfoRow
-                    label="Version"
-                    value={cycle.version ? `v${cycle.version.replace(/^v\s*/i, '')}` : null}
-                  />
-                  <InfoRow label="Platform" value={cycle.platform} />
-                  <InfoRow label="Status" value={cycle.status} />
-                </div>
-              </div>
+              {/* Cycle meta block removed per design -- Location, Logged by,
+                  Version, Platform, Status already surface on the row and
+                  in the header chips above. */}
 
               {/* Run breakdown -- CaseBased only, real per-case pass/fail/blocked
                   counts from this run's own TestRun rows. */}
@@ -467,45 +454,10 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                 </div>
               )}
 
-              {cycle.ticketLink && (
-                <div className="rounded-lg border border-border bg-surface-2 px-3.5 py-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-text-2">
-                      <i className="ti ti-brand-jira flex-shrink-0 text-[13px] text-text-3" />
-                      <JiraTicketLink
-                        ticketLink={cycle.ticketLink}
-                        siteUrl={cycle.jiraSiteUrl ?? siteUrl}
-                        className="truncate font-mono"
-                      />
-                    </span>
-                    {jiraConnected && (
-                      <button
-                        type="button"
-                        disabled={syncing}
-                        onClick={resync}
-                        className="flex-shrink-0 whitespace-nowrap rounded-[7px] border border-border bg-surface px-2.5 py-1 text-[11.5px] font-medium text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {syncing ? (
-                          <i className="ti ti-loader-2 animate-spin text-[12px]" />
-                        ) : (
-                          'Resync'
-                        )}
-                      </button>
-                    )}
-                  </div>
-                  {syncError && (
-                    <p className="mt-1.5 text-[11px] font-medium text-danger">{syncError}</p>
-                  )}
-                  {cycle.jiraStatus && (
-                    <p className="mt-1.5 text-[11px] text-text-3">
-                      Jira status:{' '}
-                      <span className="font-medium text-text-2">{cycle.jiraStatus}</span>
-                      {cycle.jiraSyncedAt &&
-                        ` · synced ${new Date(cycle.jiraSyncedAt).toLocaleString()}`}
-                    </p>
-                  )}
-                </div>
-              )}
+              {/* The old parent-ticket card lived here; it duplicated the
+                  header pill and the "pulled from" chip right below, so it
+                  was removed. Resync + jiraStatus moved into the sub-tasks
+                  header line (jiraConnected only). */}
 
               {/* Jira sub-issues -- key/title/severity/status for either
                   mode. The Reopened badge (with the cycle's aggregate

@@ -80,11 +80,23 @@ export function TestRunsBoard({
   const [viewingCycleId, setViewingCycleId] = useState<string | null>(null);
 
   // Quick Logs table filters.
+  const [periodMode, setPeriodMode] = useState<'all' | 'custom'>('all');
   const [periodStart, setPeriodStart] = useState('');
   const [periodEnd, setPeriodEnd] = useState('');
+  const [sprintFilter, setSprintFilter] = useState('');
   const [moduleFilter, setModuleFilter] = useState('');
   const [engineerFilter, setEngineerFilter] = useState('');
   const [portalFilter, setPortalFilter] = useState('');
+
+  // Pull the sprint number out of version strings like "v3.0.140" or
+  // "Version: 4.0.140" -- the third dotted segment is the sprint. Anything
+  // not matching that pattern (empty / mobile versions like v3.6.4) stays
+  // out of the dropdown, which is deliberate: those aren't sprint-anchored.
+  const sprintOf = (v: string | null | undefined): string | null => {
+    if (!v) return null;
+    const m = v.match(/\b\d+\.\d+\.(\d+)\b/);
+    return m ? `Sprint ${m[1]}` : null;
+  };
 
   const siteUrl = useJiraSiteUrl(projectId);
 
@@ -116,21 +128,40 @@ export function TestRunsBoard({
   const moduleOptions = distinct(quickLogs.map(c => c.moduleName));
   const engineerOptions = distinct(quickLogs.map(c => c.loggedBy));
   const portalOptions = distinct(quickLogs.map(c => c.portalName));
+  // Newest sprint first, so recent work is one click away.
+  const sprintOptions = Array.from(
+    new Set(quickLogs.map(c => sprintOf(c.version)).filter((v): v is string => !!v)),
+  ).sort((a, b) => {
+    const na = parseInt(a.replace(/\D/g, ''), 10);
+    const nb = parseInt(b.replace(/\D/g, ''), 10);
+    return nb - na;
+  });
 
   const filteredQuickLogs = useMemo(() => {
-    const startMs = periodStart ? new Date(`${periodStart}T00:00:00`).getTime() : null;
+    const useCustom = periodMode === 'custom';
+    const startMs = useCustom && periodStart ? new Date(`${periodStart}T00:00:00`).getTime() : null;
     // End is inclusive of the whole day.
-    const endMs = periodEnd ? new Date(`${periodEnd}T23:59:59`).getTime() : null;
+    const endMs = useCustom && periodEnd ? new Date(`${periodEnd}T23:59:59`).getTime() : null;
     return quickLogs.filter(c => {
       const ts = new Date(c.completedAt ?? c.createdAt).getTime();
       if (startMs !== null && ts < startMs) return false;
       if (endMs !== null && ts > endMs) return false;
+      if (sprintFilter && sprintOf(c.version) !== sprintFilter) return false;
       if (moduleFilter && c.moduleName !== moduleFilter) return false;
       if (engineerFilter && c.loggedBy !== engineerFilter) return false;
       if (portalFilter && c.portalName !== portalFilter) return false;
       return true;
     });
-  }, [quickLogs, periodStart, periodEnd, moduleFilter, engineerFilter, portalFilter]);
+  }, [
+    quickLogs,
+    periodMode,
+    periodStart,
+    periodEnd,
+    sprintFilter,
+    moduleFilter,
+    engineerFilter,
+    portalFilter,
+  ]);
 
   const inProgress = caseBased.filter(c => c.status === 'Active' && isStarted(c));
   const planned = caseBased.filter(c => c.status === 'Active' && !isStarted(c));
@@ -265,10 +296,14 @@ export function TestRunsBoard({
             {/* Filters */}
             {quickLogs.length > 0 && (
               <CycleFilters
+                periodMode={periodMode}
+                setPeriodMode={setPeriodMode}
                 periodStart={periodStart}
                 periodEnd={periodEnd}
                 setPeriodStart={setPeriodStart}
                 setPeriodEnd={setPeriodEnd}
+                sprintFilter={sprintFilter}
+                setSprintFilter={setSprintFilter}
                 moduleFilter={moduleFilter}
                 setModuleFilter={setModuleFilter}
                 engineerFilter={engineerFilter}
@@ -278,6 +313,7 @@ export function TestRunsBoard({
                 moduleOptions={moduleOptions}
                 engineerOptions={engineerOptions}
                 portalOptions={portalOptions}
+                sprintOptions={sprintOptions}
               />
             )}
 
@@ -577,10 +613,14 @@ function ToolbarButton({
 }
 
 function CycleFilters({
+  periodMode,
+  setPeriodMode,
   periodStart,
   periodEnd,
   setPeriodStart,
   setPeriodEnd,
+  sprintFilter,
+  setSprintFilter,
   moduleFilter,
   setModuleFilter,
   engineerFilter,
@@ -590,11 +630,16 @@ function CycleFilters({
   moduleOptions,
   engineerOptions,
   portalOptions,
+  sprintOptions,
 }: {
+  periodMode: 'all' | 'custom';
+  setPeriodMode: (v: 'all' | 'custom') => void;
   periodStart: string;
   periodEnd: string;
   setPeriodStart: (v: string) => void;
   setPeriodEnd: (v: string) => void;
+  sprintFilter: string;
+  setSprintFilter: (v: string) => void;
   moduleFilter: string;
   setModuleFilter: (v: string) => void;
   engineerFilter: string;
@@ -604,100 +649,122 @@ function CycleFilters({
   moduleOptions: string[];
   engineerOptions: string[];
   portalOptions: string[];
+  sprintOptions: string[];
 }) {
   const selectCls =
-    'rounded-[7px] border border-border bg-surface px-2.5 py-1.5 text-[12.5px] text-text outline-none focus:border-primary';
+    'rounded-full border border-border bg-surface px-3 py-1.5 text-[12.5px] text-text outline-none focus:border-primary';
+  const labelCls = 'text-[10.5px] font-semibold uppercase tracking-wide text-text-3';
   return (
     <div className="mb-4 flex flex-col gap-3 rounded-lg border border-border bg-surface p-3">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-        <div className="flex items-center gap-2">
-          <span className="text-[10.5px] font-semibold uppercase tracking-wide text-text-3">
-            Period
-          </span>
-          <input
-            type="date"
-            value={periodStart}
-            onChange={e => setPeriodStart(e.target.value)}
-            className={selectCls}
-          />
-          <span className="text-[12px] text-text-3">→</span>
-          <input
-            type="date"
-            value={periodEnd}
-            onChange={e => setPeriodEnd(e.target.value)}
-            className={selectCls}
-          />
-          {(periodStart || periodEnd) && (
-            <button
-              type="button"
-              onClick={() => {
-                setPeriodStart('');
-                setPeriodEnd('');
-              }}
-              className="text-[11.5px] text-text-3 underline-offset-2 hover:text-text hover:underline"
-            >
-              Clear
-            </button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-[10.5px] font-semibold uppercase tracking-wide text-text-3">
-            Module
-          </span>
-          <select
-            value={moduleFilter}
-            onChange={e => setModuleFilter(e.target.value)}
-            className={selectCls}
-          >
-            <option value="">All modules</option>
-            {moduleOptions.map(m => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-[10.5px] font-semibold uppercase tracking-wide text-text-3">
-            Engineer
-          </span>
-          <select
-            value={engineerFilter}
-            onChange={e => setEngineerFilter(e.target.value)}
-            className={selectCls}
-          >
-            <option value="">All engineers</option>
-            {engineerOptions.map(m => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* Row 1 -- Period pills + Sprints dropdown */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span className={labelCls}>Period</span>
+        <FilterChip
+          active={periodMode === 'all'}
+          onClick={() => {
+            setPeriodMode('all');
+            setPeriodStart('');
+            setPeriodEnd('');
+          }}
+          label="All time"
+        />
+        <FilterChip
+          active={periodMode === 'custom'}
+          onClick={() => setPeriodMode('custom')}
+          label="Custom range"
+        />
+        <select
+          value={sprintFilter}
+          onChange={e => setSprintFilter(e.target.value)}
+          className={selectCls}
+        >
+          <option value="">Sprints</option>
+          {sprintOptions.map(s => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        {periodMode === 'custom' && (
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={periodStart}
+              onChange={e => setPeriodStart(e.target.value)}
+              className={selectCls}
+            />
+            <span className="text-[12px] text-text-3">→</span>
+            <input
+              type="date"
+              value={periodEnd}
+              onChange={e => setPeriodEnd(e.target.value)}
+              className={selectCls}
+            />
+            {(periodStart || periodEnd) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPeriodStart('');
+                  setPeriodEnd('');
+                }}
+                className="text-[11.5px] text-text-3 underline-offset-2 hover:text-text hover:underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      {portalOptions.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-[10.5px] font-semibold uppercase tracking-wide text-text-3">
-            Portal
-          </span>
-          <FilterChip
-            active={portalFilter === ''}
-            onClick={() => setPortalFilter('')}
-            label="All"
-          />
-          {portalOptions.map(p => (
-            <FilterChip
-              key={p}
-              active={portalFilter === p}
-              onClick={() => setPortalFilter(portalFilter === p ? '' : p)}
-              label={p}
-            />
+      {/* Row 2 -- Module / Engineer dropdowns + Portal pills */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span className={labelCls}>Module</span>
+        <select
+          value={moduleFilter}
+          onChange={e => setModuleFilter(e.target.value)}
+          className={selectCls}
+        >
+          <option value="">All modules</option>
+          {moduleOptions.map(m => (
+            <option key={m} value={m}>
+              {m}
+            </option>
           ))}
-        </div>
-      )}
+        </select>
+
+        <span className={cn(labelCls, 'ml-3')}>Engineer</span>
+        <select
+          value={engineerFilter}
+          onChange={e => setEngineerFilter(e.target.value)}
+          className={selectCls}
+        >
+          <option value="">All engineers</option>
+          {engineerOptions.map(m => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+
+        {portalOptions.length > 0 && (
+          <>
+            <span className={cn(labelCls, 'ml-3')}>Portal</span>
+            <FilterChip
+              active={portalFilter === ''}
+              onClick={() => setPortalFilter('')}
+              label="All"
+            />
+            {portalOptions.map(p => (
+              <FilterChip
+                key={p}
+                active={portalFilter === p}
+                onClick={() => setPortalFilter(portalFilter === p ? '' : p)}
+                label={p}
+              />
+            ))}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -797,11 +864,14 @@ function CycleRow({
   const outcome = deriveOutcome(c);
   const tone = outcomeTone(outcome);
   const moduleName = c.moduleName || c.portalName || 'Unscoped';
-  const unmapped = !c.scopeId && (c.moduleName || c.featureName);
-  const sev: { v: number; dot: string }[] = [
-    { v: c.criticalCount ?? 0, dot: 'bg-danger' },
-    { v: c.majorCount ?? 0, dot: 'bg-warning' },
-    { v: c.minorCount ?? 0, dot: 'bg-text-3' },
+  const tester = (c.loggedBy ?? '').trim();
+  // Per-severity chips -- label is for the hover tooltip; `pill` is the
+  // whole chip's tint (not just the dot) so the colour reads clearly even
+  // against the row's hover state.
+  const sev: { v: number; label: 'Critical' | 'Major' | 'Minor'; pill: string }[] = [
+    { v: c.criticalCount ?? 0, label: 'Critical', pill: 'bg-danger/15 text-danger' },
+    { v: c.majorCount ?? 0, label: 'Major', pill: 'bg-warning/15 text-warning' },
+    { v: c.minorCount ?? 0, label: 'Minor', pill: 'bg-yellow-400/15 text-yellow-600' },
   ];
 
   return (
@@ -815,9 +885,10 @@ function CycleRow({
       <td className="px-3 py-2.5">
         <div className="flex items-center gap-2">
           <span className="font-medium text-text">{c.name || moduleName}</span>
-          {unmapped && (
-            <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[9.5px] text-text-3">
-              Unmapped
+          {tester && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+              <i className="ti ti-user text-[10px]" />
+              {tester}
             </span>
           )}
         </div>
@@ -844,12 +915,15 @@ function CycleRow({
         <div className="flex items-center gap-1.5">
           <span className="font-semibold text-text">{total}</span>
           {total > 0 &&
-            sev.map((s, i) => (
+            sev.map(s => (
               <span
-                key={i}
-                className="inline-flex min-w-[18px] items-center justify-center gap-1 rounded bg-surface-2 px-1 py-0.5 text-[10px] text-text-2"
+                key={s.label}
+                title={`${s.label}: ${s.v}`}
+                className={cn(
+                  'inline-flex min-w-[22px] items-center justify-center rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold',
+                  s.pill,
+                )}
               >
-                <span className={cn('h-1.5 w-1.5 rounded-full', s.dot)} />
                 {s.v}
               </span>
             ))}
