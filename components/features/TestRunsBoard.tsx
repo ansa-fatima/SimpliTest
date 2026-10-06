@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { TestCycle, Module } from '@/types';
 import { avatarColour, cn, initials, localDateStr } from '@/lib/utils';
 import { deriveOutcome, CycleOutcome } from '@/lib/cycleOutcome';
@@ -11,6 +11,7 @@ import { CycleFormPanel } from './CycleFormPanel';
 import { ImportCyclesModal } from './ImportCyclesModal';
 import { CycleInfoModal } from './CycleInfoModal';
 import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
+import { parseIssueKeys } from '@/lib/jira';
 import { api } from '@/lib/client';
 
 interface TestRunsBoardProps {
@@ -90,6 +91,13 @@ export function TestRunsBoard({
   const [portalFilter, setPortalFilter] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState<'' | CycleOutcome>('');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Pagination for the Quick Logs table. Default 10, same options the
+  // mockup shows. Page resets to 0 whenever a filter / search / page-size
+  // changes, so the user never ends up on an empty page.
+  const PAGE_SIZES = [10, 25, 50, 100] as const;
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [pageIndex, setPageIndex] = useState(0);
 
   // Pull the sprint number out of version strings like "v3.0.140" or
   // "Version: 4.0.140" -- the third dotted segment is the sprint. Anything
@@ -246,6 +254,35 @@ export function TestRunsBoard({
     outcomeFilter,
     searchQuery,
   ]);
+
+  // Reset to page 0 whenever the filtered set shrinks or the page size
+  // changes, so an edit that drops below the current window doesn't leave
+  // the viewer stranded on an empty page.
+  useEffect(() => {
+    setPageIndex(0);
+  }, [
+    filteredQuickLogs.length,
+    pageSize,
+    searchQuery,
+    outcomeFilter,
+    moduleFilter,
+    engineerFilter,
+    portalFilter,
+    sprintFilter,
+    periodMode,
+    periodStart,
+    periodEnd,
+  ]);
+
+  const totalRows = filteredQuickLogs.length;
+  const pageStart = pageIndex * pageSize;
+  const pageEnd = Math.min(pageStart + pageSize, totalRows);
+  const pagedQuickLogs = useMemo(
+    () => filteredQuickLogs.slice(pageStart, pageEnd),
+    [filteredQuickLogs, pageStart, pageEnd],
+  );
+  const canPrev = pageIndex > 0;
+  const canNext = pageEnd < totalRows;
 
   const inProgress = caseBased.filter(c => c.status === 'Active' && isStarted(c));
   const planned = caseBased.filter(c => c.status === 'Active' && !isStarted(c));
@@ -430,13 +467,56 @@ export function TestRunsBoard({
                 No cycles match these filters.
               </p>
             ) : (
-              <CyclesTable
-                rows={filteredQuickLogs}
-                siteUrl={siteUrl}
-                onView={id => setViewingCycleId(id)}
-                onEdit={c => setCyclePanel(c)}
-                onDelete={handleDelete}
-              />
+              <>
+                <CyclesTable
+                  rows={pagedQuickLogs}
+                  siteUrl={siteUrl}
+                  onView={id => setViewingCycleId(id)}
+                  onEdit={c => setCyclePanel(c)}
+                  onDelete={handleDelete}
+                />
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-text-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-text-3">Rows per page:</span>
+                    <select
+                      value={pageSize}
+                      onChange={e => setPageSize(Number(e.target.value))}
+                      className="rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
+                    >
+                      {PAGE_SIZES.map(n => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-text-3">
+                      {totalRows === 0 ? '0' : `${pageStart + 1} – ${pageEnd}`} of {totalRows}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={!canPrev}
+                        onClick={() => setPageIndex(p => Math.max(0, p - 1))}
+                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-2 transition-colors enabled:hover:bg-surface-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                        title="Previous page"
+                      >
+                        <i className="ti ti-chevron-left text-[14px]" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!canNext}
+                        onClick={() => setPageIndex(p => p + 1)}
+                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-2 transition-colors enabled:hover:bg-surface-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                        title="Next page"
+                      >
+                        <i className="ti ti-chevron-right text-[14px]" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
             )}
           </>
         )}
@@ -459,6 +539,10 @@ export function TestRunsBoard({
         <CycleFormPanel
           projectId={projectId}
           knownVersions={knownVersions}
+          knownQuickLogs={quickLogs.map(c => ({
+            moduleName: c.moduleName ?? null,
+            featureName: c.featureName ?? null,
+          }))}
           initial={cyclePanel === 'new' ? null : cyclePanel}
           defaultEngineer={currentUserName}
           onClose={() => setCyclePanel(null)}
@@ -1066,15 +1150,33 @@ function CycleRow({
       <td className="whitespace-nowrap px-3 py-2.5 text-text-2">{c.environment || '—'}</td>
       <td className="whitespace-nowrap px-3 py-2.5 text-text-2">{c.cycleCategory || '—'}</td>
       <td className="whitespace-nowrap px-3 py-2.5" onClick={e => e.stopPropagation()}>
-        {c.ticketLink ? (
-          <JiraTicketLink
-            ticketLink={c.ticketLink}
-            siteUrl={c.jiraSiteUrl ?? siteUrl}
-            className="font-mono text-[11.5px]"
-          />
-        ) : (
-          <span className="text-text-3">—</span>
-        )}
+        {(() => {
+          const keys = parseIssueKeys(c.ticketLink);
+          if (keys.length === 0) {
+            // Nothing parseable: fall back to showing the raw text (not clickable).
+            return c.ticketLink ? (
+              <span className="font-mono text-[11.5px] text-text-2">{c.ticketLink}</span>
+            ) : (
+              <span className="text-text-3">—</span>
+            );
+          }
+          // One link per key, so clicking NPD-10577 opens 10577 -- not the
+          // first key the field happened to start with.
+          return (
+            <span className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
+              {keys.map((k, i) => (
+                <span key={k} className="inline-flex items-center">
+                  <JiraTicketLink
+                    ticketLink={k}
+                    siteUrl={c.jiraSiteUrl ?? siteUrl}
+                    className="font-mono text-[11.5px]"
+                  />
+                  {i < keys.length - 1 && <span className="text-text-3">,</span>}
+                </span>
+              ))}
+            </span>
+          );
+        })()}
       </td>
       <td className="whitespace-nowrap px-3 py-2.5">
         <div className="flex items-center gap-1.5">

@@ -201,7 +201,14 @@ function classifyIssueStatus(fields: {
   status?: { name?: string; statusCategory?: { key?: string } };
 }): { status: string; isDone: boolean; isReopened: boolean } {
   const status = fields.status?.name || 'Unknown';
-  const done = isDone(fields.status?.statusCategory?.key);
+  // A QA-approved sub-task reads as DONE even when the connected project
+  // puts "Verified" in its own category instead of Jira's standard
+  // statusCategory=done -- otherwise a cycle whose every child is Verified
+  // still rolls up as "Open" and the row's Outcome stays Fail.
+  const done =
+    isDone(fields.status?.statusCategory?.key) ||
+    /^verified$/i.test(status) ||
+    /^qa\s*passed?$/i.test(status);
   const reopened = !done && isReopened(status);
   return { status, isDone: done, isReopened: reopened };
 }
