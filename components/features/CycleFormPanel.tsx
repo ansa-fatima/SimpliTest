@@ -19,6 +19,12 @@ interface ApiPortal {
   id: string;
   name: string;
 }
+interface ApiUser {
+  id: string;
+  name: string | null;
+  username: string;
+  email: string;
+}
 
 const ENVIRONMENTS = ['Production', 'QA', 'Staging', 'Dev'];
 const PLATFORMS = ['Android', 'iPhone', 'Web', 'All', 'Desktop'];
@@ -31,6 +37,10 @@ const labelCls = 'mb-1 block text-[11px] font-semibold uppercase tracking-wide t
 interface CycleFormPanelProps {
   projectId: string | null;
   knownVersions: string[];
+  /** Distinct module/feature pairs seen on existing quick logs -- used as the
+   *  suggestion source for the Module + Feature pickers when the workspace
+   *  has no real Portal > Module > Suite tree yet. */
+  knownQuickLogs?: { moduleName: string | null; featureName: string | null }[];
   /** Pre-filled when editing an existing Manual cycle; null/absent = create. */
   initial?: TestCycle | null;
   /** Defaults the QA Engineer field on a fresh cycle (the session user). */
@@ -49,6 +59,7 @@ interface CycleFormPanelProps {
 export function CycleFormPanel({
   projectId,
   knownVersions,
+  knownQuickLogs = [],
   initial,
   defaultEngineer,
   onClose,
@@ -59,6 +70,7 @@ export function CycleFormPanel({
 
   const [modules, setModules] = useState<ApiModule[]>([]);
   const [portals, setPortals] = useState<ApiPortal[]>([]);
+  const [users, setUsers] = useState<ApiUser[]>([]);
 
   // ── Core picks ──────────────────────────────────────────────
   const todayStr = () => {
@@ -133,6 +145,13 @@ export function CycleFormPanel({
         .then(setPortals)
         .catch(() => {});
     }
+    // Users for the QA Engineer dropdown -- same source the Owner filter
+    // and Members page use, so a new workspace user shows up here
+    // immediately without the form having its own cache.
+    api
+      .get<ApiUser[]>('/api/users')
+      .then(setUsers)
+      .catch(() => {});
   }, [projectId]);
 
   // Backfill the module/suite pickers from an edited cycle's scope once the
@@ -156,6 +175,33 @@ export function CycleFormPanel({
     ? (portals.find(p => p.id === selectedModule.portalId) ?? null)
     : null;
   const suites = selectedModule?.suites ?? [];
+
+  // Distinct module names seen on existing quick logs -- used as the
+  // free-text picker's suggestion list when the workspace has no real
+  // module tree set up (which is the imported-sheet case). Features are
+  // suggested the same way, but filtered to the module the user picked,
+  // so switching modules swaps the Feature suggestions underneath.
+  const knownModuleNames = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          knownQuickLogs.map(c => c.moduleName).filter((v): v is string => !!v && v.trim() !== ''),
+        ),
+      ).sort(),
+    [knownQuickLogs],
+  );
+  const knownFeaturesForModule = useMemo(() => {
+    const needle = moduleNameFree.trim().toLowerCase();
+    if (!needle) return [] as string[];
+    return Array.from(
+      new Set(
+        knownQuickLogs
+          .filter(c => (c.moduleName ?? '').trim().toLowerCase() === needle)
+          .map(c => c.featureName)
+          .filter((v): v is string => !!v && v.trim() !== ''),
+      ),
+    ).sort();
+  }, [knownQuickLogs, moduleNameFree]);
 
   const moduleName = selectedModule?.name || moduleNameFree;
   const featureName = suites.find(s => s.id === suiteId)?.name || featureNameFree;
@@ -377,13 +423,28 @@ export function CycleFormPanel({
                   ))}
                 </select>
               ) : (
-                <input
-                  type="text"
-                  value={moduleNameFree}
-                  onChange={e => setModuleNameFree(e.target.value)}
-                  placeholder="Module name…"
-                  className={inputCls}
-                />
+                <>
+                  <input
+                    type="text"
+                    list="cycle-module-suggestions"
+                    value={moduleNameFree}
+                    onChange={e => {
+                      setModuleNameFree(e.target.value);
+                      // Switching module should drop any stale feature pick
+                      // from the previous module's suggestion set.
+                      setFeatureNameFree('');
+                    }}
+                    placeholder={
+                      knownModuleNames.length > 0 ? 'Module name — pick or type…' : 'Module name…'
+                    }
+                    className={inputCls}
+                  />
+                  <datalist id="cycle-module-suggestions">
+                    {knownModuleNames.map(m => (
+                      <option key={m} value={m} />
+                    ))}
+                  </datalist>
+                </>
               )}
             </div>
           </div>
@@ -407,13 +468,28 @@ export function CycleFormPanel({
                 ))}
               </select>
             ) : (
-              <input
-                type="text"
-                value={featureNameFree}
-                onChange={e => setFeatureNameFree(e.target.value)}
-                placeholder={selectedModule ? 'Feature name…' : 'Pick a module first'}
-                className={inputCls}
-              />
+              <>
+                <input
+                  type="text"
+                  list="cycle-feature-suggestions"
+                  value={featureNameFree}
+                  onChange={e => setFeatureNameFree(e.target.value)}
+                  placeholder={
+                    moduleNameFree
+                      ? knownFeaturesForModule.length > 0
+                        ? 'Feature — pick from this module or type a new one…'
+                        : 'Feature name…'
+                      : 'Pick a module first'
+                  }
+                  disabled={!moduleNameFree && !selectedModule}
+                  className={cn(inputCls, !moduleNameFree && !selectedModule && 'opacity-60')}
+                />
+                <datalist id="cycle-feature-suggestions">
+                  {knownFeaturesForModule.map(f => (
+                    <option key={f} value={f} />
+                  ))}
+                </datalist>
+              </>
             )}
             <p className="mt-1 text-[11px] text-text-3">
               Feature list follows the module you pick.
@@ -523,13 +599,47 @@ export function CycleFormPanel({
 
           <div className="mt-4">
             <label className={labelCls}>QA Engineer</label>
-            <input
-              type="text"
-              value={engineer}
-              onChange={e => setEngineer(e.target.value)}
-              placeholder="Person who ran this cycle"
-              className={inputCls}
-            />
+            {users.length > 0 ? (
+              <>
+                <select
+                  value={
+                    users.some(u => (u.name || u.username) === engineer) || engineer === ''
+                      ? engineer
+                      : '__custom__'
+                  }
+                  onChange={e => {
+                    const v = e.target.value;
+                    if (v === '__custom__') return; // keep whatever free-text is in `engineer`
+                    setEngineer(v);
+                  }}
+                  className={inputCls}
+                >
+                  <option value="">Unattributed</option>
+                  {users.map(u => (
+                    <option key={u.id} value={u.name || u.username}>
+                      {u.name || u.username}
+                    </option>
+                  ))}
+                  {engineer && !users.some(u => (u.name || u.username) === engineer) && (
+                    <option value="__custom__">{engineer} (not a workspace user)</option>
+                  )}
+                </select>
+                {engineer && !users.some(u => (u.name || u.username) === engineer) && (
+                  <p className="mt-1 text-[11px] text-text-3">
+                    This cycle has a name that isn&apos;t in the workspace; pick someone to replace
+                    it.
+                  </p>
+                )}
+              </>
+            ) : (
+              <input
+                type="text"
+                value={engineer}
+                onChange={e => setEngineer(e.target.value)}
+                placeholder="Person who ran this cycle"
+                className={inputCls}
+              />
+            )}
           </div>
 
           {/* Severity breakdown */}
