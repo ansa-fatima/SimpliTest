@@ -49,12 +49,11 @@ export function ModulesFeaturesCard({
     try {
       const rows = await api.get<QaPortal[]>(`/api/qa-portals?projectId=${workspaceId}`);
       setPortals(rows);
-      if (loading) {
-        // First load -- auto-expand everything so the user sees the full
-        // tree. Later loads keep whatever collapse state the user chose.
-        setExpandedPortals(new Set(rows.map(p => p.id)));
-        setExpandedModules(new Set(rows.flatMap(p => p.modules.map(m => m.id))));
-      }
+      // Default view is collapsed at EVERY level: portals start closed,
+      // and opening a portal shows only its module names (also collapsed)
+      // so the chip list for 90+ features isn't dumped on the user all
+      // at once. Expand/collapse is driven entirely by user clicks after
+      // that -- the reload call never touches the sets again.
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -228,6 +227,28 @@ export function ModulesFeaturesCard({
     }
   };
 
+  // ── Reorder helpers ────────────────────────────────
+  // One POST per nudge -- /move swaps the row's `order` with the adjacent
+  // sibling. Up/down arrows at every level call the matching endpoint.
+  const nudge = async (
+    kind: 'portal' | 'module' | 'feature',
+    id: string,
+    direction: 'up' | 'down',
+  ) => {
+    setErr(null);
+    setBusy('move-' + id);
+    try {
+      const slug =
+        kind === 'portal' ? 'qa-portals' : kind === 'module' ? 'qa-modules' : 'qa-features';
+      await api.post(`/api/${slug}/${id}/move`, { direction });
+      await reload();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="lg:col-span-2">
       <div className="overflow-hidden rounded-xl border border-border bg-surface">
@@ -353,6 +374,13 @@ export function ModulesFeaturesCard({
                     </span>
                     {canEdit && (
                       <>
+                        <MoveButtons
+                          disabled={busy === 'move-' + portal.id}
+                          onUp={() => nudge('portal', portal.id, 'up')}
+                          onDown={() => nudge('portal', portal.id, 'down')}
+                          isFirst={portals[0]?.id === portal.id}
+                          isLast={portals[portals.length - 1]?.id === portal.id}
+                        />
                         <button
                           type="button"
                           onClick={() => {
@@ -481,19 +509,30 @@ export function ModulesFeaturesCard({
                                   {mod._count.features === 1 ? '' : 's'}
                                 </span>
                                 {canEdit && (
-                                  <button
-                                    type="button"
-                                    disabled={busy === mod.id}
-                                    onClick={() => deleteModule(mod.id, mod.name)}
-                                    title={`Delete "${mod.name}"`}
-                                    className="flex h-6 w-6 items-center justify-center rounded text-text-3 hover:bg-danger-bg hover:text-danger"
-                                  >
-                                    {busy === mod.id ? (
-                                      <i className="ti ti-loader-2 animate-spin text-[12px]" />
-                                    ) : (
-                                      <i className="ti ti-trash text-[13px]" />
-                                    )}
-                                  </button>
+                                  <>
+                                    <MoveButtons
+                                      disabled={busy === 'move-' + mod.id}
+                                      onUp={() => nudge('module', mod.id, 'up')}
+                                      onDown={() => nudge('module', mod.id, 'down')}
+                                      isFirst={portal.modules[0]?.id === mod.id}
+                                      isLast={
+                                        portal.modules[portal.modules.length - 1]?.id === mod.id
+                                      }
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={busy === mod.id}
+                                      onClick={() => deleteModule(mod.id, mod.name)}
+                                      title={`Delete "${mod.name}"`}
+                                      className="flex h-6 w-6 items-center justify-center rounded text-text-3 hover:bg-danger-bg hover:text-danger"
+                                    >
+                                      {busy === mod.id ? (
+                                        <i className="ti ti-loader-2 animate-spin text-[12px]" />
+                                      ) : (
+                                        <i className="ti ti-trash text-[13px]" />
+                                      )}
+                                    </button>
+                                  </>
                                 )}
                               </div>
 
@@ -538,19 +577,45 @@ export function ModulesFeaturesCard({
                                           </button>
                                         )}
                                         {canEdit && (
-                                          <button
-                                            type="button"
-                                            disabled={busy === f.id}
-                                            onClick={() => removeFeature(f.id)}
-                                            title={`Remove "${f.name}"`}
-                                            className="rounded text-text-3 hover:bg-danger-bg hover:text-danger"
-                                          >
-                                            {busy === f.id ? (
-                                              <i className="ti ti-loader-2 animate-spin text-[11px]" />
-                                            ) : (
-                                              <i className="ti ti-x text-[11px]" />
-                                            )}
-                                          </button>
+                                          <>
+                                            <button
+                                              type="button"
+                                              disabled={
+                                                busy === 'move-' + f.id ||
+                                                mod.features[0]?.id === f.id
+                                              }
+                                              onClick={() => nudge('feature', f.id, 'up')}
+                                              title="Move left"
+                                              className="rounded text-text-3 transition-colors enabled:hover:bg-surface-3 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-30"
+                                            >
+                                              <i className="ti ti-chevron-left text-[11px]" />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={
+                                                busy === 'move-' + f.id ||
+                                                mod.features[mod.features.length - 1]?.id === f.id
+                                              }
+                                              onClick={() => nudge('feature', f.id, 'down')}
+                                              title="Move right"
+                                              className="rounded text-text-3 transition-colors enabled:hover:bg-surface-3 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-30"
+                                            >
+                                              <i className="ti ti-chevron-right text-[11px]" />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={busy === f.id}
+                                              onClick={() => removeFeature(f.id)}
+                                              title={`Remove "${f.name}"`}
+                                              className="rounded text-text-3 hover:bg-danger-bg hover:text-danger"
+                                            >
+                                              {busy === f.id ? (
+                                                <i className="ti ti-loader-2 animate-spin text-[11px]" />
+                                              ) : (
+                                                <i className="ti ti-x text-[11px]" />
+                                              )}
+                                            </button>
+                                          </>
                                         )}
                                       </span>
                                     ))}
@@ -589,5 +654,44 @@ export function ModulesFeaturesCard({
         )}
       </div>
     </div>
+  );
+}
+
+// A pair of tightly-stacked up/down arrows. First-row's Up and last-row's
+// Down disable themselves, so the user never fires a doomed /move call.
+function MoveButtons({
+  disabled,
+  isFirst,
+  isLast,
+  onUp,
+  onDown,
+}: {
+  disabled: boolean;
+  isFirst: boolean;
+  isLast: boolean;
+  onUp: () => void;
+  onDown: () => void;
+}) {
+  return (
+    <span className="flex flex-shrink-0 items-center">
+      <button
+        type="button"
+        disabled={disabled || isFirst}
+        onClick={onUp}
+        title="Move up"
+        className="flex h-6 w-5 items-center justify-center rounded text-text-3 transition-colors enabled:hover:bg-surface-3 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <i className="ti ti-chevron-up text-[13px]" />
+      </button>
+      <button
+        type="button"
+        disabled={disabled || isLast}
+        onClick={onDown}
+        title="Move down"
+        className="flex h-6 w-5 items-center justify-center rounded text-text-3 transition-colors enabled:hover:bg-surface-3 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <i className="ti ti-chevron-down text-[13px]" />
+      </button>
+    </span>
   );
 }

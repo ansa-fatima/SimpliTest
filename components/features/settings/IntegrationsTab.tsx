@@ -15,6 +15,9 @@ interface JiraStatus {
   email?: string;
   connectedAt?: string;
   connectedByName?: string | null;
+  projectKey?: string | null;
+  jqlPrefilter?: string | null;
+  apiTokenRotatedAt?: string | null;
   autoSyncIntervalMinutes?: number;
   autoSyncEnabled?: boolean;
   lastSyncAt?: string | null;
@@ -181,8 +184,16 @@ export function IntegrationsTab({
 }
 
 // Jira is a real connection (HTTP Basic auth, email + API token) -- see
-// lib/jira.ts and prisma/schema.prisma's JiraConnection model. Connecting
-// validates the credentials against Jira before saving anything.
+// lib/jira.ts and prisma/schema.prisma's JiraConnection model.
+//
+// When disconnected: a minimal three-field form (site URL, email, token)
+// is shown; Connect validates against Jira before saving.
+//
+// When connected: a full detail card with the mockup's rows -- instance
+// URL, project key, service account, API token (with Rotate), auto-sync
+// interval + toggle, and JQL prefilter. "Save changes" PATCHes only the
+// fields that actually changed; the token has its own rotate flow so a
+// stray Save cannot blank it.
 function JiraCard({
   workspaceId,
   canEdit,
@@ -197,28 +208,60 @@ function JiraCard({
   onChange: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [siteUrl, setSiteUrl] = useState('');
-  const [email, setEmail] = useState('');
-  const [apiToken, setApiToken] = useState('');
+  const [newSiteUrl, setNewSiteUrl] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newApiToken, setNewApiToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const [siteUrl, setSiteUrl] = useState('');
+  const [email, setEmail] = useState('');
+  const [projectKey, setProjectKey] = useState('');
+  const [jqlPrefilter, setJqlPrefilter] = useState('');
+  const [intervalMinutes, setIntervalMinutes] = useState(15);
+  const [autoSyncOn, setAutoSyncOn] = useState(true);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
+  const [rotating, setRotating] = useState(false);
+  const [rotateToken, setRotateToken] = useState('');
+
+  useEffect(() => {
+    if (status.connected) {
+      setSiteUrl(status.siteUrl ?? '');
+      setEmail(status.email ?? '');
+      setProjectKey(status.projectKey ?? '');
+      setJqlPrefilter(status.jqlPrefilter ?? '');
+      setIntervalMinutes(status.autoSyncIntervalMinutes ?? 15);
+      setAutoSyncOn(status.autoSyncEnabled ?? true);
+    }
+  }, [
+    status.connected,
+    status.siteUrl,
+    status.email,
+    status.projectKey,
+    status.jqlPrefilter,
+    status.autoSyncIntervalMinutes,
+    status.autoSyncEnabled,
+  ]);
+
   const connect = async () => {
     setFormError(null);
-    if (!siteUrl.trim() || !email.trim() || !apiToken.trim()) {
-      setFormError('Site URL, email, and API token are all required.');
+    if (!newSiteUrl.trim() || !newEmail.trim() || !newApiToken.trim()) {
+      setFormError('Jira instance URL, service account, and API token are all required.');
       return;
     }
     setBusy(true);
     try {
       await api.post(`/api/projects/${workspaceId}/integrations/jira`, {
-        siteUrl: siteUrl.trim(),
-        email: email.trim(),
-        apiToken: apiToken.trim(),
+        siteUrl: newSiteUrl.trim(),
+        email: newEmail.trim(),
+        apiToken: newApiToken.trim(),
+        autoSyncIntervalMinutes: intervalMinutes,
+        autoSyncEnabled: autoSyncOn,
       });
-      setSiteUrl('');
-      setEmail('');
-      setApiToken('');
+      setNewSiteUrl('');
+      setNewEmail('');
+      setNewApiToken('');
       setEditing(false);
       onChange();
     } catch (e) {
@@ -242,105 +285,190 @@ function JiraCard({
     }
   };
 
-  return (
-    <div className="rounded-lg border border-border bg-surface p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md border border-border text-text-3">
-            <i className="ti ti-link text-[16px]" />
-          </span>
-          <div>
-            <p className="text-[13px] font-medium text-text">Jira</p>
-            <p className="text-[11.5px] text-text-3">
-              Link a cycle&apos;s ticket and sync its status plus issue counts from Jira.
-            </p>
-          </div>
-        </div>
-        {loading ? (
-          <p className="text-[12px] text-text-3">Loading…</p>
-        ) : status.connected ? (
-          <button
-            type="button"
-            disabled={!canEdit || busy}
-            onClick={disconnect}
-            className="flex-shrink-0 rounded-[7px] border border-danger/30 bg-danger-bg px-3 py-1.5 text-[12px] font-medium text-danger-text hover:bg-danger-bg/80 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {busy ? <i className="ti ti-loader-2 animate-spin text-[13px]" /> : 'Disconnect'}
-          </button>
-        ) : (
-          !editing && (
-            <button
-              type="button"
-              disabled={!canEdit}
-              onClick={() => setEditing(true)}
-              className="flex-shrink-0 rounded-[7px] border border-border bg-surface px-3 py-1.5 text-[12px] font-medium text-text hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Connect
-            </button>
-          )
-        )}
-      </div>
+  const dirty =
+    status.connected &&
+    (siteUrl.trim() !== (status.siteUrl ?? '') ||
+      email.trim() !== (status.email ?? '') ||
+      (projectKey.trim().toUpperCase() || null) !== (status.projectKey ?? null) ||
+      (jqlPrefilter.trim() || null) !== (status.jqlPrefilter ?? null) ||
+      intervalMinutes !== (status.autoSyncIntervalMinutes ?? 15) ||
+      autoSyncOn !== (status.autoSyncEnabled ?? true));
 
-      {!loading && status.connected && (
-        <div className="mt-3 rounded-md border border-border bg-surface-2 px-3 py-2 text-[11.5px] text-text-2">
-          <p>
-            <span className="font-medium text-text">{status.siteUrl}</span> · {status.email}
+  const saveChanges = async () => {
+    setFormError(null);
+    setSaveMsg(null);
+    setBusy(true);
+    try {
+      await api.patch(`/api/projects/${workspaceId}/integrations/jira`, {
+        siteUrl: siteUrl.trim(),
+        email: email.trim(),
+        projectKey: projectKey.trim().toUpperCase() || null,
+        jqlPrefilter: jqlPrefilter.trim() || null,
+        autoSyncIntervalMinutes: intervalMinutes,
+        autoSyncEnabled: autoSyncOn,
+      });
+      setSaveMsg('Saved');
+      onChange();
+    } catch (e) {
+      setFormError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rotateApiToken = async () => {
+    if (!rotateToken.trim()) {
+      setFormError('Enter the new API token first.');
+      return;
+    }
+    setFormError(null);
+    setBusy(true);
+    try {
+      await api.post(`/api/projects/${workspaceId}/integrations/jira/rotate-token`, {
+        apiToken: rotateToken.trim(),
+      });
+      setRotateToken('');
+      setRotating(false);
+      onChange();
+    } catch (e) {
+      setFormError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-surface">
+      <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
+        <div>
+          <h3 className="text-[14px] font-semibold text-text">Jira Integration</h3>
+          <p className="mt-0.5 text-[11.5px] text-text-3">
+            Where issues, tickets, and sub-tasks come from.
           </p>
-          {status.connectedAt && (
-            <p className="mt-0.5 text-text-3">
-              Connected {new Date(status.connectedAt).toLocaleDateString()}
-              {status.connectedByName ? ` by ${status.connectedByName}` : ''}
-            </p>
+        </div>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          {loading ? (
+            <p className="text-[12px] text-text-3">Loading…</p>
+          ) : status.connected ? (
+            <>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-success/40 bg-success/10 px-2.5 py-1 text-[11.5px] font-medium text-success">
+                <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                Connected
+              </span>
+              <button
+                type="button"
+                disabled={!canEdit || busy || !dirty}
+                onClick={saveChanges}
+                className="rounded-[7px] bg-primary px-3 py-1.5 text-[12px] font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy ? <i className="ti ti-loader-2 animate-spin text-[13px]" /> : 'Save changes'}
+              </button>
+            </>
+          ) : (
+            !editing && (
+              <button
+                type="button"
+                disabled={!canEdit}
+                onClick={() => setEditing(true)}
+                className="rounded-[7px] border border-border bg-surface px-3 py-1.5 text-[12px] font-medium text-text hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Connect
+              </button>
+            )
           )}
         </div>
-      )}
+      </div>
 
-      {!loading && status.connected && (
-        <JiraAutoSyncSettings
-          workspaceId={workspaceId}
-          canEdit={canEdit}
-          intervalMinutes={status.autoSyncIntervalMinutes ?? 15}
-          enabled={status.autoSyncEnabled ?? true}
-          lastSyncAt={status.lastSyncAt ?? null}
-          lastSyncCount={status.lastSyncCount ?? null}
-          onChange={onChange}
-        />
+      {(formError || saveMsg) && (
+        <p
+          className={cn(
+            'border-b border-border px-5 py-2 text-[11.5px]',
+            formError ? 'bg-danger-bg/40 text-danger-text' : 'bg-success/10 text-success',
+          )}
+        >
+          {formError ?? saveMsg}
+        </p>
       )}
 
       {!loading && !status.connected && editing && (
-        <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3">
-          {formError && <p className="text-[11.5px] text-danger-text">{formError}</p>}
-          <input
-            type="text"
-            value={siteUrl}
-            onChange={e => setSiteUrl(e.target.value)}
+        <div className="flex flex-col gap-3 px-5 py-4">
+          <JiraField
+            label="Jira instance URL"
+            help="The Atlassian Cloud URL for your workspace."
+            value={newSiteUrl}
+            onChange={setNewSiteUrl}
             placeholder="https://your-team.atlassian.net"
-            className="input"
           />
-          <input
+          <JiraField
+            label="Service account"
+            help="A dedicated user for API access — never a personal token."
+            value={newEmail}
+            onChange={setNewEmail}
+            placeholder="qa-bot@your-company.com"
             type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            placeholder="you@company.com"
-            className="input"
           />
-          <input
+          <JiraField
+            label="API token"
+            help="Create one at id.atlassian.com/manage-profile/security/api-tokens."
+            value={newApiToken}
+            onChange={setNewApiToken}
+            placeholder="Paste the token"
             type="password"
-            value={apiToken}
-            onChange={e => setApiToken(e.target.value)}
-            placeholder="API token"
-            className="input"
           />
-          <p className="text-[11px] text-text-3">
-            Create a token at{' '}
-            <span className="font-mono">id.atlassian.com/manage-profile/security/api-tokens</span>.
-          </p>
-          <div className="mt-1 flex items-center gap-2">
+
+          {/* Auto-sync defaults picked here on setup, so a new connection
+              starts with the right cadence instead of inheriting the API
+              default and then needing a second trip to Settings. */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[12.5px] font-semibold text-text">Auto-sync interval</label>
+            <select
+              value={intervalMinutes}
+              onChange={e => setIntervalMinutes(Number(e.target.value))}
+              className="w-full rounded-[7px] border border-border bg-surface px-3 py-2 text-[12.5px] text-text outline-none focus:border-primary"
+            >
+              {AUTO_SYNC_INTERVALS.map(o => (
+                <option key={o.minutes} value={o.minutes}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-text-3">
+              How often the console pulls updates from Jira.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5">
+            <div>
+              <p className="text-[12.5px] font-semibold text-text">Auto-sync</p>
+              <p className="mt-0.5 text-[11px] text-text-3">
+                When off, sync only fires on the &quot;Sync from Jira&quot; button.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoSyncOn}
+              onClick={() => setAutoSyncOn(!autoSyncOn)}
+              className={cn(
+                'relative h-6 w-11 flex-shrink-0 rounded-full transition-colors',
+                autoSyncOn ? 'bg-primary' : 'bg-surface-3',
+              )}
+            >
+              <span
+                className={cn(
+                  'absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform',
+                  autoSyncOn ? 'translate-x-5' : 'translate-x-0',
+                )}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
             <button
               type="button"
               disabled={busy}
               onClick={connect}
-              className="rounded-[7px] border border-border bg-primary px-3 py-1.5 text-[12px] font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-[7px] bg-primary px-3 py-1.5 text-[12px] font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy ? <i className="ti ti-loader-2 animate-spin text-[13px]" /> : 'Test & Connect'}
             </button>
@@ -358,118 +486,253 @@ function JiraCard({
           </div>
         </div>
       )}
+
+      {!loading && status.connected && (
+        <div className="divide-y divide-border">
+          <JiraRow label="Jira instance URL" help="The Atlassian Cloud URL for your workspace.">
+            <input
+              type="url"
+              value={siteUrl}
+              disabled={!canEdit}
+              onChange={e => setSiteUrl(e.target.value)}
+              placeholder="https://your-team.atlassian.net"
+              className="w-full rounded-[7px] border border-border bg-surface px-3 py-2 text-[12.5px] text-text outline-none focus:border-primary disabled:opacity-60"
+            />
+          </JiraRow>
+
+          <JiraRow label="Project key" help="JQL filters use `project = KEY` against every sync.">
+            <div className="flex flex-col gap-1">
+              <input
+                type="text"
+                value={projectKey}
+                disabled={!canEdit}
+                onChange={e => setProjectKey(e.target.value.toUpperCase())}
+                placeholder="NPD"
+                className="w-full rounded-[7px] border border-border bg-surface px-3 py-2 text-[12.5px] uppercase text-text outline-none focus:border-primary disabled:opacity-60"
+              />
+              {status.projectKey && (
+                <p className="text-[11px] text-text-3">
+                  Currently syncing project{' '}
+                  <span className="font-semibold text-text-2">{status.projectKey}</span>.
+                </p>
+              )}
+            </div>
+          </JiraRow>
+
+          <JiraRow
+            label="Service account"
+            help="A dedicated user for API access — never a personal token."
+          >
+            <input
+              type="email"
+              value={email}
+              disabled={!canEdit}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="qa-bot@your-company.com"
+              className="w-full rounded-[7px] border border-border bg-surface px-3 py-2 text-[12.5px] text-text outline-none focus:border-primary disabled:opacity-60"
+            />
+          </JiraRow>
+
+          <JiraRow label="API token" help="Rotate every 90 days. Stored encrypted at rest.">
+            <div className="flex flex-col gap-1">
+              {rotating ? (
+                <>
+                  <input
+                    type="password"
+                    value={rotateToken}
+                    autoFocus
+                    onChange={e => setRotateToken(e.target.value)}
+                    placeholder="Paste the new API token"
+                    className="w-full rounded-[7px] border border-border bg-surface px-3 py-2 text-[12.5px] text-text outline-none focus:border-primary"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={busy || !rotateToken.trim()}
+                      onClick={rotateApiToken}
+                      className="rounded-[7px] bg-primary px-3 py-1 text-[11.5px] font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {busy ? (
+                        <i className="ti ti-loader-2 animate-spin text-[12px]" />
+                      ) : (
+                        'Save token'
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRotating(false);
+                        setRotateToken('');
+                      }}
+                      className="rounded-[7px] border border-border bg-surface px-3 py-1 text-[11.5px] text-text hover:bg-surface-2"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <input
+                    type="password"
+                    value="•••••••••••••••••••••••"
+                    disabled
+                    className="w-full rounded-[7px] border border-border bg-surface px-3 py-2 text-[12.5px] text-text outline-none disabled:opacity-70"
+                  />
+                  <p className="text-[11px] text-text-3">
+                    Last rotated{' '}
+                    <span className="text-text-2">
+                      {status.apiTokenRotatedAt
+                        ? timeAgo(status.apiTokenRotatedAt)
+                        : status.connectedAt
+                          ? timeAgo(status.connectedAt)
+                          : 'never'}
+                    </span>{' '}
+                    ·{' '}
+                    <button
+                      type="button"
+                      disabled={!canEdit}
+                      onClick={() => setRotating(true)}
+                      className="text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Rotate now
+                    </button>
+                  </p>
+                </>
+              )}
+            </div>
+          </JiraRow>
+
+          <JiraRow label="Auto-sync interval" help="How often the console pulls updates from Jira.">
+            <select
+              value={intervalMinutes}
+              disabled={!canEdit || !autoSyncOn}
+              onChange={e => setIntervalMinutes(Number(e.target.value))}
+              className="w-full rounded-[7px] border border-border bg-surface px-3 py-2 text-[12.5px] text-text outline-none focus:border-primary disabled:opacity-60"
+            >
+              {AUTO_SYNC_INTERVALS.map(o => (
+                <option key={o.minutes} value={o.minutes}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </JiraRow>
+
+          <JiraRow
+            label="Auto-sync"
+            help='When off, sync only fires on the "Sync from Jira" button.'
+          >
+            <div className="flex flex-col items-start gap-1">
+              <label className="flex items-center gap-2">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoSyncOn}
+                  disabled={!canEdit}
+                  onClick={() => setAutoSyncOn(!autoSyncOn)}
+                  className={cn(
+                    'relative h-6 w-11 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                    autoSyncOn ? 'bg-primary' : 'bg-surface-3',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform',
+                      autoSyncOn ? 'translate-x-5' : 'translate-x-0',
+                    )}
+                  />
+                </button>
+                <span className="text-[12px] text-text-2">Automatic background sync</span>
+              </label>
+              <p className="text-[11px] text-text-3">
+                Last sync:{' '}
+                <span className="font-semibold text-text-2">{timeAgo(status.lastSyncAt)}</span>
+                {typeof status.lastSyncCount === 'number' && (
+                  <>
+                    {' '}
+                    · {status.lastSyncCount} ticket
+                    {status.lastSyncCount === 1 ? '' : 's'} updated
+                  </>
+                )}
+              </p>
+            </div>
+          </JiraRow>
+
+          <JiraRow
+            label="JQL prefilter"
+            help="Optional. Narrows what gets pulled (e.g. skip a status)."
+          >
+            <input
+              type="text"
+              value={jqlPrefilter}
+              disabled={!canEdit}
+              onChange={e => setJqlPrefilter(e.target.value)}
+              placeholder="status != Closed"
+              className="w-full rounded-[7px] border border-border bg-surface px-3 py-2 font-mono text-[12px] text-text outline-none focus:border-primary disabled:opacity-60"
+            />
+          </JiraRow>
+
+          <div className="flex items-center justify-end px-5 py-3">
+            <button
+              type="button"
+              disabled={!canEdit || busy}
+              onClick={disconnect}
+              className="rounded-[7px] border border-danger/30 bg-danger-bg px-3 py-1.5 text-[12px] font-medium text-danger-text hover:bg-danger-bg/80 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Disconnect
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// Auto-sync preferences: how often the background job polls Jira, and
-// whether to run that job at all. "Last sync" line reads from the same
-// row the backend writes after each (manual or scheduled) sync run.
-function JiraAutoSyncSettings({
-  workspaceId,
-  canEdit,
-  intervalMinutes,
-  enabled,
-  lastSyncAt,
-  lastSyncCount,
-  onChange,
+function JiraRow({
+  label,
+  help,
+  children,
 }: {
-  workspaceId: string;
-  canEdit: boolean;
-  intervalMinutes: number;
-  enabled: boolean;
-  lastSyncAt: string | null;
-  lastSyncCount: number | null;
-  onChange: () => void;
+  label: string;
+  help: string;
+  children: React.ReactNode;
 }) {
-  const [busy, setBusy] = useState<'interval' | 'toggle' | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  const patch = async (
-    body: {
-      autoSyncIntervalMinutes?: number;
-      autoSyncEnabled?: boolean;
-    },
-    which: 'interval' | 'toggle',
-  ) => {
-    setErr(null);
-    setBusy(which);
-    try {
-      await api.patch(`/api/projects/${workspaceId}/integrations/jira`, body);
-      onChange();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
   return (
-    <div className="mt-3 flex flex-col divide-y divide-border rounded-md border border-border bg-surface">
-      {err && <p className="px-3 py-2 text-[11.5px] text-danger-text">{err}</p>}
-      {/* Row 1: Auto-sync interval dropdown */}
-      <div className="flex items-center justify-between gap-4 px-3 py-3">
-        <div className="min-w-0">
-          <p className="text-[12.5px] font-semibold text-text">Auto-sync interval</p>
-          <p className="mt-0.5 text-[11.5px] text-primary">
-            How often the console pulls updates from Jira.
-          </p>
-        </div>
-        <select
-          value={intervalMinutes}
-          disabled={!canEdit || !enabled || busy === 'interval'}
-          onChange={e => patch({ autoSyncIntervalMinutes: Number(e.target.value) }, 'interval')}
-          className="min-w-[220px] flex-shrink-0 rounded-[7px] border border-border bg-surface px-3 py-2 text-[12.5px] text-text outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {AUTO_SYNC_INTERVALS.map(o => (
-            <option key={o.minutes} value={o.minutes}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+    <div className="grid grid-cols-1 gap-3 px-5 py-4 md:grid-cols-[260px_1fr] md:items-start">
+      <div>
+        <p className="text-[12.5px] font-semibold text-text">{label}</p>
+        <p className="mt-0.5 text-[11.5px] text-primary">{help}</p>
       </div>
+      <div>{children}</div>
+    </div>
+  );
+}
 
-      {/* Row 2: Auto-sync toggle + last-sync status */}
-      <div className="flex items-start justify-between gap-4 px-3 py-3">
-        <div className="min-w-0">
-          <p className="text-[12.5px] font-semibold text-text">Auto-sync</p>
-          <p className="mt-0.5 text-[11.5px] text-primary">
-            When off, sync only fires on the &quot;Sync from Jira&quot; button.
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-1">
-          <label className="flex items-center gap-2">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={enabled}
-              disabled={!canEdit || busy === 'toggle'}
-              onClick={() => patch({ autoSyncEnabled: !enabled }, 'toggle')}
-              className={cn(
-                'relative h-6 w-11 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-                enabled ? 'bg-primary' : 'bg-surface-3',
-              )}
-            >
-              <span
-                className={cn(
-                  'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform',
-                  enabled ? 'translate-x-5' : 'translate-x-0.5',
-                )}
-              />
-            </button>
-            <span className="text-[12px] text-text-2">Automatic background sync</span>
-          </label>
-          <p className="text-[11.5px] text-text-3">
-            Last sync: <span className="font-semibold text-text-2">{timeAgo(lastSyncAt)}</span>
-            {typeof lastSyncCount === 'number' && (
-              <>
-                {' '}
-                · {lastSyncCount} ticket{lastSyncCount === 1 ? '' : 's'} updated
-              </>
-            )}
-          </p>
-        </div>
-      </div>
+function JiraField({
+  label,
+  help,
+  value,
+  onChange,
+  placeholder,
+  type = 'text',
+}: {
+  label: string;
+  help: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  type?: 'text' | 'email' | 'password' | 'url';
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[12.5px] font-semibold text-text">{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-[7px] border border-border bg-surface px-3 py-2 text-[12.5px] text-text outline-none focus:border-primary"
+      />
+      <p className="text-[11px] text-text-3">{help}</p>
     </div>
   );
 }
