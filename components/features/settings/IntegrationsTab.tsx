@@ -15,6 +15,33 @@ interface JiraStatus {
   email?: string;
   connectedAt?: string;
   connectedByName?: string | null;
+  autoSyncIntervalMinutes?: number;
+  autoSyncEnabled?: boolean;
+  lastSyncAt?: string | null;
+  lastSyncCount?: number | null;
+}
+
+// Supported auto-sync intervals, mirrored by the API's allow-list so the
+// dropdown can never offer a value the backend rejects.
+const AUTO_SYNC_INTERVALS: { minutes: number; label: string }[] = [
+  { minutes: 5, label: 'Every 5 minutes' },
+  { minutes: 15, label: 'Every 15 minutes' },
+  { minutes: 30, label: 'Every 30 minutes' },
+  { minutes: 60, label: 'Every hour' },
+  { minutes: 120, label: 'Every 2 hours' },
+  { minutes: 360, label: 'Every 6 hours' },
+  { minutes: 1440, label: 'Daily' },
+];
+
+function timeAgo(iso: string | null | undefined): string {
+  if (!iso) return 'never';
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60_000) return 'just now';
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 const LOCAL_INTEGRATIONS: {
@@ -268,6 +295,18 @@ function JiraCard({
         </div>
       )}
 
+      {!loading && status.connected && (
+        <JiraAutoSyncSettings
+          workspaceId={workspaceId}
+          canEdit={canEdit}
+          intervalMinutes={status.autoSyncIntervalMinutes ?? 15}
+          enabled={status.autoSyncEnabled ?? true}
+          lastSyncAt={status.lastSyncAt ?? null}
+          lastSyncCount={status.lastSyncCount ?? null}
+          onChange={onChange}
+        />
+      )}
+
       {!loading && !status.connected && editing && (
         <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3">
           {formError && <p className="text-[11.5px] text-danger-text">{formError}</p>}
@@ -319,6 +358,118 @@ function JiraCard({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Auto-sync preferences: how often the background job polls Jira, and
+// whether to run that job at all. "Last sync" line reads from the same
+// row the backend writes after each (manual or scheduled) sync run.
+function JiraAutoSyncSettings({
+  workspaceId,
+  canEdit,
+  intervalMinutes,
+  enabled,
+  lastSyncAt,
+  lastSyncCount,
+  onChange,
+}: {
+  workspaceId: string;
+  canEdit: boolean;
+  intervalMinutes: number;
+  enabled: boolean;
+  lastSyncAt: string | null;
+  lastSyncCount: number | null;
+  onChange: () => void;
+}) {
+  const [busy, setBusy] = useState<'interval' | 'toggle' | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const patch = async (
+    body: {
+      autoSyncIntervalMinutes?: number;
+      autoSyncEnabled?: boolean;
+    },
+    which: 'interval' | 'toggle',
+  ) => {
+    setErr(null);
+    setBusy(which);
+    try {
+      await api.patch(`/api/projects/${workspaceId}/integrations/jira`, body);
+      onChange();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="mt-3 flex flex-col divide-y divide-border rounded-md border border-border bg-surface">
+      {err && <p className="px-3 py-2 text-[11.5px] text-danger-text">{err}</p>}
+      {/* Row 1: Auto-sync interval dropdown */}
+      <div className="flex items-center justify-between gap-4 px-3 py-3">
+        <div className="min-w-0">
+          <p className="text-[12.5px] font-semibold text-text">Auto-sync interval</p>
+          <p className="mt-0.5 text-[11.5px] text-primary">
+            How often the console pulls updates from Jira.
+          </p>
+        </div>
+        <select
+          value={intervalMinutes}
+          disabled={!canEdit || !enabled || busy === 'interval'}
+          onChange={e => patch({ autoSyncIntervalMinutes: Number(e.target.value) }, 'interval')}
+          className="min-w-[220px] flex-shrink-0 rounded-[7px] border border-border bg-surface px-3 py-2 text-[12.5px] text-text outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {AUTO_SYNC_INTERVALS.map(o => (
+            <option key={o.minutes} value={o.minutes}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Row 2: Auto-sync toggle + last-sync status */}
+      <div className="flex items-start justify-between gap-4 px-3 py-3">
+        <div className="min-w-0">
+          <p className="text-[12.5px] font-semibold text-text">Auto-sync</p>
+          <p className="mt-0.5 text-[11.5px] text-primary">
+            When off, sync only fires on the &quot;Sync from Jira&quot; button.
+          </p>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <label className="flex items-center gap-2">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={enabled}
+              disabled={!canEdit || busy === 'toggle'}
+              onClick={() => patch({ autoSyncEnabled: !enabled }, 'toggle')}
+              className={cn(
+                'relative h-6 w-11 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                enabled ? 'bg-primary' : 'bg-surface-3',
+              )}
+            >
+              <span
+                className={cn(
+                  'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform',
+                  enabled ? 'translate-x-5' : 'translate-x-0.5',
+                )}
+              />
+            </button>
+            <span className="text-[12px] text-text-2">Automatic background sync</span>
+          </label>
+          <p className="text-[11.5px] text-text-3">
+            Last sync: <span className="font-semibold text-text-2">{timeAgo(lastSyncAt)}</span>
+            {typeof lastSyncCount === 'number' && (
+              <>
+                {' '}
+                · {lastSyncCount} ticket{lastSyncCount === 1 ? '' : 's'} updated
+              </>
+            )}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

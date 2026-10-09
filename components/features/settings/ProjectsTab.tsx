@@ -71,14 +71,6 @@ export function ProjectsTab({ workspaceId, canEdit }: { workspaceId: string; can
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <PortalsCard
-        workspaceId={workspaceId}
-        canEdit={canEdit}
-        portals={portals}
-        loading={loading}
-        onChanged={reload}
-      />
-      <ModulesCard modules={modules} canEdit={canEdit} loading={loading} onChanged={reload} />
       <ModulesFeaturesCard workspaceId={workspaceId} canEdit={canEdit} />
       <div className="lg:col-span-2">
         <ConfigList

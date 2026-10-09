@@ -49,7 +49,7 @@ export const DEFAULT_PERMISSIONS: PermissionMatrix = {
   executeTests: ['SuperAdmin', 'QAManager', 'Tester'],
   viewReports: ['SuperAdmin', 'QAManager', 'Tester', 'Developer', 'Viewer'],
   manageTeamRoles: ['SuperAdmin'],
-  settings: ['SuperAdmin'],
+  settings: ['SuperAdmin', 'QAManager'],
 };
 
 // A SuperAdmin unchecking their own row for Manage Team & Roles would strand
