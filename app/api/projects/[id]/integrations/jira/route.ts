@@ -28,6 +28,10 @@ export async function GET(_req: Request, { params }: Ctx) {
         email: true,
         connectedAt: true,
         connectedBy: { select: { name: true, username: true } },
+        autoSyncIntervalMinutes: true,
+        autoSyncEnabled: true,
+        lastSyncAt: true,
+        lastSyncCount: true,
       },
     });
     if (!conn) return ok({ connected: false });
@@ -38,9 +42,58 @@ export async function GET(_req: Request, { params }: Ctx) {
       email: conn.email,
       connectedAt: conn.connectedAt,
       connectedByName: conn.connectedBy?.name || conn.connectedBy?.username || null,
+      autoSyncIntervalMinutes: conn.autoSyncIntervalMinutes,
+      autoSyncEnabled: conn.autoSyncEnabled,
+      lastSyncAt: conn.lastSyncAt,
+      lastSyncCount: conn.lastSyncCount,
     });
   } catch (e) {
     return serverError(e);
+  }
+}
+
+// PATCH /api/projects/:id/integrations/jira -- update auto-sync fields.
+// Body: { autoSyncIntervalMinutes?, autoSyncEnabled? }. Does NOT touch
+// credentials -- a toggle flip shouldn't let a caller change the token.
+export async function PATCH(req: Request, { params }: Ctx) {
+  const guard = await requireWorkspacePermission(params.id, 'settings');
+  if (guard instanceof NextResponse) return guard;
+
+  try {
+    const body = await parseJson<{
+      autoSyncIntervalMinutes?: number;
+      autoSyncEnabled?: boolean;
+    }>(req);
+    const data: {
+      autoSyncIntervalMinutes?: number;
+      autoSyncEnabled?: boolean;
+    } = {};
+    if (typeof body?.autoSyncIntervalMinutes === 'number') {
+      // Supported presets only -- the UI dropdown matches, so a user
+      // can't pick something the background job doesn't honour.
+      const allowed = [5, 15, 30, 60, 120, 360, 1440];
+      if (!allowed.includes(body.autoSyncIntervalMinutes))
+        return bad(`autoSyncIntervalMinutes must be one of: ${allowed.join(', ')}`);
+      data.autoSyncIntervalMinutes = body.autoSyncIntervalMinutes;
+    }
+    if (typeof body?.autoSyncEnabled === 'boolean') {
+      data.autoSyncEnabled = body.autoSyncEnabled;
+    }
+    if (Object.keys(data).length === 0) return bad('No settings to update');
+
+    const conn = await prisma.jiraConnection.update({
+      where: { projectId: params.id },
+      data,
+      select: {
+        autoSyncIntervalMinutes: true,
+        autoSyncEnabled: true,
+        lastSyncAt: true,
+        lastSyncCount: true,
+      },
+    });
+    return ok(conn);
+  } catch (e) {
+    return prismaError(e) ?? serverError(e);
   }
 }
 

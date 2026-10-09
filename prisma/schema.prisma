@@ -209,6 +209,17 @@ model JiraConnection {
   connectedAt   DateTime @default(now())
   connectedById String?
   connectedBy   User?    @relation(fields: [connectedById], references: [id], onDelete: SetNull)
+  // How often the background sync job runs (minutes). The toggle below
+  // gates whether that job runs at all; when it's off, only the "Sync
+  // from Jira" button fires. Defaults match what the Settings UI shows
+  // on a fresh connection: every 15 minutes, auto-sync on.
+  autoSyncIntervalMinutes Int      @default(15)
+  autoSyncEnabled         Boolean  @default(true)
+  // Stamp + count written by the auto-sync job (and by a manual Sync
+  // from Jira run too), so the Settings card can show "Last sync: 2m
+  // ago · 46 tickets updated" without a separate audit query.
+  lastSyncAt         DateTime?
+  lastSyncCount      Int?
 
   @@map("jira_connections")
 }
