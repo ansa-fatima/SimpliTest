@@ -8,6 +8,23 @@ interface Ctx {
   params: { id: string };
 }
 
+// A raw Jira site URL may arrive with a trailing slash, a /browse/ segment,
+// or even the full path of some ticket the admin copy-pasted. Jira's REST
+// client expects just the origin (scheme + host + optional port), so this
+// helper strips every path/query/hash and returns null if the origin
+// doesn't parse. Returning null signals "invalid" to the caller.
+function normalizeJiraSiteUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const u = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return null;
+  }
+}
+
 // GET /api/projects/:id/integrations/jira — connection status. Any member
 // can see whether Jira is connected (needed to show/hide the "Sync from
 // Jira" action); `apiToken` is never included here or anywhere else.
@@ -79,9 +96,8 @@ export async function PATCH(req: Request, { params }: Ctx) {
     const data: Record<string, unknown> = {};
 
     if (typeof body?.siteUrl === 'string') {
-      const siteUrl = body.siteUrl.trim().replace(/\/+$/, '');
-      if (!/^https?:\/\/.+/.test(siteUrl))
-        return bad('Jira instance URL must be a full https:// URL');
+      const siteUrl = normalizeJiraSiteUrl(body.siteUrl);
+      if (!siteUrl) return bad('Jira instance URL must be a full https:// URL');
       data.siteUrl = siteUrl;
     }
     if (typeof body?.email === 'string') {
@@ -146,10 +162,10 @@ export async function POST(req: Request, { params }: Ctx) {
       autoSyncIntervalMinutes?: number;
       autoSyncEnabled?: boolean;
     }>(req);
-    const siteUrl = body?.siteUrl?.trim().replace(/\/+$/, '');
+    const siteUrl = normalizeJiraSiteUrl(body?.siteUrl ?? '');
     const email = body?.email?.trim();
     const apiToken = body?.apiToken?.trim();
-    if (!siteUrl || !/^https?:\/\/.+/.test(siteUrl)) {
+    if (!siteUrl) {
       return bad('A valid Jira site URL is required (e.g. https://your-team.atlassian.net)');
     }
     if (!email) return bad('email is required');

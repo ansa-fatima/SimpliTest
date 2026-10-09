@@ -86,7 +86,10 @@ export function IntegrationsTab({
     setJiraLoading(true);
     return api
       .get<JiraStatus>(`/api/projects/${workspaceId}/integrations/jira`)
-      .then(setJira)
+      .then(s => {
+        setJira(s);
+        setError(null);
+      })
       .catch(e => setError((e as Error).message))
       .finally(() => setJiraLoading(false));
   };
@@ -396,25 +399,48 @@ function JiraCard({
             label="Jira instance URL"
             help="The Atlassian Cloud URL for your workspace."
             value={newSiteUrl}
-            onChange={setNewSiteUrl}
+            onChange={v => {
+              setNewSiteUrl(v);
+              setFormError(null);
+            }}
             placeholder="https://your-team.atlassian.net"
           />
           <JiraField
             label="Service account"
             help="A dedicated user for API access — never a personal token."
             value={newEmail}
-            onChange={setNewEmail}
+            onChange={v => {
+              setNewEmail(v);
+              setFormError(null);
+            }}
             placeholder="qa-bot@your-company.com"
             type="email"
           />
-          <JiraField
-            label="API token"
-            help="Create one at id.atlassian.com/manage-profile/security/api-tokens."
-            value={newApiToken}
-            onChange={setNewApiToken}
-            placeholder="Paste the token"
-            type="password"
-          />
+          <div className="flex flex-col gap-1">
+            <label className="text-[12.5px] font-semibold text-text">API token</label>
+            <input
+              type="password"
+              value={newApiToken}
+              onChange={e => {
+                setNewApiToken(e.target.value);
+                setFormError(null);
+              }}
+              placeholder="Paste the token"
+              className="w-full rounded-[7px] border border-border bg-surface px-3 py-2 text-[12.5px] text-text outline-none focus:border-primary"
+            />
+            <p className="text-[11px] text-text-3">
+              Create one at{' '}
+              <a
+                href="https://id.atlassian.com/manage-profile/security/api-tokens"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-primary hover:underline"
+              >
+                id.atlassian.com/manage-profile/security/api-tokens
+              </a>
+              .
+            </p>
+          </div>
 
           {/* Auto-sync defaults picked here on setup, so a new connection
               starts with the right cadence instead of inheriting the API
