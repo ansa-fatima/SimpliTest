@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
 import { cn } from '@/lib/utils';
 import { ConfigList, ConfigListItem } from './ConfigList';
+import { ModulesFeaturesCard } from './ModulesFeaturesCard';
 
 interface ModuleRow {
   id: string;
@@ -78,6 +79,7 @@ export function ProjectsTab({ workspaceId, canEdit }: { workspaceId: string; can
         onChanged={reload}
       />
       <ModulesCard modules={modules} canEdit={canEdit} loading={loading} onChanged={reload} />
+      <ModulesFeaturesCard workspaceId={workspaceId} canEdit={canEdit} />
       <div className="lg:col-span-2">
         <ConfigList
           title="Versions"
@@ -257,9 +259,10 @@ function ModulesCard({
 
   return (
     <div className="rounded-lg border border-border bg-surface p-4">
-      <h4 className="mb-2 text-[13px] font-semibold text-text">Modules &amp; Suites</h4>
+      <h4 className="mb-2 text-[13px] font-semibold text-text">Test-case Modules &amp; Suites</h4>
       <p className="mb-2 text-[11px] text-text-3">
-        New modules are added from the test-case tree, where their portal is picked in context.
+        These are the modules in your test-case tree. Add new ones from the test-case tree (where
+        their portal is picked in context). Separate from the Modules &amp; Features list below.
       </p>
       {err && <p className="mb-2 text-[11.5px] text-danger-text">{err}</p>}
       {loading ? (

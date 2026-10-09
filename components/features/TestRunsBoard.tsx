@@ -284,6 +284,51 @@ export function TestRunsBoard({
   const canPrev = pageIndex > 0;
   const canNext = pageEnd < totalRows;
 
+  // Counts shown next to each Outcome chip. Each chip counts rows that
+  // match EVERY OTHER filter -- changing which outcome is highlighted
+  // doesn't change these counts, which is the behaviour the mockup needs
+  // (so the user sees "there are 12 Pass rows available right now",
+  // whether or not the Pass chip is currently selected).
+  const outcomeCounts = useMemo(() => {
+    const useCustom = periodMode === 'custom';
+    const startMs = useCustom && periodStart ? new Date(`${periodStart}T00:00:00`).getTime() : null;
+    const endMs = useCustom && periodEnd ? new Date(`${periodEnd}T23:59:59`).getTime() : null;
+    const q = searchQuery.trim().toLowerCase();
+    const base = quickLogs.filter(c => {
+      const ts = new Date(c.completedAt ?? c.createdAt).getTime();
+      if (startMs !== null && ts < startMs) return false;
+      if (endMs !== null && ts > endMs) return false;
+      if (sprintFilter && sprintOf(c.version) !== sprintFilter) return false;
+      if (moduleFilter && c.moduleName !== moduleFilter) return false;
+      if (engineerFilter && c.loggedBy !== engineerFilter) return false;
+      if (portalFilter && c.portalName !== portalFilter) return false;
+      if (q) {
+        const hay = [c.name, c.moduleName, c.featureName, c.ticketLink, c.loggedBy]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    const counts: Record<CycleOutcome, number> = { Pass: 0, Fail: 0, Blocked: 0, Open: 0 };
+    for (const c of base) {
+      const o = deriveOutcome(c);
+      counts[o] = (counts[o] ?? 0) + 1;
+    }
+    return { all: base.length, ...counts };
+  }, [
+    quickLogs,
+    periodMode,
+    periodStart,
+    periodEnd,
+    sprintFilter,
+    moduleFilter,
+    engineerFilter,
+    portalFilter,
+    searchQuery,
+  ]);
+
   const inProgress = caseBased.filter(c => c.status === 'Active' && isStarted(c));
   const planned = caseBased.filter(c => c.status === 'Active' && !isStarted(c));
   const completed = caseBased.filter(c => c.status === 'Completed');
@@ -449,6 +494,7 @@ export function TestRunsBoard({
                 setPortalFilter={setPortalFilter}
                 outcomeFilter={outcomeFilter}
                 setOutcomeFilter={setOutcomeFilter}
+                outcomeCounts={outcomeCounts}
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}
                 moduleOptions={moduleOptions}
@@ -817,6 +863,7 @@ function CycleFilters({
   setPortalFilter,
   outcomeFilter,
   setOutcomeFilter,
+  outcomeCounts,
   searchQuery,
   setSearchQuery,
   moduleOptions,
@@ -840,6 +887,7 @@ function CycleFilters({
   setPortalFilter: (v: string) => void;
   outcomeFilter: '' | CycleOutcome;
   setOutcomeFilter: (v: '' | CycleOutcome) => void;
+  outcomeCounts: { all: number } & Record<CycleOutcome, number>;
   searchQuery: string;
   setSearchQuery: (v: string) => void;
   moduleOptions: string[];
@@ -880,14 +928,14 @@ function CycleFilters({
         <FilterChip
           active={outcomeFilter === ''}
           onClick={() => setOutcomeFilter('')}
-          label="All"
+          label={`All · ${outcomeCounts.all}`}
         />
         {(['Pass', 'Fail', 'Blocked', 'Open'] as const).map(o => (
           <FilterChip
             key={o}
             active={outcomeFilter === o}
             onClick={() => setOutcomeFilter(outcomeFilter === o ? '' : o)}
-            label={o}
+            label={`${o} · ${outcomeCounts[o]}`}
           />
         ))}
       </div>
