@@ -107,10 +107,66 @@ model Project {
   integrations       Json?
   jiraConnection     JiraConnection?
   jiraSubIssues      JiraSubIssue[]
+  // Settings > Modules & Features -- the three-level Portal > Module >
+  // Feature taxonomy that powers the Stability page's grouping and the
+  // New-cycle form's cascading dropdowns. DELIBERATELY NOT the Portal >
+  // Module > Suite tree used for test cases (see Portal / Module / Suite
+  // above) -- editing these never touches test-case location.
+  qaPortals          QaPortal[]
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
 
   @@map("projects")
+}
+
+// Top-level grouping of modules the QA team tracks. One row per portal
+// per project; e.g. "Admin (Web)", "Mobile App", "Teacher App".
+model QaPortal {
+  id        String     @id @default(cuid())
+  projectId String
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  order     Int        @default(0)
+  modules   QaModule[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@unique([projectId, name])
+  @@index([projectId])
+  @@map("qa_portals")
+}
+
+// A module inside a portal. The mockup's 17 top-level surfaces are rows
+// in this table, each nested under its portal. Features belong to a
+// module (QaFeature below) and populate the cascading Feature dropdown
+// when logging a cycle.
+model QaModule {
+  id        String      @id @default(cuid())
+  portalId  String
+  portal    QaPortal    @relation(fields: [portalId], references: [id], onDelete: Cascade)
+  name      String
+  order     Int         @default(0)
+  features  QaFeature[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([portalId, name])
+  @@index([portalId])
+  @@map("qa_modules")
+}
+
+model QaFeature {
+  id        String   @id @default(cuid())
+  moduleId  String
+  module    QaModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  name      String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([moduleId, name])
+  @@index([moduleId])
+  @@map("qa_features")
 }
 
 // Settings > Notifications -- per-user, per-workspace toggle preferences.
