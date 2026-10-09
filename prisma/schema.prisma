@@ -209,6 +209,17 @@ model JiraConnection {
   connectedAt   DateTime @default(now())
   connectedById String?
   connectedBy   User?    @relation(fields: [connectedById], references: [id], onDelete: SetNull)
+  // Jira project KEY (e.g. "NPD"). Every sync's JQL is scoped by
+  // `project = <key>` so a connection to a shared Atlassian site only
+  // ever pulls the one project the console actually tracks.
+  projectKey    String?
+  // Optional JQL fragment appended to every sync's query to narrow what
+  // gets pulled (e.g. "status != Closed"). Null = no extra filter.
+  jqlPrefilter  String?
+  // Stamp written when the apiToken is rotated. Powers the Settings
+  // card's "Last rotated 42 days ago · Rotate now" status line so a
+  // reader knows how fresh the stored credential is.
+  apiTokenRotatedAt DateTime?
   // How often the background sync job runs (minutes). The toggle below
   // gates whether that job runs at all; when it's off, only the "Sync
   // from Jira" button fires. Defaults match what the Settings UI shows
