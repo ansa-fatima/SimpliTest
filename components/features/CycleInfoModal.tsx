@@ -21,11 +21,15 @@ interface RecurringCase {
   severity: string;
   cycleCount: number;
 }
+type SubStatus = 'Verified' | 'Done' | 'In QA' | 'In progress' | 'Open-to-do' | 'Reopened';
+
 interface CycleJiraSubIssue {
   issueKey: string;
   title: string | null;
   severity: string;
   status: string;
+  /** Jira statusCategory = done (Closed, Resolved, Verified, ...). */
+  isDone?: boolean;
   isReopened: boolean;
   timesReopened: number;
 }
@@ -190,15 +194,25 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
 
   // Status rollup, derived once so the chip row above and the per-row left
   // border below never disagree.
-  const statusOf = (s: CycleJiraSubIssue): 'Verified' | 'Done' | 'Open-to-do' | 'Reopened' =>
-    s.isReopened || s.timesReopened > 0
-      ? 'Reopened'
-      : s.status === 'Done'
-        ? 'Done'
-        : s.status === 'Verified'
-          ? 'Verified'
-          : 'Open-to-do';
-  const subRollup = { Verified: 0, Done: 0, 'Open-to-do': 0, Reopened: 0 };
+  // A ticket that is still open keeps Jira's own words: sitting in "In QA"
+  // is not the same as "Open-to-do", so QA and in-flight statuses get their
+  // own buckets and the row badge shows the real Jira status name.
+  const statusOf = (s: CycleJiraSubIssue): SubStatus => {
+    if (s.isReopened || s.timesReopened > 0) return 'Reopened';
+    if (/^verified$/i.test(s.status)) return 'Verified';
+    if (s.isDone || /^(done|closed|resolved)$/i.test(s.status)) return 'Done';
+    if (/\bqa\b|\btest|review|verif|\buat\b/i.test(s.status)) return 'In QA';
+    if (/progress|develop|doing|implement|coding/i.test(s.status)) return 'In progress';
+    return 'Open-to-do';
+  };
+  const subRollup: Record<SubStatus, number> = {
+    Verified: 0,
+    Done: 0,
+    'In QA': 0,
+    'In progress': 0,
+    'Open-to-do': 0,
+    Reopened: 0,
+  };
   let stillOpen = 0;
   for (const s of cycle?.jiraSubIssues ?? []) {
     const st = statusOf(s);
@@ -212,10 +226,17 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
   // (default), Reopened orange (moved/attention), with the Reopened case
   // deliberately NOT red so a healthy row full of Reopens doesn't scream
   // "failed".
-  const JIRA_STATUS: Record<
-    'Verified' | 'Done' | 'Open-to-do' | 'Reopened',
-    { badge: string; border: string; dot: string }
-  > = {
+  const JIRA_STATUS: Record<SubStatus, { badge: string; border: string; dot: string }> = {
+    'In QA': {
+      badge: 'bg-sky-500/15 text-sky-700',
+      border: 'border-l-sky-500',
+      dot: 'bg-sky-500',
+    },
+    'In progress': {
+      badge: 'bg-blue-500/15 text-blue-700',
+      border: 'border-l-blue-500',
+      dot: 'bg-blue-500',
+    },
     Verified: {
       badge: 'bg-emerald-500/15 text-emerald-600',
       border: 'border-l-emerald-500',
@@ -256,7 +277,7 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
     if (subTotal === 0) return { label: cycle.status, cls: 'bg-surface-3 text-text-2' };
     if (subRollup.Reopened > 0)
       return { label: 'Reopened', cls: 'bg-orange-500/15 text-orange-600' };
-    if (subRollup['Open-to-do'] > 0)
+    if (subRollup['Open-to-do'] + subRollup['In progress'] + subRollup['In QA'] > 0)
       return { label: 'QA In Progress', cls: 'bg-sky-500/15 text-sky-700' };
     if (subRollup.Verified > 0)
       return { label: 'QA Approved', cls: 'bg-emerald-500/15 text-emerald-700' };
@@ -550,18 +571,29 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                         {qaStatus.label}
                       </span>
                       <span className="mx-1 h-3 w-px bg-border" />
-                      {(['Verified', 'Done', 'Open-to-do', 'Reopened'] as const).map(k => (
-                        <span
-                          key={k}
-                          className={cn(
-                            'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium',
-                            JIRA_STATUS[k].badge,
-                          )}
-                        >
-                          <span className="font-bold">{subRollup[k]}</span>
-                          {k}
-                        </span>
-                      ))}
+                      {(
+                        [
+                          'Verified',
+                          'Done',
+                          'In QA',
+                          'In progress',
+                          'Open-to-do',
+                          'Reopened',
+                        ] as const
+                      )
+                        .filter(k => subRollup[k] > 0 || k === 'Verified' || k === 'Done')
+                        .map(k => (
+                          <span
+                            key={k}
+                            className={cn(
+                              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium',
+                              JIRA_STATUS[k].badge,
+                            )}
+                          >
+                            <span className="font-bold">{subRollup[k]}</span>
+                            {k}
+                          </span>
+                        ))}
                     </div>
                     <span className="font-medium text-text-2">{stillOpen} still open</span>
                   </div>
@@ -595,7 +627,7 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                               badgeCls,
                             )}
                           >
-                            {st}
+                            {st === 'Reopened' ? st : s.status || st}
                           </span>
                         </div>
                       );
