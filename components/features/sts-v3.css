@@ -3418,3 +3418,21 @@
   line-height: 1.5;
   letter-spacing: -0.005em;
 }
+
+/* Row action menu trigger: solid dots, readable on light and dark. */
+.stv3 .row-menu-btn {
+  color: var(--t-2);
+  border-color: var(--bdr);
+  background: var(--c-surface);
+}
+.stv3 .row-menu-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  stroke: none;
+}
+.stv3 .row-menu-btn:hover {
+  background: var(--bg-2);
+  border-color: var(--bdr-3);
+  color: var(--t-1);
+}

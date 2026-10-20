@@ -14,6 +14,21 @@ export const conflict = (error: string) => NextResponse.json({ error }, { status
 // server log for debugging; the client only ever sees a generic message.
 export function serverError(error: unknown) {
   console.error('[api]', error);
+  // A missing column/table means the code is newer than the database. That
+  // message carries no secrets and is the single most useful thing to show,
+  // otherwise every affected screen just says "Something went wrong".
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    (error.code === 'P2022' || error.code === 'P2021')
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          'The database schema is out of date for this version of the app. Run `prisma migrate deploy` (or `prisma db push`) against this database and try again.',
+      },
+      { status: 500 },
+    );
+  }
   return NextResponse.json({ error: 'Something went wrong. Please try again.' }, { status: 500 });
 }
 

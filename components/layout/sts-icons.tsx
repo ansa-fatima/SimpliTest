@@ -74,9 +74,9 @@ const P: Record<SIconName, ReactNode> = {
   ),
   dots: (
     <>
-      <circle cx="12" cy="12" r="1" />
-      <circle cx="19" cy="12" r="1" />
-      <circle cx="5" cy="12" r="1" />
+      <circle cx="12" cy="12" r="1.8" />
+      <circle cx="19" cy="12" r="1.8" />
+      <circle cx="5" cy="12" r="1.8" />
     </>
   ),
   bookmark: <path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" />,

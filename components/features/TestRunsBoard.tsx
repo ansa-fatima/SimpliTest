@@ -716,7 +716,9 @@ function RunRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const [menu, setMenu] = useState(false);
+  // The menu is position:fixed (anchored to the button) because the table card
+  // clips overflow -- an absolutely positioned dropdown got cut off inside it.
+  const [menu, setMenu] = useState<{ top: number; right: number } | null>(null);
   const s = c.summary;
   const total = s?.total ?? 0;
   const done = s?.done ?? 0;
@@ -812,9 +814,12 @@ function RunRow({
           )}
           <button
             type="button"
-            className="icon-btn"
+            className="icon-btn row-menu-btn"
             aria-label="Run actions"
-            onClick={() => setMenu(m => !m)}
+            onClick={e => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setMenu(m => (m ? null : { top: r.bottom + 6, right: window.innerWidth - r.right }));
+            }}
           >
             <SIco name="dots" />
           </button>
@@ -822,14 +827,23 @@ function RunRow({
             <>
               <div
                 style={{ position: 'fixed', inset: 0, zIndex: 30 }}
-                onClick={() => setMenu(false)}
+                onClick={() => setMenu(null)}
               />
-              <div className="tb-menu right" style={{ width: 170, zIndex: 31, top: '100%' }}>
+              <div
+                className="tb-menu"
+                style={{
+                  width: 170,
+                  zIndex: 31,
+                  position: 'fixed',
+                  top: menu.top,
+                  right: menu.right,
+                }}
+              >
                 <button
                   type="button"
                   className="tb-menu-item"
                   onClick={() => {
-                    setMenu(false);
+                    setMenu(null);
                     onDetails();
                   }}
                 >
@@ -841,7 +855,7 @@ function RunRow({
                     type="button"
                     className="tb-menu-item"
                     onClick={() => {
-                      setMenu(false);
+                      setMenu(null);
                       onExecute();
                     }}
                   >
@@ -853,7 +867,7 @@ function RunRow({
                   type="button"
                   className="tb-menu-item"
                   onClick={() => {
-                    setMenu(false);
+                    setMenu(null);
                     onEdit();
                   }}
                 >
@@ -865,7 +879,7 @@ function RunRow({
                   type="button"
                   className="tb-menu-item danger"
                   onClick={() => {
-                    setMenu(false);
+                    setMenu(null);
                     onDelete();
                   }}
                 >
