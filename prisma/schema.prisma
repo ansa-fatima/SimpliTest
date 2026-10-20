@@ -100,6 +100,14 @@ model Project {
   // default", same as today.
   defaultEnvironment String?
   defaultPlatform    String?
+  // Settings > General "Project identity" -- how the workspace is drawn on
+  // its card, switcher chip and settings page. All optional: a null colour/icon
+  // falls back to the id-derived tone and the name's first letter.
+  description        String                   @default("")
+  color              String? // one of the palette keys in lib/projectIdentity.ts
+  icon               String? // "letter" (default) or an icon key from the same file
+  caseKey            String? // short code shown on the project card, e.g. "LMS"
+  visibility         String                   @default("Internal") // Internal | Restricted
   // Settings > Integrations -- { slack, github: boolean }. No real OAuth/API
   // integration exists for these two; Connect/Disconnect just flips this
   // local state. Jira is real -- see JiraConnection below. Null means
@@ -198,39 +206,39 @@ model NotificationPreference {
 // MUST never be included in any API response after the initial connect --
 // see lib/jira.ts and app/api/projects/[id]/integrations/jira/route.ts.
 model JiraConnection {
-  id            String   @id @default(cuid())
-  projectId     String   @unique
-  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id                      String    @id @default(cuid())
+  projectId               String    @unique
+  project                 Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   // Jira Cloud site base URL, e.g. "https://your-team.atlassian.net" (no
   // trailing slash).
-  siteUrl       String
-  email         String
-  apiToken      String
-  connectedAt   DateTime @default(now())
-  connectedById String?
-  connectedBy   User?    @relation(fields: [connectedById], references: [id], onDelete: SetNull)
+  siteUrl                 String
+  email                   String
+  apiToken                String
+  connectedAt             DateTime  @default(now())
+  connectedById           String?
+  connectedBy             User?     @relation(fields: [connectedById], references: [id], onDelete: SetNull)
   // Jira project KEY (e.g. "NPD"). Every sync's JQL is scoped by
   // `project = <key>` so a connection to a shared Atlassian site only
   // ever pulls the one project the console actually tracks.
-  projectKey    String?
+  projectKey              String?
   // Optional JQL fragment appended to every sync's query to narrow what
   // gets pulled (e.g. "status != Closed"). Null = no extra filter.
-  jqlPrefilter  String?
+  jqlPrefilter            String?
   // Stamp written when the apiToken is rotated. Powers the Settings
   // card's "Last rotated 42 days ago · Rotate now" status line so a
   // reader knows how fresh the stored credential is.
-  apiTokenRotatedAt DateTime?
+  apiTokenRotatedAt       DateTime?
   // How often the background sync job runs (minutes). The toggle below
   // gates whether that job runs at all; when it's off, only the "Sync
   // from Jira" button fires. Defaults match what the Settings UI shows
   // on a fresh connection: every 15 minutes, auto-sync on.
-  autoSyncIntervalMinutes Int      @default(15)
-  autoSyncEnabled         Boolean  @default(true)
+  autoSyncIntervalMinutes Int       @default(15)
+  autoSyncEnabled         Boolean   @default(true)
   // Stamp + count written by the auto-sync job (and by a manual Sync
   // from Jira run too), so the Settings card can show "Last sync: 2m
   // ago · 46 tickets updated" without a separate audit query.
-  lastSyncAt         DateTime?
-  lastSyncCount      Int?
+  lastSyncAt              DateTime?
+  lastSyncCount           Int?
 
   @@map("jira_connections")
 }
@@ -246,28 +254,28 @@ model JiraConnection {
 //     whether it's also recurring (a ticket seen in only one quick log can
 //     still be reopened).
 model JiraSubIssue {
-  id         String    @id @default(cuid())
-  projectId  String
-  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  cycleId    String
-  cycle      TestCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
-  issueKey   String
+  id            String    @id @default(cuid())
+  projectId     String
+  project       Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  cycleId       String
+  cycle         TestCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  issueKey      String
   // The issue's own summary, as of this sync -- there only for display
   // (e.g. Reports' recurring-issues list); never null on a real sync,
   // nullable only because it's optional in transit.
-  title      String?
-  severity   String // "Critical" | "Major" | "Minor" -- see lib/jira.ts's bucketOf
-  status     String // the raw Jira status name, e.g. "Reopened", "To Do", "Done"
-  isDone     Boolean   @default(false)
-  isReopened Boolean   @default(false)
+  title         String?
+  severity      String // "Critical" | "Major" | "Minor" -- see lib/jira.ts's bucketOf
+  status        String // the raw Jira status name, e.g. "Reopened", "To Do", "Done"
+  isDone        Boolean   @default(false)
+  isReopened    Boolean   @default(false)
   // How many times THIS issue has been seen flipping into Reopened across
   // every sync so far -- the one field that survives the delete+recreate
   // every other column gets on re-sync (carried forward and incremented by
   // the cycles routes, comparing against the row about to be replaced).
   // Incremented only on a false->true transition, so re-syncing while it's
   // still sitting in Reopened doesn't double-count.
-  timesReopened Int    @default(0)
-  syncedAt   DateTime  @default(now())
+  timesReopened Int       @default(0)
+  syncedAt      DateTime  @default(now())
 
   @@unique([cycleId, issueKey])
   @@index([projectId, issueKey])
@@ -677,11 +685,11 @@ model TestCycle {
   // this field — the UI derives a display value from the counts below in that
   // case (0 remaining -> Pass, remaining > 0 -> Fail), so existing data reads
   // correctly without a backfill. A user-chosen value always wins.
-  outcome       String?
+  outcome     String?
   // External test-run URL (TestRail/Xray/doc), separate from the Jira
   // ticketLink above — the parent ticket and the test-run record are two
   // different links in the testing-cycle form.
-  testRunLink   String?
+  testRunLink String?
 
   // Aggregate counts for Manual cycles. CaseBased cycles derive these from runs[].
   issueCount     Int @default(0) // total defects found

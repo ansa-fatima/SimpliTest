@@ -1,32 +1,39 @@
 'use client';
 
-import { useState } from 'react';
-import { CycleOverviewData, Module, TestCycle } from '@/types';
+import { useEffect, useMemo, useState } from 'react';
+import { ApiTestRun, CycleOverviewData, Module, TestCycle } from '@/types';
 import { api } from '@/lib/client';
 import { DonutChart } from './Dashboard';
 import { UpdateQuickLogModal } from './QuickLogModal';
-import { avatarColour, cn, initials, localDateStr, relativeTime } from '@/lib/utils';
+import { cn, initials, localDateStr, relativeTime } from '@/lib/utils';
 import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
+import { SIco } from '@/components/layout/sts-icons';
+import { avatarGradient, caseCode } from './tc-helpers';
+import './sts-v3.css';
 
 interface CycleOverviewProps {
   data: CycleOverviewData | null;
   loading: boolean;
   modules: Module[];
   projectId: string | null;
+  projectName?: string;
   onBack: () => void;
   onOpenTestRun: () => void;
   onUpdate: (id: string, patch: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }
 
-// The screen a case-based cycle opens to first -- a KPI summary, who mostly
-// ran it, and any related quick logs -- before committing to the full
-// case-by-case run screen (reached via "Open Test Run").
+const DAY = 86_400_000;
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const shortDate = (d: Date) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+// Screen 08 — the detail page for one test run: status + dates, result stats,
+// the run's row, a burn-down of cases remaining, and the recent failures.
 export function CycleOverview({
   data,
   loading,
-  modules,
   projectId,
+  projectName,
   onBack,
   onOpenTestRun,
   onUpdate,
@@ -35,7 +42,23 @@ export function CycleOverview({
   const [editing, setEditing] = useState<TestCycle | null>(null);
   const [editLoading, setEditLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [runs, setRuns] = useState<ApiTestRun[] | null>(null);
   const siteUrl = useJiraSiteUrl(projectId);
+  const cycleId = data?.cycle.id;
+
+  // The burn-down and the failure list come from the run rows themselves.
+  useEffect(() => {
+    if (!cycleId) return;
+    let cancelled = false;
+    setRuns(null);
+    api
+      .get<ApiTestRun[]>(`/api/cycles/${cycleId}/runs`)
+      .then(r => !cancelled && setRuns(r))
+      .catch(() => !cancelled && setRuns([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [cycleId]);
 
   const handleDelete = async () => {
     if (!data) return;
@@ -64,317 +87,710 @@ export function CycleOverview({
     }
   };
 
+  const burn = useMemo(() => {
+    if (!data) return null;
+    const total = data.total;
+    const start = startOfDay(new Date(data.cycle.createdAt));
+    const today = startOfDay(new Date());
+    const dueRaw = data.cycle.targetDate ?? data.cycle.completedAt;
+    let end = dueRaw ? startOfDay(new Date(dueRaw)) : today;
+    if (end < today && data.cycle.status === 'Active') end = today;
+    let days = Math.round((end.getTime() - start.getTime()) / DAY);
+    // No due date: show a one-week window so the ideal line has a sensible slope.
+    days = Math.min(Math.max(days, dueRaw ? 1 : 7), 60);
+    const executed = (runs ?? [])
+      .filter(r => r.executedAt)
+      .map(r => new Date(r.executedAt as string).getTime());
+    const lastIdx = Math.min(days, Math.round((today.getTime() - start.getTime()) / DAY));
+    const pts: { d: number; remaining: number }[] = [];
+    for (let d = 0; d <= Math.max(lastIdx, 0); d++) {
+      const cutoff = start.getTime() + (d + 1) * DAY;
+      pts.push({ d, remaining: total - executed.filter(t => t < cutoff).length });
+    }
+    return { total, start, end, days, pts };
+  }, [data, runs]);
+
   if (loading || !data) {
-    return (
-      <div className="flex flex-1 items-center justify-center bg-bg text-[13px] text-text-3">
-        <i className="ti ti-loader-2 mr-2 animate-spin text-[16px]" />
-        Loading cycle…
-      </div>
-    );
+    return <div className="stv3 state-note">Loading run…</div>;
   }
 
   const { cycle } = data;
-  const statusTone =
-    cycle.status === 'Active'
-      ? { dot: 'bg-primary', text: 'text-primary-text', label: 'In Progress' }
-      : cycle.status === 'Archived'
-        ? { dot: 'bg-text-3', text: 'text-text-3', label: 'Archived' }
-        : { dot: 'bg-success', text: 'text-success', label: 'Completed' };
-
-  const start = localDateStr(new Date(cycle.createdAt));
-  const endIso = cycle.completedAt ?? cycle.targetDate;
-  const end = endIso ? localDateStr(new Date(endIso)) : '—';
-
-  const scopeLabel = cycle.moduleName ?? cycle.scopeName;
-  const subtitleParts = [
-    scopeLabel ? `Scope: ${scopeLabel}` : null,
-    cycle.environment,
-    cycle.platform,
-  ].filter(Boolean);
-
+  const started = localDateStr(new Date(cycle.createdAt));
+  const dueIso = cycle.targetDate ?? null;
   const total = data.total;
-  const pctOf = (n: number) => (total === 0 ? 0 : Math.round((n / total) * 100));
+  const pending = data.counts.NotRun;
+  const pct = (n: number) => (total === 0 ? 0 : (n / total) * 100);
+  const scopeLabel = cycle.moduleName ?? cycle.scopeName ?? 'All cases';
+  const active = cycle.status === 'Active';
+  const statusPill =
+    cycle.status === 'Active'
+      ? { cls: 'pill-brand', label: 'In progress' }
+      : cycle.status === 'Archived'
+        ? { cls: 'pill-neutral', label: 'Archived' }
+        : { cls: 'pill-ok', label: 'Closed' };
+  const failedRuns = (runs ?? [])
+    .filter(r => r.result === 'Failed' || r.result === 'Blocked')
+    .sort((a, b) => (b.executedAt ?? '').localeCompare(a.executedAt ?? ''));
+
+  const X = (d: number, days: number) => 40 + (d / days) * 540;
+  const Y = (v: number, t: number) => 180 - (t === 0 ? 0 : (v / t) * 160);
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      <div className="flex-1 overflow-y-auto px-44 py-6">
-        <button
-          type="button"
-          onClick={onBack}
-          className="mb-3 flex items-center gap-1.5 text-[12px] text-text-3 transition-colors hover:text-text"
-        >
-          <i className="ti ti-arrow-left text-[13px]" />
-          Test Cycles
+    <div className="stv3 main-scroll">
+      <div className="breadcrumb">
+        <span className="crumb">{projectName || 'Project'}</span>
+        <span className="sep">/</span>
+        <button type="button" className="crumb" onClick={onBack}>
+          Test runs
         </button>
+        <span className="sep">/</span>
+        <span className="current">{cycle.name}</span>
+      </div>
 
-        {/* Header */}
-        <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="mb-2 flex flex-wrap items-center gap-1.5">
-              <span
-                className={cn(
-                  'inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] font-medium',
-                  statusTone.text,
-                )}
-              >
-                <span className={cn('h-1.5 w-1.5 flex-shrink-0 rounded-full', statusTone.dot)} />
-                {statusTone.label}
-              </span>
-              {cycle.cycleCategory && (
-                <span className="rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-2">
-                  {cycle.cycleCategory}
-                </span>
-              )}
-              {cycle.version && (
-                <span className="rounded-full border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-text-2">
-                  v{cycle.version.replace(/^v\s*/i, '')}
-                </span>
-              )}
-              {cycle.ticketLink && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-2">
-                  <i className="ti ti-brand-jira text-[12px] text-text-3" />
-                  <JiraTicketLink
-                    ticketLink={cycle.ticketLink}
-                    siteUrl={cycle.jiraSiteUrl ?? siteUrl}
-                  />
-                </span>
-              )}
-            </div>
-            <h1 className="truncate text-[22px] font-semibold tracking-[-0.01em] text-text">
-              {cycle.name}
-            </h1>
-            <p className="mt-1 text-[12.5px] text-text-3">
-              {subtitleParts.join(' · ')}
-              {subtitleParts.length > 0 && ' · '}
-              {start} → {end}
-            </p>
-          </div>
-
-          <div className="flex flex-shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={openEdit}
-              disabled={editLoading}
-              title="Edit cycle"
-              aria-label="Edit cycle"
-              className="flex h-[37px] w-[37px] items-center justify-center rounded-[7px] border border-border bg-surface text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <i
-                className={cn(
-                  'ti',
-                  editLoading ? 'ti-loader-2 animate-spin' : 'ti-pencil',
-                  'text-[15px]',
-                )}
-              />
-            </button>
-            <button
-              type="button"
-              onClick={handleDelete}
-              disabled={deleting}
-              title="Delete test run"
-              aria-label="Delete test run"
-              className="flex h-[37px] w-[37px] items-center justify-center rounded-[7px] border border-border bg-surface text-danger transition-colors hover:bg-danger-bg disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <i
-                className={cn(
-                  'ti',
-                  deleting ? 'ti-loader-2 animate-spin' : 'ti-trash',
-                  'text-[15px]',
-                )}
-              />
-            </button>
-            <button
-              type="button"
-              onClick={onOpenTestRun}
-              className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-4 py-2 text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-primary-hover"
-            >
-              <i className="ti ti-player-play text-[15px]" />
-              Open Test Run
-            </button>
-          </div>
-        </div>
-
-        {/* Progress */}
-        <div className="mb-1.5 flex items-center justify-between text-[12px] text-text-3">
-          <span>
-            <span className="font-semibold text-text">
-              {data.executed} / {data.total}
-            </span>{' '}
-            executed
-          </span>
-          <span>
-            {data.percent}% · pass rate{' '}
-            <span className="font-semibold text-success">{data.passRate}%</span>
-          </span>
-        </div>
-        <div className="mb-5 h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
-          <div className="h-full rounded-full bg-primary" style={{ width: `${data.percent}%` }} />
-        </div>
-
-        {/* Lifecycle */}
-        <div className="mb-5 rounded-lg border border-border bg-surface px-6 py-4">
-          <LifecycleTimeline cycle={cycle} />
-        </div>
-
-        {/* KPI cards */}
-        <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <KpiCard label="Total Cases" value={data.total} />
-          <KpiCard label="Executed" value={data.executed} meta={`${data.percent}% execution`} />
-          <KpiCard label="Pass Rate" value={`${data.passRate}%`} tone="success" />
-          <KpiCard label="Failed" value={data.failed} tone="danger" />
-        </div>
-        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <KpiCard label="Blocked" value={data.blocked} tone="warning" />
-          <div className="rounded-lg border border-border bg-surface p-4">
-            <p className="mb-2 text-[11px] text-text-3">Tester</p>
-            {data.tester ? (
-              <span className="flex items-center gap-2">
-                <span
-                  className={cn(
-                    'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
-                    avatarColour(data.tester),
-                  )}
-                >
-                  {initials(data.tester)}
-                </span>
-                <span className="truncate text-[14px] font-semibold text-text">{data.tester}</span>
-              </span>
-            ) : (
-              <span className="text-[14px] text-text-3">Unattributed</span>
+      <div className="page-header">
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              marginBottom: 6,
+              flexWrap: 'wrap',
+            }}
+          >
+            <span className={cn('pill', statusPill.cls)}>
+              <span className="dot" /> {statusPill.label}
+            </span>
+            <span className="pill pill-neutral">Run</span>
+            {cycle.version && (
+              <span className="pill pill-neutral">v{cycle.version.replace(/^v\s*/i, '')}</span>
             )}
+            {cycle.cycleCategory && (
+              <span className="pill pill-neutral">{cycle.cycleCategory}</span>
+            )}
+            {cycle.ticketLink && (
+              <span className="pill pill-neutral">
+                <JiraTicketLink
+                  ticketLink={cycle.ticketLink}
+                  siteUrl={cycle.jiraSiteUrl ?? siteUrl}
+                />
+              </span>
+            )}
+            <span style={{ fontSize: 12, color: 'var(--t-3)' }}>
+              Started {started}
+              {dueIso ? ` · Due ${localDateStr(new Date(dueIso))}` : ''}
+            </span>
+          </div>
+          <h1 className="page-title compact">{cycle.name}</h1>
+          <div className="page-sub">
+            Scope <b style={{ color: 'var(--t-2)' }}>{scopeLabel}</b>
+            {data.tester && (
+              <>
+                {' '}
+                · Tester <b style={{ color: 'var(--t-2)' }}>{data.tester}</b>
+              </>
+            )}{' '}
+            · {total.toLocaleString()} cases
+            {[cycle.environment, cycle.platform].filter(Boolean).length > 0 &&
+              ` · ${[cycle.environment, cycle.platform].filter(Boolean).join(' · ')}`}
           </div>
         </div>
+        <div className="page-actions">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={openEdit}
+            disabled={editLoading}
+          >
+            <SIco name="edit" />
+            Edit
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{ color: 'var(--err)' }}
+            onClick={handleDelete}
+            disabled={deleting}
+          >
+            <SIco name="trash" />
+            Delete
+          </button>
+          <button type="button" className="btn btn-primary" onClick={onOpenTestRun}>
+            <SIco name="play" />
+            {active ? (data.executed > 0 ? 'Resume execution' : 'Execute') : 'View results'}
+          </button>
+        </div>
+      </div>
 
-        {/* Two-column body */}
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-          <div className="flex-1 rounded-lg border border-border bg-surface p-4 lg:max-w-[380px]">
-            <p className="mb-4 text-[13px] font-semibold text-text">Result Split</p>
-            <div className="flex flex-col items-center gap-4">
-              <DonutChart
-                pass={pctOf(data.counts.Passed)}
-                fail={pctOf(data.counts.Failed)}
-                block={pctOf(data.counts.Blocked)}
-                value={`${data.percent}%`}
-                sublabel="executed"
-              />
-              <div className="grid w-full grid-cols-2 gap-x-4 gap-y-1.5 text-[12px]">
-                <LegendDot color="#16A34A" label="Passed" value={data.counts.Passed} />
-                <LegendDot color="#DC2626" label="Failed" value={data.counts.Failed} />
-                <LegendDot color="#D97706" label="Blocked" value={data.counts.Blocked} />
-                <LegendDot color="#A8A29E" label="Not Run" value={data.counts.NotRun} />
-              </div>
+      <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(5,1fr)' }}>
+        <div className="stat accent">
+          <div className="stat-label">Total cases</div>
+          <div className="stat-value">{total.toLocaleString()}</div>
+          <div className="stat-meta">{data.executed.toLocaleString()} executed</div>
+        </div>
+        <div className="stat ok">
+          <div className="stat-label">Passed</div>
+          <div className="stat-value">{data.counts.Passed.toLocaleString()}</div>
+          <div className="stat-meta">{pct(data.counts.Passed).toFixed(1)}%</div>
+        </div>
+        <div className="stat err">
+          <div className="stat-label">Failed</div>
+          <div className="stat-value">{data.failed.toLocaleString()}</div>
+          <div className="stat-meta">{pct(data.failed).toFixed(1)}%</div>
+        </div>
+        <div className="stat warn">
+          <div className="stat-label">Blocked</div>
+          <div className="stat-value">{data.blocked.toLocaleString()}</div>
+          <div className="stat-meta">env / dependency</div>
+        </div>
+        <div className="stat info">
+          <div className="stat-label">Pending</div>
+          <div className="stat-value">{pending.toLocaleString()}</div>
+          <div className="stat-meta">{pct(pending).toFixed(1)}% remaining</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 320px', gap: 24 }}>
+        <div style={{ minWidth: 0 }}>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-head">
+              <h3>
+                <SIco name="play" /> Run summary
+              </h3>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenTestRun}>
+                <SIco name="play" /> Open runner
+              </button>
             </div>
+            <table className="t">
+              <thead>
+                <tr>
+                  <th>Run</th>
+                  <th>Status</th>
+                  <th>Owner</th>
+                  <th>Progress</th>
+                  <th>Pass rate</th>
+                  <th>Last result</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <div className="row-title">{cycle.name}</div>
+                    <div className="id-mono">
+                      {scopeLabel} · {total.toLocaleString()} cases
+                    </div>
+                  </td>
+                  <td>
+                    <span className={cn('pill', active ? 'pill-info' : statusPill.cls)}>
+                      <span className="dot" /> {active ? 'Running' : statusPill.label}
+                    </span>
+                  </td>
+                  <td>
+                    {data.tester ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div
+                          className="avatar sm"
+                          style={{ background: avatarGradient(data.tester) }}
+                        >
+                          {initials(data.tester)}
+                        </div>
+                        {data.tester.split(/\s+/)[0]}
+                      </div>
+                    ) : (
+                      <span style={{ color: 'var(--t-4)' }}>Unassigned</span>
+                    )}
+                  </td>
+                  <td>
+                    <div className="progress" style={{ width: 140 }}>
+                      <div className="progress-stacked">
+                        <span
+                          style={{ width: `${pct(data.counts.Passed)}%`, background: 'var(--ok)' }}
+                        />
+                        <span style={{ width: `${pct(data.failed)}%`, background: 'var(--err)' }} />
+                        <span
+                          style={{ width: `${pct(data.blocked)}%`, background: 'var(--warn)' }}
+                        />
+                        <span
+                          style={{
+                            width: `${pct(data.counts.Skipped)}%`,
+                            background: 'var(--info)',
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--t-3)', marginTop: 3 }}>
+                      {data.executed.toLocaleString()} / {total.toLocaleString()}
+                    </div>
+                  </td>
+                  <td>
+                    <span
+                      style={{
+                        fontWeight: 600,
+                        color:
+                          data.executed === 0
+                            ? 'var(--t-4)'
+                            : data.passRate >= 85
+                              ? 'var(--ok)'
+                              : data.passRate >= 60
+                                ? 'var(--warn)'
+                                : 'var(--err)',
+                      }}
+                    >
+                      {data.executed === 0 ? '—' : `${data.passRate}%`}
+                    </span>
+                  </td>
+                  <td style={{ fontSize: 12, color: 'var(--t-3)' }}>
+                    {(runs ?? []).some(r => r.executedAt)
+                      ? relativeTime(
+                          (runs ?? [])
+                            .filter(r => r.executedAt)
+                            .sort((a, b) =>
+                              (b.executedAt as string).localeCompare(a.executedAt as string),
+                            )[0].executedAt as string,
+                        )
+                      : '—'}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
-          <div className="flex-1 rounded-lg border border-border bg-surface p-4">
-            <p className="mb-4 text-[13px] font-semibold text-text">Stability</p>
-            {data.stability ? (
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-[11px] text-text-3">{data.stability.moduleName}</p>
-                    <p
-                      className={cn(
-                        'text-[26px] font-bold tabular-nums',
-                        data.stability.label === 'Stable'
-                          ? 'text-success'
-                          : data.stability.label === 'At Risk'
-                            ? 'text-warning'
-                            : data.stability.label === 'Unstable'
-                              ? 'text-danger'
-                              : 'text-text-3',
-                      )}
-                    >
-                      {data.stability.total === 0 ? '—' : `${data.stability.passRate}%`}
-                    </p>
-                  </div>
-                  <span
-                    className={cn(
-                      'inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium',
-                      data.stability.label === 'Stable'
-                        ? 'bg-success-bg text-success-text'
-                        : data.stability.label === 'At Risk'
-                          ? 'bg-warning-bg text-warning-text'
-                          : data.stability.label === 'Unstable'
-                            ? 'bg-danger-bg text-danger-text'
-                            : 'bg-surface-3 text-text-3',
-                    )}
-                  >
-                    <i
-                      className={cn(
-                        'ti text-[13px]',
-                        data.stability.trend === 'up'
-                          ? 'ti-trending-up'
-                          : data.stability.trend === 'down'
-                            ? 'ti-trending-down'
-                            : 'ti-minus',
-                      )}
-                    />
-                    {data.stability.label}
-                  </span>
-                </div>
-                <p className="text-[11px] text-text-3">
-                  Rolling pass rate across all {data.stability.total} run
-                  {data.stability.total === 1 ? '' : 's'} + quick logs for this module — not just
-                  this cycle.
+          <div className="card chart-card" style={{ marginBottom: 16 }}>
+            <div className="chart-head">
+              <div>
+                <h4>Burn-down · cases remaining</h4>
+                <p>
+                  Started {burn ? shortDate(burn.start) : started}
+                  {dueIso && burn ? ` · Due ${shortDate(burn.end)}` : ''}
+                  {` · ${pending.toLocaleString()} of ${total.toLocaleString()} left`}
                 </p>
               </div>
+              <div style={{ display: 'flex', gap: 12, fontSize: 12 }}>
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    color: 'var(--t-2)',
+                  }}
+                >
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 14,
+                      height: 2,
+                      background: 'var(--neutral)',
+                    }}
+                  />
+                  Ideal
+                </span>
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    color: 'var(--t-2)',
+                  }}
+                >
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 14,
+                      height: 2,
+                      background: 'var(--brand-700)',
+                    }}
+                  />
+                  Actual
+                </span>
+              </div>
+            </div>
+            {burn && (
+              <svg className="chart-svg" viewBox="0 0 600 200" preserveAspectRatio="none">
+                <line x1="40" y1="20" x2="40" y2="180" stroke="var(--bdr)" />
+                <line x1="40" y1="180" x2="580" y2="180" stroke="var(--bdr)" />
+                <line
+                  x1="40"
+                  y1="20"
+                  x2="580"
+                  y2="180"
+                  stroke="var(--neutral)"
+                  strokeWidth="1.5"
+                  strokeDasharray="4 4"
+                />
+                <polyline
+                  points={burn.pts
+                    .map(p => `${X(p.d, burn.days)},${Y(p.remaining, burn.total)}`)
+                    .join(' ')}
+                  fill="none"
+                  stroke="var(--brand-700)"
+                  strokeWidth="2.5"
+                />
+                {burn.pts.map((p, i) => (
+                  <circle
+                    key={p.d}
+                    cx={X(p.d, burn.days)}
+                    cy={Y(p.remaining, burn.total)}
+                    r={i === burn.pts.length - 1 ? 5 : 4}
+                    fill="var(--brand-700)"
+                  />
+                ))}
+                {Array.from(
+                  new Set([0, 0.25, 0.5, 0.75, 1].map(f => Math.round(burn.days * f))),
+                ).map(offset => {
+                  const f = offset / burn.days;
+                  const day = new Date(burn.start.getTime() + offset * DAY);
+                  return (
+                    <text
+                      key={offset}
+                      x={40 + f * 540}
+                      y="195"
+                      textAnchor={f === 1 ? 'end' : f === 0 ? 'start' : 'middle'}
+                      fontSize="10"
+                      fill="var(--t-4)"
+                      fontFamily="JetBrains Mono, monospace"
+                    >
+                      {shortDate(day)}
+                    </text>
+                  );
+                })}
+                <text
+                  x="30"
+                  y="25"
+                  textAnchor="end"
+                  fontSize="10"
+                  fill="var(--t-4)"
+                  fontFamily="JetBrains Mono, monospace"
+                >
+                  {burn.total.toLocaleString()}
+                </text>
+                <text
+                  x="30"
+                  y="105"
+                  textAnchor="end"
+                  fontSize="10"
+                  fill="var(--t-4)"
+                  fontFamily="JetBrains Mono, monospace"
+                >
+                  {Math.round(burn.total / 2).toLocaleString()}
+                </text>
+                <text
+                  x="30"
+                  y="185"
+                  textAnchor="end"
+                  fontSize="10"
+                  fill="var(--t-4)"
+                  fontFamily="JetBrains Mono, monospace"
+                >
+                  0
+                </text>
+              </svg>
+            )}
+          </div>
+
+          <div
+            style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}
+          >
+            <div className="card">
+              <div className="card-head">
+                <h3>
+                  <SIco name="pass" /> Result split
+                </h3>
+              </div>
+              <div
+                className="card-pad"
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}
+              >
+                <DonutChart
+                  pass={Math.round(pct(data.counts.Passed))}
+                  fail={Math.round(pct(data.counts.Failed))}
+                  block={Math.round(pct(data.counts.Blocked))}
+                  value={`${data.percent}%`}
+                  sublabel="executed"
+                />
+                <div className="run-legend" style={{ justifyContent: 'center' }}>
+                  <span>
+                    <i style={{ background: 'var(--ok)' }} />
+                    Passed {data.counts.Passed}
+                  </span>
+                  <span>
+                    <i style={{ background: 'var(--err)' }} />
+                    Failed {data.counts.Failed}
+                  </span>
+                  <span>
+                    <i style={{ background: 'var(--warn)' }} />
+                    Blocked {data.counts.Blocked}
+                  </span>
+                  <span>
+                    <i style={{ background: 'var(--bg-2)' }} />
+                    Not run {data.counts.NotRun}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-head">
+                <h3>
+                  <SIco name="chart" /> Stability
+                </h3>
+              </div>
+              <div className="card-pad">
+                {data.stability ? (
+                  <>
+                    <div style={{ fontSize: 11.5, color: 'var(--t-3)' }}>
+                      {data.stability.moduleName}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 28,
+                        fontWeight: 700,
+                        letterSpacing: '-0.025em',
+                        margin: '4px 0 8px',
+                        color:
+                          data.stability.label === 'Stable'
+                            ? 'var(--ok)'
+                            : data.stability.label === 'At Risk'
+                              ? 'var(--warn)'
+                              : data.stability.label === 'Unstable'
+                                ? 'var(--err)'
+                                : 'var(--t-3)',
+                      }}
+                    >
+                      {data.stability.total === 0 ? '—' : `${data.stability.passRate}%`}
+                    </div>
+                    <span
+                      className={cn(
+                        'pill',
+                        data.stability.label === 'Stable'
+                          ? 'pill-ok'
+                          : data.stability.label === 'At Risk'
+                            ? 'pill-warn'
+                            : data.stability.label === 'Unstable'
+                              ? 'pill-err'
+                              : 'pill-neutral',
+                      )}
+                    >
+                      {data.stability.label}
+                    </span>
+                    <p
+                      style={{
+                        fontSize: 11.5,
+                        color: 'var(--t-3)',
+                        margin: '10px 0 0',
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      Rolling pass rate across all {data.stability.total} run
+                      {data.stability.total === 1 ? '' : 's'} + quick logs for this module.
+                    </p>
+                  </>
+                ) : (
+                  <p style={{ fontSize: 12.5, color: 'var(--t-3)', margin: 0, lineHeight: 1.5 }}>
+                    This run spans more than one module, so there is no single module to score.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-head">
+              <h3>
+                <SIco name="fail" /> Recurring issues in this run
+              </h3>
+              <span className="meta">Failed here and also failed or blocked in an earlier run</span>
+            </div>
+            {data.recurringIssues.items.length === 0 ? (
+              <div className="empty-note">
+                No recurring failures — nothing here has failed before.
+              </div>
             ) : (
-              <p className="text-[12.5px] text-text-3">
-                This cycle spans more than one module, so there is no single module to score.
-              </p>
+              <div>
+                {data.recurringIssues.items.map((i, idx) => (
+                  <div
+                    key={i.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                      padding: '11px 20px',
+                      borderBottom:
+                        idx < data.recurringIssues.items.length - 1
+                          ? '1px solid var(--bdr)'
+                          : 'none',
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span
+                          style={{ fontFamily: 'var(--f-mono)', fontSize: 11, color: 'var(--t-4)' }}
+                        >
+                          {caseCode(i.caseNum)}
+                        </span>
+                        <span
+                          className={cn(
+                            'pill',
+                            i.severity === 'Critical'
+                              ? 'pill-err'
+                              : i.severity === 'Major'
+                                ? 'pill-warn'
+                                : 'pill-neutral',
+                          )}
+                          style={{ padding: '1px 6px', fontSize: 10 }}
+                        >
+                          {i.severity}
+                        </span>
+                      </div>
+                      <div
+                        style={{ fontSize: 13, fontWeight: 500, color: 'var(--t-1)', marginTop: 2 }}
+                      >
+                        {i.title}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: 'var(--t-3)' }}>{i.scopeName}</div>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--err)' }}>
+                        {i.cycleCount}× runs
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--t-4)' }}>
+                        {relativeTime(i.lastSeen)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>
 
-        {/* Recurring issues — full width, below the KPI/donut/stability row */}
-        <div className="mt-4 rounded-lg border border-border bg-surface p-4">
-          <p className="mb-1 text-[13px] font-semibold text-text">Recurring Issues in this Cycle</p>
-          <p className="mb-3 text-[11px] text-text-3">
-            Cases that failed here and have also failed or been blocked in an earlier cycle.
-          </p>
-          {data.recurringIssues.items.length === 0 ? (
-            <p className="text-[12.5px] text-text-3">
-              No recurring failures — nothing here has failed before.
-            </p>
-          ) : (
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              {data.recurringIssues.items.map(i => (
+        <div className="rail">
+          <div
+            className="card"
+            style={{
+              background: 'linear-gradient(135deg, var(--brand-50), var(--brand-100))',
+              borderColor: 'var(--brand-bdr)',
+            }}
+          >
+            <div
+              className="card-pad"
+              style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}
+            >
+              <div
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 'var(--r)',
+                  background: 'var(--c-surface)',
+                  border: '1px solid var(--brand-bdr)',
+                  display: 'grid',
+                  placeItems: 'center',
+                  flexShrink: 0,
+                  color: 'var(--brand-700)',
+                }}
+              >
+                <SIco name="info" size={14} />
+              </div>
+              <div>
                 <div
-                  key={i.id}
-                  className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2"
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: 'var(--brand-800)',
+                    marginBottom: 4,
+                  }}
                 >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-mono text-[11px] text-text-3">
-                        TC-{String(i.caseNum).padStart(2, '0')}
-                      </span>
-                      <span
-                        className={cn(
-                          'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
-                          i.severity === 'Critical'
-                            ? 'bg-danger-bg text-danger-text'
-                            : i.severity === 'Major'
-                              ? 'bg-warning-bg text-warning-text'
-                              : 'bg-surface-3 text-text-3',
-                        )}
-                      >
-                        {i.severity}
-                      </span>
-                    </div>
-                    <div className="truncate text-[12.5px] font-medium text-text">{i.title}</div>
-                    <div className="truncate text-[11px] text-text-3">{i.scopeName}</div>
-                  </div>
-                  <div className="flex-shrink-0 text-right">
-                    <div className="text-[12.5px] font-semibold text-danger">
-                      {i.cycleCount}× cycles
-                    </div>
-                    <div className="text-[10.5px] text-text-3">{relativeTime(i.lastSeen)}</div>
-                  </div>
+                  How runs work
                 </div>
-              ))}
+                <div style={{ fontSize: 12.5, color: 'var(--t-2)', lineHeight: 1.5 }}>
+                  A run holds a fixed list of cases. Open the runner to give each one a result — the
+                  numbers here update as you go, and the run closes once every case has a verdict.
+                </div>
+              </div>
             </div>
-          )}
+          </div>
+
+          <div className="card">
+            <div className="card-head">
+              <h3>Failures &amp; blockers</h3>
+              <span className="meta">{failedRuns.length} in this run</span>
+            </div>
+            <div style={{ padding: 6 }}>
+              {runs === null ? (
+                <div className="empty-note" style={{ padding: '24px 12px' }}>
+                  Loading…
+                </div>
+              ) : failedRuns.length === 0 ? (
+                <div className="empty-note" style={{ padding: '24px 12px' }}>
+                  Nothing failed or blocked so far.
+                </div>
+              ) : (
+                failedRuns.slice(0, 3).map((r, i, arr) => (
+                  <div
+                    key={r.id}
+                    style={{
+                      padding: '10px 12px',
+                      borderBottom: i < arr.length - 1 ? '1px solid var(--bdr)' : 'none',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginBottom: 3,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontFamily: 'var(--f-mono)',
+                          fontSize: 11,
+                          color: 'var(--err)',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {caseCode(r.testCase.caseNum)}
+                      </span>
+                      <span>
+                        <span
+                          className={cn(
+                            'sev-dot',
+                            r.testCase.severity === 'Critical'
+                              ? 'sev-critical'
+                              : r.testCase.severity === 'Major'
+                                ? 'sev-major'
+                                : 'sev-minor',
+                          )}
+                        />
+                        <span style={{ fontSize: 11, color: 'var(--t-3)' }}>
+                          {r.testCase.severity} · {r.result}
+                        </span>
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12.5, color: 'var(--t-1)', fontWeight: 500 }}>
+                      {r.testCase.title}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--t-3)', marginTop: 2 }}>
+                      {r.executedBy ? `${r.executedBy} · ` : ''}
+                      {r.executedAt ? relativeTime(r.executedAt) : ''}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            {failedRuns.length > 3 && (
+              <div className="card-foot">
+                <button
+                  type="button"
+                  className="btn-link"
+                  style={{ fontSize: 12 }}
+                  onClick={onOpenTestRun}
+                >
+                  All {failedRuns.length} →
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -390,98 +806,5 @@ export function CycleOverview({
         />
       )}
     </div>
-  );
-}
-
-// Planned always happened (the cycle exists); "In Progress" shares that
-// same created date since nothing tracks a separate "started" moment;
-// Completed only lights up once the cycle actually has a completedAt (or
-// has moved to a terminal status), showing "—" until then.
-function LifecycleTimeline({ cycle }: { cycle: CycleOverviewData['cycle'] }) {
-  const isDone = cycle.status === 'Completed' || cycle.status === 'Archived';
-  const plannedDate = localDateStr(new Date(cycle.createdAt));
-  const completedDate = cycle.completedAt ? localDateStr(new Date(cycle.completedAt)) : '—';
-
-  const Stage = ({
-    label,
-    date,
-    state,
-  }: {
-    label: string;
-    date: string;
-    state: 'done' | 'current' | 'pending';
-  }) => (
-    <div className="flex flex-col items-center gap-1">
-      <span
-        className={cn(
-          'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border-2 text-[13px]',
-          state === 'done'
-            ? 'border-success bg-success-bg text-success'
-            : state === 'current'
-              ? 'border-warning bg-warning-bg text-warning'
-              : 'border-border bg-surface text-text-3',
-        )}
-      >
-        <i
-          className={cn(
-            'ti',
-            state === 'done' ? 'ti-check' : state === 'current' ? 'ti-clock' : 'ti-circle',
-          )}
-        />
-      </span>
-      <span className="text-[11px] font-medium text-text">{label}</span>
-      <span className="text-[10px] text-text-3">{date}</span>
-    </div>
-  );
-
-  return (
-    <div className="flex items-center">
-      <Stage label="Planned" date={plannedDate} state="done" />
-      <div className="mb-4 h-[2px] flex-1 bg-success" />
-      <Stage label="In Progress" date={plannedDate} state={isDone ? 'done' : 'current'} />
-      <div className={cn('mb-4 h-[2px] flex-1', isDone ? 'bg-success' : 'bg-border')} />
-      <Stage label="Completed" date={completedDate} state={isDone ? 'done' : 'pending'} />
-    </div>
-  );
-}
-
-function KpiCard({
-  label,
-  value,
-  meta,
-  tone,
-}: {
-  label: string;
-  value: number | string;
-  meta?: string;
-  tone?: 'success' | 'danger' | 'warning';
-}) {
-  const toneCls =
-    tone === 'success'
-      ? 'text-success'
-      : tone === 'danger'
-        ? 'text-danger'
-        : tone === 'warning'
-          ? 'text-warning'
-          : 'text-text';
-  return (
-    <div className="rounded-lg border border-border bg-surface p-4">
-      <p className="text-[11px] text-text-3">{label}</p>
-      <p className={cn('mt-1 text-[22px] font-bold tabular-nums', toneCls)}>{value}</p>
-      {meta && <p className="mt-0.5 text-[11px] text-text-3">{meta}</p>}
-    </div>
-  );
-}
-
-function LegendDot({ color, label, value }: { color: string; label: string; value: number }) {
-  return (
-    <span className="flex items-center gap-1.5 text-text-2">
-      <span
-        className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
-        style={{ background: color }}
-      />
-      {label}
-      <span className="ml-auto font-mono tabular-nums text-text">{value}</span>
-    </span>
   );
 }

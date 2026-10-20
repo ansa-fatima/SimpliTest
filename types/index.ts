@@ -4,15 +4,19 @@ export type TestType = 'Functional' | 'Regression' | 'Smoke' | 'Sanity' | 'UI' |
 export type CaseStatus = 'Active' | 'Draft' | 'Archived';
 export type Page =
   | 'login'
+  | 'projects'
   | 'dashboard'
   | 'list'
   | 'view'
   | 'edit'
   | 'testRuns'
+  | 'newRun'
+  | 'quickLogs'
   | 'cycleOverview'
   | 'cycle'
   | 'reports'
   | 'members'
+  | 'roles'
   | 'settings'
   | 'profile';
 
@@ -37,7 +41,17 @@ export interface Project {
   slug: string;
   createdAt: string;
   updatedAt: string;
-  _count?: { portals: number; cycles: number };
+  _count?: { portals: number; cycles: number; memberships?: number };
+  createdById?: string | null;
+  description?: string;
+  color?: string | null;
+  icon?: string | null;
+  caseKey?: string | null;
+  visibility?: string;
+  myRole?: string | null;
+  caseCount?: number;
+  memberCount?: number;
+  members?: { name: string; avatarUrl: string | null }[];
 }
 
 export interface Portal {

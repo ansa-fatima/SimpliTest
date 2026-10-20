@@ -1,5 +1,6 @@
 'use client';
 
+import { caseCode } from '@/components/features/tc-helpers';
 import { useEffect, useState } from 'react';
 import { TestCase, RunResult } from '@/types';
 import { api } from '@/lib/client';
@@ -157,7 +158,9 @@ export function TestCaseView({
           {/* Header */}
           <div className="mb-4 flex flex-nowrap items-start justify-between gap-4">
             <div className="min-w-0">
-              <p className="font-mono text-[12px] text-text-3">{tc.id}</p>
+              <p className="font-mono text-[12px] text-text-3">
+                {tc.caseNum ? caseCode(tc.caseNum) : tc.id}
+              </p>
               <h1 className="mt-0.5 text-[18px] font-semibold leading-snug text-text">
                 {tc.title}
               </h1>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
 import { cn } from '@/lib/utils';
+import '../sts-v3.css';
 
 interface LocalIntegrations {
   slack: boolean;
@@ -138,7 +139,7 @@ export function IntegrationsTab({
         onChange={loadJira}
       />
 
-      <div className="rounded-lg border border-border bg-surface p-4">
+      <div className="card card-pad">
         <p className="mb-3 text-[11px] text-text-3">
           No live sync is wired up yet — this just remembers which integrations you&apos;ve marked
           as connected.
@@ -341,7 +342,7 @@ function JiraCard({
   };
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-surface">
+    <div className="card">
       <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div>
           <h3 className="text-[14px] font-semibold text-text">Jira Integration</h3>
@@ -362,7 +363,7 @@ function JiraCard({
                 type="button"
                 disabled={!canEdit || busy || !dirty}
                 onClick={saveChanges}
-                className="rounded-[7px] bg-primary px-3 py-1.5 text-[12px] font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                className="btn btn-primary btn-sm"
               >
                 {busy ? <i className="ti ti-loader-2 animate-spin text-[13px]" /> : 'Save changes'}
               </button>
@@ -494,7 +495,7 @@ function JiraCard({
               type="button"
               disabled={busy}
               onClick={connect}
-              className="rounded-[7px] bg-primary px-3 py-1.5 text-[12px] font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="btn btn-primary btn-sm"
             >
               {busy ? <i className="ti ti-loader-2 animate-spin text-[13px]" /> : 'Test & Connect'}
             </button>
@@ -576,7 +577,7 @@ function JiraCard({
                       type="button"
                       disabled={busy || !rotateToken.trim()}
                       onClick={rotateApiToken}
-                      className="rounded-[7px] bg-primary px-3 py-1 text-[11.5px] font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="btn btn-primary btn-sm"
                     >
                       {busy ? (
                         <i className="ti ti-loader-2 animate-spin text-[12px]" />

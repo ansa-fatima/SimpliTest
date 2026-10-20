@@ -27,16 +27,41 @@ export async function GET() {
       include: {
         _count: { select: { portals: true, cycles: true, memberships: true } },
         memberships: {
-          where: { userId: userOrRes.id },
-          select: { role: true },
+          select: {
+            userId: true,
+            role: true,
+            user: { select: { name: true, username: true, avatarUrl: true } },
+          },
+          orderBy: { joinedAt: 'asc' },
         },
       },
     });
+    // Test cases hang off Portal | Module | Suite, so a workspace's case count
+    // is the union of the three parent paths.
+    const caseCounts = await Promise.all(
+      projects.map(p =>
+        prisma.testCase.count({
+          where: {
+            OR: [
+              { portal: { projectId: p.id } },
+              { module: { portal: { projectId: p.id } } },
+              { suite: { module: { portal: { projectId: p.id } } } },
+            ],
+          },
+        }),
+      ),
+    );
     // Expose the caller's role within each workspace so the UI can disable destructive ops.
     return ok(
-      projects.map(p => ({
+      projects.map((p, i) => ({
         ...p,
-        myRole: p.memberships[0]?.role ?? null,
+        myRole: p.memberships.find(m => m.userId === userOrRes.id)?.role ?? null,
+        caseCount: caseCounts[i],
+        memberCount: p.memberships.length,
+        members: p.memberships.slice(0, 4).map(m => ({
+          name: m.user.name || m.user.username,
+          avatarUrl: m.user.avatarUrl,
+        })),
         memberships: undefined,
       })),
     );

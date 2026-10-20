@@ -7,7 +7,7 @@ import { avatarColour, cn, initials } from '@/lib/utils';
 import { ActivityEvent } from '@/lib/activity';
 import { ActivityFeed } from './ActivityFeed';
 import { SessionUser } from '@/hooks/useStore';
-import { colorClassesOf, PALETTE_COLORS } from '@/lib/colors';
+import { colorClassesOf } from '@/lib/colors';
 
 // A role KEY is either a built-in role's own name or a custom
 // (SuperAdmin-created) WorkspaceRole.id -- see lib/roles.ts server-side.
@@ -74,6 +74,7 @@ export function Members({
   workspaceId,
   workspaceName,
   onSelfRoleChanged,
+  onOpenRoles,
 }: {
   currentUser: SessionUser | null;
   workspaceId: string | null;
@@ -81,13 +82,14 @@ export function Members({
   /** Called after the signed-in user changes their OWN role, so the caller
    *  can refresh the session (sidebar) — it doesn't pick this up on its own. */
   onSelfRoleChanged?: () => void;
+  /** Opens the Role management page (the old in-place matrix modal lives there now). */
+  onOpenRoles?: () => void;
 }) {
   const [data, setData] = useState<MembersPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<TabKey>('all');
   const [search, setSearch] = useState('');
   const [showInvite, setShowInvite] = useState(false);
-  const [showRoles, setShowRoles] = useState(false);
   const [resetTarget, setResetTarget] = useState<Member | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -123,16 +125,6 @@ export function Members({
     (data as MembersPayload & { canManageTeam?: boolean })?.canManageTeam ?? false;
   const isCreator = (data as MembersPayload & { isCreator?: boolean })?.isCreator ?? false;
   const roles = data?.roles ?? [];
-
-  // Real per-role headcount for the Roles & Permissions reference -- active
-  // members only, a still-pending invite hasn't actually taken up that role yet.
-  const roleCounts = useMemo(() => {
-    const counts: Record<RoleKey, number> = {};
-    data?.items.forEach(m => {
-      if (m.status === 'Active') counts[m.role] = (counts[m.role] ?? 0) + 1;
-    });
-    return counts;
-  }, [data]);
 
   const filtered = useMemo(() => {
     if (!data) return [];
@@ -202,7 +194,7 @@ export function Members({
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => setShowRoles(true)}
+              onClick={onOpenRoles}
               className="text-[12.5px] font-medium text-primary hover:underline"
             >
               Roles &amp; Permissions
@@ -298,17 +290,6 @@ export function Members({
           )}
         </div>
       </div>
-
-      {showRoles && workspaceId && (
-        <RolesPermissionsModal
-          workspaceId={workspaceId}
-          canEdit={canManageTeam}
-          roles={roles}
-          roleCounts={roleCounts}
-          onRolesChanged={reload}
-          onClose={() => setShowRoles(false)}
-        />
-      )}
 
       {showInvite && workspaceId && (
         <InviteDialog
@@ -839,444 +820,6 @@ function InviteDialog({
           </>
         )}
       </div>
-    </div>
-  );
-}
-
-// Mirrors lib/permissions.ts server-side -- keep the keys/labels/defaults in
-// sync with that file. "Manage Team & Roles" is the one permission actually
-// enforced today (see /api/users/[id] and /api/projects/[id]/invites, both
-// now checking this same per-workspace matrix instead of a hardcoded role).
-// The rest record this workspace's intended model -- editable and saved,
-// but not yet backed by a per-action role check anywhere else in the API
-// (any signed-in member can currently create/edit cases, cycles, and runs
-// regardless of role).
-const PERMISSION_KEYS = [
-  'viewDashboard',
-  'manageTestCases',
-  'createCycles',
-  'executeTests',
-  'viewReports',
-  'manageTeamRoles',
-  'settings',
-] as const;
-type PermissionKey = (typeof PERMISSION_KEYS)[number];
-
-const PERMISSION_LABELS: Record<PermissionKey, string> = {
-  viewDashboard: 'View Dashboard',
-  manageTestCases: 'Manage Test Cases',
-  createCycles: 'Create Cycles',
-  executeTests: 'Execute Tests / Quick Logs',
-  viewReports: 'View Reports',
-  manageTeamRoles: 'Manage Team & Roles',
-  settings: 'Settings',
-};
-
-const DEFAULT_PERMISSIONS: Record<PermissionKey, RoleKey[]> = {
-  viewDashboard: ['SuperAdmin', 'QAManager', 'Tester', 'Developer', 'Viewer'],
-  manageTestCases: ['SuperAdmin', 'QAManager', 'Tester'],
-  createCycles: ['SuperAdmin', 'QAManager'],
-  executeTests: ['SuperAdmin', 'QAManager', 'Tester'],
-  viewReports: ['SuperAdmin', 'QAManager', 'Tester', 'Developer', 'Viewer'],
-  manageTeamRoles: ['SuperAdmin'],
-  settings: ['SuperAdmin'],
-};
-
-// A SuperAdmin unchecking their own Manage Team & Roles cell would strand
-// the workspace -- nobody left who could grant it back. Mirrors
-// lib/permissions.ts's isLockedCell so the UI never even offers the toggle.
-// Custom roles are never locked.
-function isLockedCell(key: PermissionKey, role: RoleKey): boolean {
-  return key === 'manageTeamRoles' && role === 'SuperAdmin';
-}
-
-// ─── Roles & Permissions reference ───────────────────────────
-
-function RolesPermissionsModal({
-  workspaceId,
-  canEdit,
-  roles,
-  roleCounts,
-  onRolesChanged,
-  onClose,
-}: {
-  workspaceId: string;
-  /** Whether the caller currently holds "Manage Team & Roles" -- can toggle cells and add/remove roles. */
-  canEdit: boolean;
-  roles: RoleInfo[];
-  roleCounts: Record<RoleKey, number>;
-  /** Refetches the member list (and its `roles`) after a role is added or removed. */
-  onRolesChanged: () => void;
-  onClose: () => void;
-}) {
-  const [matrix, setMatrix] = useState<Record<PermissionKey, RoleKey[]>>(DEFAULT_PERMISSIONS);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState<string | null>(null); // `${key}:${role}` currently in flight
-  const [error, setError] = useState<string | null>(null);
-  const [showAddRole, setShowAddRole] = useState(false);
-  const [deletingRole, setDeletingRole] = useState<string | null>(null);
-  const [deletingAll, setDeletingAll] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .get<{ permissions: Record<PermissionKey, RoleKey[]> }>(
-        `/api/projects/${workspaceId}/permissions`,
-      )
-      .then(r => {
-        if (!cancelled) setMatrix(r.permissions);
-      })
-      .catch(e => !cancelled && setError((e as Error).message))
-      .finally(() => !cancelled && setLoading(false));
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceId]);
-
-  const toggle = async (key: PermissionKey, role: RoleKey) => {
-    if (!canEdit || isLockedCell(key, role)) return;
-    const allowed = !matrix[key].includes(role);
-    const cellId = `${key}:${role}`;
-    setError(null);
-    setSaving(cellId);
-    // Optimistic — most toggles succeed; revert on failure below.
-    const prev = matrix;
-    setMatrix(m => ({
-      ...m,
-      [key]: allowed ? [...m[key], role] : m[key].filter(r => r !== role),
-    }));
-    try {
-      const r = await api.patch<{ permissions: Record<PermissionKey, RoleKey[]> }>(
-        `/api/projects/${workspaceId}/permissions`,
-        { key, role, allowed },
-      );
-      setMatrix(r.permissions);
-    } catch (e) {
-      setMatrix(prev);
-      setError((e as Error).message);
-    } finally {
-      setSaving(null);
-    }
-  };
-
-  const deleteRole = async (roleKey: string, name: string) => {
-    if (
-      !window.confirm(
-        `Delete the "${name}" role? Anyone still assigned to it must be moved off first.`,
-      )
-    ) {
-      return;
-    }
-    setError(null);
-    setDeletingRole(roleKey);
-    try {
-      await api.del(`/api/projects/${workspaceId}/roles/${roleKey}`);
-      onRolesChanged();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setDeletingRole(null);
-    }
-  };
-
-  const customRoleCount = roles.filter(r => r.isCustom).length;
-
-  const deleteAllRoles = async () => {
-    if (
-      !window.confirm(
-        `Delete all ${customRoleCount} custom role${customRoleCount === 1 ? '' : 's'}? Any still assigned to someone will be skipped.`,
-      )
-    ) {
-      return;
-    }
-    setError(null);
-    setDeletingAll(true);
-    try {
-      const r = await api.del<{ deleted: number; skipped: { id: string; name: string }[] }>(
-        `/api/projects/${workspaceId}/roles`,
-      );
-      onRolesChanged();
-      if (r.skipped.length > 0) {
-        setError(
-          `Deleted ${r.deleted}. Still in use, skipped: ${r.skipped.map(s => s.name).join(', ')}.`,
-        );
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setDeletingAll(false);
-    }
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        className="flex max-h-[90vh] w-full max-w-[880px] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)]"
-      >
-        <div className="flex items-start justify-between border-b border-border px-5 py-4">
-          <div>
-            <h3 className="text-[15px] font-semibold text-text">Roles &amp; Permissions</h3>
-            <p className="mt-0.5 text-[12px] text-text-3">
-              5 built-in roles, plus any workspace-specific ones you add, govern what each teammate
-              can see and do.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded p-1 text-text-3 hover:bg-surface-2 hover:text-text"
-            title="Close"
-          >
-            <i className="ti ti-x text-[16px]" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-5 py-4">
-          <div className="mb-2 flex items-center justify-between">
-            <h4 className="text-[13px] font-semibold text-text">Permission Matrix</h4>
-            <div className="flex items-center gap-3">
-              {canEdit && <p className="text-[11px] text-text-3">Click a cell to toggle it</p>}
-              {canEdit && customRoleCount > 0 && (
-                <button
-                  type="button"
-                  disabled={deletingAll}
-                  onClick={deleteAllRoles}
-                  className="inline-flex items-center gap-1 rounded-[7px] border border-border bg-surface px-2.5 py-1 text-[11.5px] font-medium text-danger hover:bg-danger-bg disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {deletingAll ? (
-                    <i className="ti ti-loader-2 animate-spin text-[13px]" />
-                  ) : (
-                    <i className="ti ti-trash text-[13px]" />
-                  )}
-                  Delete All
-                </button>
-              )}
-              {canEdit && (
-                <button
-                  type="button"
-                  onClick={() => setShowAddRole(v => !v)}
-                  className="inline-flex items-center gap-1 rounded-[7px] border border-border bg-surface px-2.5 py-1 text-[11.5px] font-medium text-text hover:bg-surface-2"
-                >
-                  <i className="ti ti-plus text-[13px]" />
-                  Add Role
-                </button>
-              )}
-            </div>
-          </div>
-
-          {showAddRole && (
-            <AddRoleForm
-              workspaceId={workspaceId}
-              onCreated={() => {
-                setShowAddRole(false);
-                onRolesChanged();
-              }}
-              onCancel={() => setShowAddRole(false)}
-            />
-          )}
-
-          {error && (
-            <div className="mb-2 rounded border border-danger/30 bg-danger-bg px-3 py-2 text-[12px] text-danger-text">
-              {error}
-            </div>
-          )}
-
-          <div
-            className={cn(
-              'overflow-x-auto rounded-lg border border-border',
-              loading && 'opacity-50',
-            )}
-          >
-            <table className="w-full text-[12px]">
-              <thead className="bg-surface-2">
-                <tr>
-                  <th className="border-b border-border px-3 py-2 text-left text-[10.5px] font-medium uppercase tracking-wider text-text-3">
-                    Permission
-                  </th>
-                  {roles.map(r => (
-                    <th
-                      key={r.key}
-                      className="min-w-[92px] border-b border-border px-2 py-2 text-center text-[10.5px] font-medium text-text-3"
-                    >
-                      <div className="flex items-center justify-center gap-1">
-                        <span
-                          className={cn(
-                            'h-1.5 w-1.5 flex-shrink-0 rounded-full',
-                            colorClassesOf(r.color).dot,
-                          )}
-                        />
-                        <span className="truncate uppercase tracking-wider">{r.name}</span>
-                        {canEdit && (
-                          <button
-                            type="button"
-                            disabled={deletingRole === r.key}
-                            onClick={() => deleteRole(r.key, r.name)}
-                            title={`Delete "${r.name}"`}
-                            className="flex-shrink-0 rounded p-0.5 text-text-3 hover:bg-danger-bg hover:text-danger"
-                          >
-                            {deletingRole === r.key ? (
-                              <i className="ti ti-loader-2 animate-spin text-[11px]" />
-                            ) : (
-                              <i className="ti ti-x text-[11px]" />
-                            )}
-                          </button>
-                        )}
-                      </div>
-                      <p className="mt-0.5 font-normal normal-case tracking-normal text-text-3">
-                        {roleCounts[r.key] ?? 0} member{(roleCounts[r.key] ?? 0) === 1 ? '' : 's'}
-                      </p>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {PERMISSION_KEYS.map(key => (
-                  <tr key={key} className="border-b border-border last:border-b-0">
-                    <td className="whitespace-nowrap px-3 py-2 font-medium text-text">
-                      {PERMISSION_LABELS[key]}
-                    </td>
-                    {roles.map(r => {
-                      const allowed = matrix[key].includes(r.key);
-                      const locked = isLockedCell(key, r.key);
-                      const cellId = `${key}:${r.key}`;
-                      const interactive = canEdit && !locked && !loading;
-                      return (
-                        <td key={r.key} className="px-1 py-1 text-center">
-                          <button
-                            type="button"
-                            disabled={!interactive}
-                            onClick={() => toggle(key, r.key)}
-                            title={
-                              locked
-                                ? 'SuperAdmin must always retain Manage Team & Roles'
-                                : interactive
-                                  ? `Click to ${allowed ? 'revoke' : 'grant'}`
-                                  : undefined
-                            }
-                            className={cn(
-                              'inline-flex h-7 w-7 items-center justify-center rounded transition-colors',
-                              interactive && 'cursor-pointer hover:bg-surface-2',
-                              !interactive && 'cursor-default',
-                            )}
-                          >
-                            {saving === cellId ? (
-                              <i className="ti ti-loader-2 animate-spin text-[13px] text-text-3" />
-                            ) : allowed ? (
-                              <i
-                                className={cn(
-                                  'ti ti-check text-[14px]',
-                                  locked ? 'text-success/60' : 'text-success',
-                                )}
-                              />
-                            ) : (
-                              <span className="text-text-3">—</span>
-                            )}
-                          </button>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <p className="mt-4 rounded-lg bg-surface-2 px-3.5 py-3 text-[11.5px] leading-relaxed text-text-3">
-            A workspace&apos;s creator, or anyone currently holding{' '}
-            <b className="text-text-2">Super Admin</b>, always retains the ability to manage their
-            own role — stepping down temporarily can never turn into a permanent lockout from
-            administering a workspace they own. Only{' '}
-            <b className="text-text-2">Manage Team &amp; Roles</b> changes real access today — other
-            rows save your preference but aren&apos;t enforced by any other part of the app yet.
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AddRoleForm({
-  workspaceId,
-  onCreated,
-  onCancel,
-}: {
-  workspaceId: string;
-  onCreated: () => void;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState('');
-  const [color, setColor] = useState<string>('blue');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const submit = async () => {
-    if (busy) return;
-    const trimmed = name.trim();
-    if (!trimmed) {
-      setErr('Name is required');
-      return;
-    }
-    setErr(null);
-    setBusy(true);
-    try {
-      await api.post(`/api/projects/${workspaceId}/roles`, { name: trimmed, color });
-      onCreated();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="mb-3 flex items-start gap-2 rounded-lg border border-border bg-surface-2/40 p-3">
-      <div className="flex-1">
-        <input
-          autoFocus
-          value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="e.g. Product Manager"
-          maxLength={40}
-          onKeyDown={e => {
-            if (e.key === 'Enter') submit();
-            if (e.key === 'Escape') onCancel();
-          }}
-          className="w-full rounded border border-border bg-surface px-2 py-1.5 text-[13px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
-        />
-        {err && <p className="mt-1 text-[11px] text-danger">{err}</p>}
-      </div>
-      <select
-        value={color}
-        onChange={e => setColor(e.target.value)}
-        className="rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
-      >
-        {PALETTE_COLORS.map(c => (
-          <option key={c} value={c}>
-            {c[0].toUpperCase() + c.slice(1)}
-          </option>
-        ))}
-      </select>
-      <button
-        type="button"
-        onClick={onCancel}
-        disabled={busy}
-        className="rounded-[7px] border border-border bg-surface px-3 py-1.5 text-[12.5px] text-text-2 hover:bg-surface-2"
-      >
-        Cancel
-      </button>
-      <button
-        type="button"
-        onClick={submit}
-        disabled={busy}
-        className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {busy && <i className="ti ti-loader-2 animate-spin text-[13px]" />}
-        Create
-      </button>
     </div>
   );
 }

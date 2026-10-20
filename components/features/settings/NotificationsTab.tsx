@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
 import { cn } from '@/lib/utils';
+import '../sts-v3.css';
 
 interface Preferences {
   cycleCompletion: boolean;
@@ -66,50 +67,60 @@ export function NotificationsTab({ workspaceId }: { workspaceId: string }) {
     }
   };
 
-  if (!prefs) return <p className="text-[12px] text-text-3">Loading…</p>;
+  if (!prefs) return <div className="empty-note">Loading…</div>;
 
   return (
-    <div className="rounded-lg border border-border bg-surface p-4">
-      <ul className="divide-y divide-border">
-        {TOGGLES.map(t => (
-          <li
+    <div className="card">
+      <div className="card-head">
+        <h3>Notification preferences</h3>
+        <span className="meta">Applies to you in this workspace</span>
+      </div>
+      <div>
+        {TOGGLES.map((t, i) => (
+          <div
             key={t.key}
-            className="flex items-center justify-between py-2.5 text-[13px] text-text"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '13px 20px',
+              borderBottom: i < TOGGLES.length - 1 ? '1px solid var(--bdr)' : 'none',
+              fontSize: 13,
+              color: 'var(--t-1)',
+            }}
           >
             {t.label}
             <button
               type="button"
               role="switch"
               aria-checked={prefs[t.key]}
+              aria-label={t.label}
               onClick={() => toggle(t.key)}
-              className={cn(
-                'inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full border px-0.5 transition-colors',
-                prefs[t.key] ? 'border-primary bg-primary' : 'border-border bg-surface-2',
-              )}
-            >
-              <span
-                className={cn(
-                  'inline-block h-4 w-4 flex-shrink-0 rounded-full bg-white shadow-sm transition-transform',
-                  prefs[t.key] ? 'translate-x-4' : 'translate-x-0',
-                )}
-              />
-            </button>
-          </li>
+              className={cn('toggle', prefs[t.key] && 'on')}
+            />
+          </div>
         ))}
-      </ul>
-
-      {error && <p className="mt-3 text-[12px] text-danger-text">{error}</p>}
-      {saved && !error && <p className="mt-3 text-[12px] text-success">Saved.</p>}
-
-      <button
-        type="button"
-        disabled={saving}
-        onClick={save}
-        className="mt-4 inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-2 text-[13px] font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {saving && <i className="ti ti-loader-2 animate-spin text-[14px]" />}
-        Save Preferences
-      </button>
+      </div>
+      <div className="card-foot">
+        <span style={{ fontSize: 12, color: 'var(--t-3)' }}>
+          {error ? (
+            <b style={{ color: 'var(--err)' }}>{error}</b>
+          ) : saved ? (
+            <b style={{ color: 'var(--ok)' }}>Saved ✓</b>
+          ) : (
+            'Preferences are saved per workspace.'
+          )}
+        </span>
+        <button
+          type="button"
+          className="btn btn-primary"
+          style={{ marginLeft: 'auto' }}
+          disabled={saving}
+          onClick={save}
+        >
+          {saving ? 'Saving…' : 'Save preferences'}
+        </button>
+      </div>
     </div>
   );
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
 import { ConfigList, ConfigListItem, CountsAsOption } from './ConfigList';
+import '../sts-v3.css';
 
 const RUN_RESULT_COUNTS_AS: CountsAsOption[] = [
   { value: 'PassLike', label: 'Counts as Passed' },
@@ -54,13 +55,13 @@ export function TestConfigurationTab({
   }, [workspaceId]);
 
   return (
-    <div className="space-y-4">
+    <div>
       {error && (
-        <div className="rounded border border-danger/30 bg-danger-bg px-3 py-2 text-[12px] text-danger-text">
+        <div className="login-error" style={{ marginBottom: 16 }}>
           {error}
         </div>
       )}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="cfg-grid">
         {CATEGORIES.map(c => (
           <ConfigList
             key={c.key}
@@ -80,8 +81,8 @@ export function TestConfigurationTab({
           />
         ))}
       </div>
-      <p className="text-[11px] text-text-3">
-        These values drive dropdowns and colors across Test Cases, Cycles, and Reports. Deleting a
+      <p style={{ fontSize: 12, color: 'var(--t-3)', margin: '16px 0 0' }}>
+        These values drive dropdowns and colors across Test Cases, Runs, and Reports. Deleting a
         value that&apos;s still in use is blocked until it&apos;s reassigned.
       </p>
     </div>

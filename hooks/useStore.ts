@@ -510,6 +510,15 @@ export function useStore() {
   }, []);
 
   const showDashboard = useCallback(() => update({ page: 'dashboard' }), [update]);
+  const showProjects = useCallback(() => update({ page: 'projects' }), [update]);
+  // Picking a project card makes it the active workspace and lands on its overview.
+  const openProject = useCallback(
+    async (projectId: string) => {
+      await switchProject(projectId);
+      update({ page: 'dashboard' });
+    },
+    [switchProject, update],
+  );
   // An optional tab jumps straight into that report (e.g. Dashboard's "Full
   // stability report" link) instead of always landing on the picker tiles.
   const showReports = useCallback(
@@ -518,6 +527,7 @@ export function useStore() {
     [update],
   );
   const showMembers = useCallback(() => update({ page: 'members' }), [update]);
+  const showRoles = useCallback(() => update({ page: 'roles' }), [update]);
   const showSettings = useCallback(() => update({ page: 'settings' }), [update]);
   const showProfile = useCallback(() => update({ page: 'profile' }), [update]);
 
@@ -693,6 +703,8 @@ export function useStore() {
         priority?: string;
         severity?: string;
         type?: string;
+        status?: string;
+        ownerId?: string | null;
         portalId?: string;
         moduleId?: string;
         suiteId?: string;
@@ -721,6 +733,8 @@ export function useStore() {
           suiteId: patch.suiteId,
           labels: patch.labels,
           attachments: patch.attachments,
+          status: patch.status,
+          ownerId: patch.ownerId,
         });
       } catch (e) {
         // Bail out here — don't fake a success toast or merge an unsaved
@@ -822,6 +836,14 @@ export function useStore() {
     setState(s => ({ ...s, page: 'testRuns' }));
     loadCycles();
   }, [loadCycles]);
+
+  // Quick logs and test runs are separate flows with their own pages -- same
+  // cycles list underneath, split by mode in the board.
+  const showQuickLogs = useCallback(() => {
+    setState(s => ({ ...s, page: 'quickLogs' }));
+    loadCycles();
+  }, [loadCycles]);
+  const showNewRun = useCallback(() => setState(s => ({ ...s, page: 'newRun' })), []);
 
   const openCycle = useCallback(
     async (cycleId: string) => {
@@ -957,7 +979,7 @@ export function useStore() {
       const projectId = state.currentProjectId;
       if (!projectId) {
         showToast('No project selected', 'error');
-        return;
+        return null;
       }
       try {
         // Attributed the same way executedBy is on a test run — from the
@@ -967,14 +989,20 @@ export function useStore() {
         // session default.
         const sessionLoggedBy = state.user?.name || state.user?.username || '';
         const loggedBy = input.loggedBy?.trim() || sessionLoggedBy;
-        await api.post<TestCycle>('/api/cycles', { ...input, projectId, loggedBy });
+        const created = await api.post<TestCycle>('/api/cycles', {
+          ...input,
+          projectId,
+          loggedBy,
+        });
         showToast(
-          input.mode === 'Manual' ? 'Quick-log cycle saved ✓' : 'Cycle created ✓',
+          input.mode === 'Manual' ? 'Quick-log cycle saved ✓' : 'Test run created ✓',
           'success',
         );
         await loadCycles();
+        return created.id;
       } catch (e) {
         showToast(`Failed to create cycle: ${(e as Error).message}`, 'error');
+        return null;
       }
     },
     [loadCycles, showToast, state.currentProjectId, state.user],
@@ -1164,8 +1192,12 @@ export function useStore() {
     deleteFeature,
     showToast,
     showDashboard,
+    showProjects,
+    openProject,
     showTestCases,
     showTestRunsBoard,
+    showQuickLogs,
+    showNewRun,
     openCycle,
     openCycleOverview,
     closeQuickLogCycle,
@@ -1185,6 +1217,7 @@ export function useStore() {
     closeCycle,
     showReports,
     showMembers,
+    showRoles,
     showSettings,
     showProfile,
     refreshSessionUser,

@@ -5,19 +5,19 @@ import { ApiTestCase, UserSummary } from '@/types';
 import { api } from '@/lib/client';
 import { exportApiTestCases } from '@/lib/export';
 import { ImportCsvModal } from '@/components/features/ImportCsvModal';
-import { NewTestCaseModal } from '@/components/features/NewTestCaseModal';
+import { TestCaseForm, TestCaseFormValues } from '@/components/features/TestCaseForm';
 import { useCaseOptions, CaseOption } from '@/components/features/CaseClassification';
-import { TruncatedText } from '@/components/ui/TruncatedText';
+import { Ico } from '@/components/features/tc-icons';
 import {
-  avatarColour,
-  cn,
-  initials,
-  localDateStr,
-  priorityToneDisplay,
-  resultTone,
-  statusBadge,
-  typeDisplay,
-} from '@/lib/utils';
+  avatarGradient,
+  caseCode,
+  priorityPillClass,
+  resultPillClass,
+  statusPillClass,
+  typePillClass,
+} from '@/components/features/tc-helpers';
+import { cn, initials, priorityToneDisplay, typeDisplay } from '@/lib/utils';
+import './testcase-v3.css';
 
 // ─── Data shapes that come back from /api/portals?projectId=… ─────────
 interface ApiSuite {
@@ -92,7 +92,13 @@ const PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 5000] as const;
 const DEFAULT_PAGE_SIZE = 50;
 const ALL_PAGE_SIZE = 5000;
 
-type FilterKey = 'Priority' | 'Type';
+type FilterKey = 'Status' | 'Priority' | 'Type';
+
+const STATUS_OPTIONS = [
+  { value: 'Active', label: 'Active' },
+  { value: 'Draft', label: 'Draft' },
+  { value: 'Archived', label: 'Archived' },
+];
 
 export function TestCaseList({
   projectId,
@@ -333,6 +339,7 @@ export function TestCaseList({
   }, [curMod, curSuite]);
 
   // ─── Filters + paging ──────────────────────────────────────
+  const [statusF, setStatusF] = useState<Set<string>>(new Set());
   const [priorityF, setPriorityF] = useState<Set<string>>(new Set());
   const [typeF, setTypeF] = useState<Set<string>>(new Set());
   const [openFilter, setOpenFilter] = useState<FilterKey | null>(null);
@@ -364,7 +371,7 @@ export function TestCaseList({
     // A selection made on one suite/page shouldn't silently carry over and
     // get bulk-deleted after the user navigates somewhere else.
     setSelected(new Set());
-  }, [priorityF, typeF, search, activeSelectionKey, pageSize]);
+  }, [statusF, priorityF, typeF, search, activeSelectionKey, pageSize]);
 
   // ─── Cases (server fetch) ──────────────────────────────────
   const [cases, setCases] = useState<ApiTestCase[]>([]);
@@ -409,6 +416,7 @@ export function TestCaseList({
       if (activeNode.kind === 'suite') params.set('suiteId', activeNode.suite.id);
       else if (activeNode.kind === 'module') params.set('moduleId', activeNode.module.id);
       else params.set('portalId', activeNode.portal.id);
+      statusF.forEach(s => params.append('status', s));
       priorityF.forEach(p => params.append('priority', p));
       typeF.forEach(t => params.append('type', t));
       if (search.trim()) params.set('search', search.trim());
@@ -427,7 +435,7 @@ export function TestCaseList({
     } finally {
       setCasesLoading(false);
     }
-  }, [activeNode, page, pageSize, priorityF, typeF, search, dataVersion]);
+  }, [activeNode, page, pageSize, statusF, priorityF, typeF, search, dataVersion]);
 
   useEffect(() => {
     fetchCases();
@@ -754,6 +762,7 @@ export function TestCaseList({
       if (activeNode.kind === 'suite') params.set('suiteId', activeNode.suite.id);
       else if (activeNode.kind === 'module') params.set('moduleId', activeNode.module.id);
       else params.set('portalId', activeNode.portal.id);
+      statusF.forEach(s => params.append('status', s));
       priorityF.forEach(p => params.append('priority', p));
       typeF.forEach(t => params.append('type', t));
       if (search.trim()) params.set('search', search.trim());
@@ -779,11 +788,12 @@ export function TestCaseList({
   };
 
   const clearAll = () => {
+    setStatusF(new Set());
     setPriorityF(new Set());
     setTypeF(new Set());
     setSearch('');
   };
-  const activeFilterCount = priorityF.size + typeF.size + (search.trim() ? 1 : 0);
+  const activeFilterCount = statusF.size + priorityF.size + typeF.size + (search.trim() ? 1 : 0);
 
   // Drag-to-reorder only makes sense against one clean, fully-loaded sibling
   // group: a suite's own directly-attached cases (a Module/Portal view mixes
@@ -804,6 +814,91 @@ export function TestCaseList({
     else setSelected(new Set(cases.map(c => c.id)));
   };
 
+  // ─── Tree filter ("Filter sections…") ──────────────────────
+  // Case-insensitive name match. A node stays visible when it, or anything
+  // beneath it, matches, and every ancestor of a match is shown expanded.
+  const [treeQuery, setTreeQuery] = useState('');
+  const tq = treeQuery.trim().toLowerCase();
+  const nameHit = (name: string) => name.toLowerCase().includes(tq);
+  const suiteHit = (s: ApiSuite): boolean => nameHit(s.name) || s.children.some(suiteHit);
+  const moduleHit = (m: ApiModule): boolean => nameHit(m.name) || m.suites.some(suiteHit);
+  const portalHit = (p: ApiPortal): boolean => nameHit(p.name) || p.modules.some(moduleHit);
+
+  // ─── Inline "Case title" quick add ─────────────────────────
+  const [quickAdd, setQuickAdd] = useState<string | null>(null);
+  const [quickBusy, setQuickBusy] = useState(false);
+  const submitQuickAdd = async () => {
+    const title = (quickAdd ?? '').trim();
+    if (!title || !activeNode || quickBusy) return;
+    try {
+      setQuickBusy(true);
+      const parent =
+        activeNode.kind === 'suite'
+          ? { suiteId: activeNode.suite.id }
+          : activeNode.kind === 'module'
+            ? { moduleId: activeNode.module.id }
+            : { portalId: activeNode.portal.id };
+      // The API needs explicit classification keys (it has no defaults), so
+      // pick the workspace's usual Medium / Minor / Functional, falling back to
+      // whatever the first configured option is.
+      const pick = (opts: CaseOption[], name: string) =>
+        opts.find(o => o.name === name)?.key ?? opts[0]?.key;
+      await api.post('/api/test-cases', {
+        title,
+        status: 'Draft',
+        author: authorName,
+        priority: pick(caseOptions.priority, 'Medium'),
+        severity: pick(caseOptions.severity, 'Minor'),
+        type: pick(caseOptions.type, 'Functional'),
+        ...parent,
+      });
+      setQuickAdd(null);
+      await fetchCases();
+      await reloadTree();
+    } catch (e) {
+      alert(`Could not add the case: ${(e as Error).message}`);
+    } finally {
+      setQuickBusy(false);
+    }
+  };
+
+  // ─── Full-page "New test case" form ────────────────────────
+  const [formSaving, setFormSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+  const createCase = async (v: TestCaseFormValues) => {
+    setFormSaving(true);
+    setFormError('');
+    try {
+      await api.post('/api/test-cases', {
+        title: v.title,
+        desc: v.desc,
+        preconditions: v.preconditions,
+        steps: v.steps,
+        expected: v.expected,
+        priority: v.priority,
+        severity: v.severity,
+        type: v.type,
+        status: v.status,
+        ownerId: v.ownerId,
+        labels: v.labels,
+        attachments: v.attachments,
+        author: authorName,
+        // Exactly one parent — the deepest pick wins.
+        ...(v.suiteId
+          ? { suiteId: v.suiteId }
+          : v.moduleId
+            ? { moduleId: v.moduleId }
+            : { portalId: v.portalId }),
+      });
+      setShowNewCase(false);
+      await Promise.all([reloadTree(), fetchCases()]);
+    } catch (e) {
+      setFormError((e as Error).message);
+    } finally {
+      setFormSaving(false);
+    }
+  };
+
   // Sibling suites count for the header subtitle (e.g. "3 suites" under the same module).
   const siblingSuiteCount = activeModule?.suites.length ?? 0;
 
@@ -815,9 +910,9 @@ export function TestCaseList({
     });
 
   // Recursive renderer for a single suite + its nested children.
-  // depth controls the visual indentation; modName + portalId thread through to
-  // the action callbacks. Each level supports add-subsuite / rename / delete /
-  // copy, and clicking the label navigates to that suite.
+  // depth controls nesting; modName + portalId thread through to the action
+  // callbacks. Each level supports add-subsuite / rename / delete / copy, and
+  // clicking the label navigates to that suite.
   const renderSuiteNode = (
     suite: ApiSuite,
     depth: number,
@@ -828,14 +923,13 @@ export function TestCaseList({
   ): React.ReactNode => {
     const active = activeNode?.kind === 'suite' && activeNode.suite.id === suite.id;
     const isRenamingSuite = edit?.kind === 'rename-suite' && edit.targetId === suite.id;
-    const hasChildren = suite.children.length > 0;
-    const isOpen = expandedSuites.has(suite.id);
     const isAddingChildHere = edit?.kind === 'add-subsuite' && edit.targetId === suite.id;
+    const isOpen = tq ? true : expandedSuites.has(suite.id);
+    const kids = tq && !nameHit(suite.name) ? suite.children.filter(suiteHit) : suite.children;
 
     return (
       <div key={suite.id}>
         <NodeRow
-          indent={2 + depth}
           isActive={active}
           isRenaming={isRenamingSuite}
           drag={dragHandlersFor(
@@ -844,45 +938,15 @@ export function TestCaseList({
             siblings.map(s => s.id),
             ids => reorderSuites(portalId, moduleId, suite.parentId, ids),
           )}
-          // Suites that have children get a chevron; leaves get a dot.
-          chevron={
-            hasChildren ? (
-              <button
-                type="button"
-                onClick={e => {
-                  e.stopPropagation();
-                  toggleSuiteExpand(suite.id);
-                }}
-                className="inline-flex items-center"
-              >
-                <Chevron open={isOpen} />
-              </button>
-            ) : (
-              <span className="inline-block w-3" />
-            )
-          }
+          // Every suite shows a chevron — any suite can take sub-folders.
+          toggle={{
+            open: isOpen || isAddingChildHere,
+            onToggle: () => toggleSuiteExpand(suite.id),
+          }}
           onLabelClick={() => pickSuite(modName, suite.name)}
-          icon={
-            <span
-              className={cn(
-                'h-1.5 w-1.5 flex-shrink-0 rounded-full',
-                active ? 'bg-primary' : 'bg-text-3/40',
-              )}
-            />
-          }
+          icon={<Ico name="folder" />}
           label={suite.name}
-          suffix={
-            suite._count && suite._count.testCases > 0 ? (
-              <span
-                className={cn(
-                  'ml-1 rounded-full px-1.5 py-px text-[10px]',
-                  active ? 'bg-primary/20 text-primary-text' : 'bg-surface-2 text-text-3',
-                )}
-              >
-                {suite._count.testCases}
-              </span>
-            ) : null
-          }
+          count={suiteTotal(suite)}
           renameDraft={isRenamingSuite ? edit!.draft : ''}
           onRenameChange={v => setEdit(e => (e ? { ...e, draft: v } : e))}
           onRenameSubmit={submitEdit}
@@ -922,14 +986,13 @@ export function TestCaseList({
           }
         />
 
-        {(isOpen || isAddingChildHere) && (
-          <div className="ml-4 border-l border-border pl-1">
-            {suite.children.map(child =>
+        {(isOpen || isAddingChildHere) && (kids.length > 0 || isAddingChildHere) && (
+          <div className="tree-children">
+            {kids.map(child =>
               renderSuiteNode(child, depth + 1, modName, moduleId, portalId, suite.children),
             )}
             {isAddingChildHere && (
               <InlineRow
-                indent={2 + depth + 1}
                 placeholder="Subfolder name…"
                 draft={edit.draft}
                 setDraft={v => setEdit(e => (e ? { ...e, draft: v } : e))}
@@ -943,394 +1006,205 @@ export function TestCaseList({
     );
   };
 
+  // Totals for the page title ("1,082 cases · 16 sections"): every case in the
+  // workspace and every module/suite node in the tree.
+  // The API's _count is per node (cases attached directly to it), so roll the
+  // totals up here: a module shows its own cases plus every suite beneath it.
+  const suiteTotal = (s: ApiSuite): number =>
+    (s._count?.testCases ?? 0) + s.children.reduce((n, ch) => n + suiteTotal(ch), 0);
+  const moduleTotal = (m: ApiModule): number =>
+    (m._count?.testCases ?? 0) + m.suites.reduce((n, s) => n + suiteTotal(s), 0);
+  const portalTotal = (p: ApiPortal): number =>
+    (p._count?.testCases ?? 0) + p.modules.reduce((n, m) => n + moduleTotal(m), 0);
+  const totalCases = tree.reduce((sum, p) => sum + portalTotal(p), 0);
+  const countSuites = (ss: ApiSuite[]): number =>
+    ss.reduce((n, s) => n + 1 + countSuites(s.children), 0);
+  const totalSections = tree.reduce(
+    (n, p) => n + p.modules.reduce((m, mod) => m + 1 + countSuites(mod.suites), 0),
+    0,
+  );
+  const allSelected = cases.length > 0 && selected.size === cases.length;
+
   // ─── Render ────────────────────────────────────────────────
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      <div className="flex-1 overflow-y-auto px-44 py-6">
-        {/* Breadcrumb */}
-        <div className="mb-2 flex items-center gap-1.5 text-[12px] text-text-3">
-          <span className="hover:text-text">{projectName || 'Project'}</span>
-          {activeNode ? (
-            <>
-              <Slash />
-              <span
-                className={cn(
-                  activeNode.kind === 'portal' ? 'font-medium text-text' : 'hover:text-text',
-                )}
-              >
-                {activeNode.portal.name}
-              </span>
-              {activeModule && (
-                <>
-                  <Slash />
-                  <span
-                    className={cn(
-                      activeNode.kind === 'module' ? 'font-medium text-text' : 'hover:text-text',
-                    )}
-                  >
-                    {activeModule.name}
-                  </span>
-                </>
-              )}
-              {activeSuite && (
-                <>
-                  <Slash />
-                  <span className="font-medium text-text">{activeSuite.name}</span>
-                </>
-              )}
-            </>
-          ) : (
-            <>
-              <Slash />
-              <span className="text-text-3">Pick a folder</span>
-            </>
-          )}
-        </div>
-
-        {/* Header strip */}
-        <div className="mb-6 flex items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
-              {activeSuite?.name ?? activeModule?.name ?? activePortal?.name ?? 'Test cases'}
-            </h1>
-            <p className="text-[13px] text-text-2">
-              {activeNode ? (
-                <>
-                  {total} test case{total === 1 ? '' : 's'}
-                  {activeNode.kind !== 'suite' && siblingSuiteCount > 0 && (
-                    <>
-                      <span className="mx-1.5 text-text-3">·</span>
-                      {siblingSuiteCount} suite{siblingSuiteCount === 1 ? '' : 's'} in module
-                    </>
-                  )}
-                </>
-              ) : (
-                'Pick a folder from the hierarchy to view its test cases.'
-              )}
-            </p>
-          </div>
-          <div className="flex flex-shrink-0 gap-2">
-            <button
-              type="button"
-              onClick={handleExport}
-              disabled={!activeNode || exporting}
-              className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-              title={
-                activeNode
-                  ? `Export ${activeSuite?.name ?? activeModule?.name ?? activePortal?.name} to Excel`
-                  : 'Pick a folder first'
-              }
-            >
-              {exporting ? (
-                <i className="ti ti-loader-2 animate-spin text-[16px]" />
-              ) : (
-                <i className="ti ti-file-spreadsheet text-[16px]" />
-              )}
-              Export
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowImport(true)}
-              disabled={!projectId}
-              className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-              title="Import test cases from a CSV file"
-            >
-              <i className="ti ti-file-upload text-[16px]" />
-              Import CSV
-            </button>
-            <button
-              type="button"
-              onClick={addSuiteUnderActive}
-              disabled={!activeModule}
-              className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-              title={activeModule ? `Add suite under ${activeModule.name}` : 'Pick a module first'}
-            >
-              <i className="ti ti-folder-plus text-[16px]" />
-              New suite
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowNewCase(true)}
-              disabled={!activeNode}
-              className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-[7px] text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <i className="ti ti-plus text-[16px]" />
-              New case
-            </button>
-          </div>
-        </div>
-
-        {/* Two-column body */}
-        <div className="flex items-start gap-6">
-          {/* Hierarchy column */}
-          <aside className="w-[300px] flex-shrink-0 rounded-lg border border-border bg-surface">
-            <div className="flex items-center justify-between border-b border-border px-3 py-2">
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-text-3">
-                Hierarchy
-              </span>
-              <button
-                type="button"
-                title="Add portal"
-                onClick={() => startAdd('add-portal', null)}
-                disabled={!projectId}
-                className="rounded p-0.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <i className="ti ti-plus text-[14px]" />
-              </button>
-            </div>
-            <div className="max-h-[640px] overflow-y-auto px-1 py-1.5 text-[13px]">
-              {treeLoading && tree.length === 0 && (
-                <p className="px-3 py-2 text-[12px] italic text-text-3">Loading…</p>
-              )}
-              {!treeLoading && tree.length === 0 && !edit && (
-                <p className="px-3 py-2 text-[12px] italic text-text-3">
-                  No portals yet — click + above to add one.
-                </p>
-              )}
-
-              {/* Inline "add portal" input lives at the very top of the tree. */}
-              {edit?.kind === 'add-portal' && (
-                <InlineRow
-                  indent={0}
-                  icon="ti-app-window"
-                  placeholder="Portal name…"
-                  draft={edit.draft}
-                  setDraft={v => setEdit(e => (e ? { ...e, draft: v } : e))}
-                  onSubmit={submitEdit}
-                  onCancel={cancelEdit}
-                />
-              )}
-
-              {tree.map(portal => {
-                const pOpen = expandedPortals.has(portal.id);
-                const isRenamingPortal =
-                  edit?.kind === 'rename-portal' && edit.targetId === portal.id;
-                return (
-                  <div key={portal.id} className="mb-0.5">
-                    {/* Portal row */}
-                    <NodeRow
-                      indent={0}
-                      isActive={activeNode?.kind === 'portal' && activeNode.portal.id === portal.id}
-                      isRenaming={isRenamingPortal}
-                      drag={dragHandlersFor(
-                        'portals',
-                        portal.id,
-                        tree.map(p => p.id),
-                        reorderPortals,
-                      )}
-                      onLabelClick={() => {
-                        // Single click: select the portal (so its cases show on the right).
-                        // Chevron click separately toggles expansion.
-                        setElevated({ kind: 'portal', portalId: portal.id });
-                      }}
-                      chevron={
-                        <button
-                          type="button"
-                          onClick={e => {
-                            e.stopPropagation();
-                            togglePortal(portal.id);
-                          }}
-                          className="inline-flex items-center"
-                        >
-                          <Chevron open={pOpen} />
-                        </button>
-                      }
-                      icon={<PortalGlyph />}
-                      label={portal.name}
-                      bold
-                      suffix={
-                        portal._count && portal._count.testCases > 0 ? (
-                          <span className="ml-1 rounded-full bg-surface-2 px-1.5 py-px text-[10px] text-text-3">
-                            {portal._count.testCases}
-                          </span>
-                        ) : null
-                      }
-                      renameDraft={isRenamingPortal ? edit!.draft : ''}
-                      onRenameChange={v => setEdit(e => (e ? { ...e, draft: v } : e))}
-                      onRenameSubmit={submitEdit}
-                      onRenameCancel={cancelEdit}
-                      actions={
-                        <>
-                          <NodeAction
-                            icon="ti-plus"
-                            title="Add module"
-                            onClick={() => startAdd('add-module', portal.id)}
-                          />
-                          <NodeAction
-                            icon="ti-pencil"
-                            title="Rename portal"
-                            onClick={() => startRename('rename-portal', portal.id, portal.name)}
-                          />
-                          <NodeAction
-                            icon="ti-trash"
-                            title="Delete portal"
-                            danger
-                            onClick={() => removePortal(portal)}
-                          />
-                        </>
-                      }
-                    />
-
-                    {pOpen && (
+    <div className="flex flex-1 flex-col overflow-hidden">
+      {showNewCase && activeNode && projectId ? (
+        <TestCaseForm
+          mode="create"
+          projectId={projectId}
+          projectName={projectName}
+          tree={tree}
+          initial={{
+            portalId: activeNode.portal.id,
+            moduleId: activeNode.kind !== 'portal' ? activeNode.module.id : undefined,
+            suiteId: activeNode.kind === 'suite' ? activeNode.suite.id : undefined,
+          }}
+          authorName={authorName}
+          saving={formSaving}
+          error={formError}
+          onCancel={() => {
+            setShowNewCase(false);
+            setFormError('');
+          }}
+          onSubmit={createCase}
+        />
+      ) : (
+        <div className="tcv3 main-scroll compact">
+          {/* Page header: breadcrumb + title on the left, page actions on the right */}
+          <div className="page-header">
+            <div>
+              <div className="breadcrumb">
+                <span className="crumb">{projectName || 'Project'}</span>
+                {activeNode ? (
+                  <>
+                    <span className="sep">/</span>
+                    <span className={activeNode.kind === 'portal' ? 'current' : 'crumb'}>
+                      {activeNode.portal.name}
+                    </span>
+                    {activeModule && (
                       <>
-                        {portal.modules.map(mod => {
-                          const mOpen = expandedModules.has(mod.id);
-                          const isRenamingModule =
-                            edit?.kind === 'rename-module' && edit.targetId === mod.id;
-                          return (
-                            <div key={mod.id} className="ml-3">
-                              <NodeRow
-                                indent={1}
-                                isActive={
-                                  activeNode?.kind === 'module' && activeNode.module.id === mod.id
-                                }
-                                isRenaming={isRenamingModule}
-                                drag={dragHandlersFor(
-                                  `modules:${portal.id}`,
-                                  mod.id,
-                                  portal.modules.map(m => m.id),
-                                  ids => reorderModules(portal.id, ids),
-                                )}
-                                onLabelClick={() => {
-                                  // Selecting a module shows its direct + nested cases.
-                                  setElevated({
-                                    kind: 'module',
-                                    portalId: portal.id,
-                                    moduleId: mod.id,
-                                  });
-                                }}
-                                chevron={
-                                  <button
-                                    type="button"
-                                    onClick={e => {
-                                      e.stopPropagation();
-                                      toggleModule(mod.id);
-                                    }}
-                                    className="inline-flex items-center"
-                                  >
-                                    <Chevron open={mOpen} />
-                                  </button>
-                                }
-                                icon={<i className="ti ti-folder-filled text-[13px] text-text-3" />}
-                                label={mod.name}
-                                suffix={
-                                  mod._count && mod._count.testCases > 0 ? (
-                                    <span className="ml-1 rounded-full bg-surface-2 px-1.5 py-px text-[10px] text-text-3">
-                                      {mod._count.testCases}
-                                    </span>
-                                  ) : null
-                                }
-                                renameDraft={isRenamingModule ? edit!.draft : ''}
-                                onRenameChange={v => setEdit(e => (e ? { ...e, draft: v } : e))}
-                                onRenameSubmit={submitEdit}
-                                onRenameCancel={cancelEdit}
-                                actions={
-                                  <>
-                                    <NodeAction
-                                      icon="ti-plus"
-                                      title="Add suite"
-                                      onClick={() => startAdd('add-suite', mod.id)}
-                                    />
-                                    <NodeAction
-                                      icon="ti-copy"
-                                      title="Copy module to another portal"
-                                      onClick={() =>
-                                        setCopyTarget({
-                                          kind: 'module',
-                                          id: mod.id,
-                                          name: mod.name,
-                                          sourcePortalId: portal.id,
-                                        })
-                                      }
-                                    />
-                                    <NodeAction
-                                      icon="ti-pencil"
-                                      title="Rename module"
-                                      onClick={() => startRename('rename-module', mod.id, mod.name)}
-                                    />
-                                    <NodeAction
-                                      icon="ti-trash"
-                                      title="Delete module"
-                                      danger
-                                      onClick={() => removeModule(mod)}
-                                    />
-                                  </>
-                                }
-                              />
-
-                              {mOpen && (
-                                <div className="ml-4 border-l border-border pl-1">
-                                  {mod.suites.length === 0 &&
-                                    !(edit?.kind === 'add-suite' && edit.targetId === mod.id) && (
-                                      <p className="px-2 py-1 text-[11px] italic text-text-3">
-                                        No suites yet
-                                      </p>
-                                    )}
-                                  {/* Recursive — each suite renders itself + nested children. */}
-                                  {mod.suites.map(suite =>
-                                    renderSuiteNode(
-                                      suite,
-                                      0,
-                                      mod.name,
-                                      mod.id,
-                                      portal.id,
-                                      mod.suites,
-                                    ),
-                                  )}
-
-                                  {/* Inline "add suite" input at the bottom of the module. */}
-                                  {edit?.kind === 'add-suite' && edit.targetId === mod.id && (
-                                    <InlineRow
-                                      indent={2}
-                                      placeholder="Suite name…"
-                                      draft={edit.draft}
-                                      setDraft={v => setEdit(e => (e ? { ...e, draft: v } : e))}
-                                      onSubmit={submitEdit}
-                                      onCancel={cancelEdit}
-                                    />
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-
-                        {/* Inline "add module" input at the bottom of the portal. */}
-                        {edit?.kind === 'add-module' && edit.targetId === portal.id && (
-                          <div className="ml-3">
-                            <InlineRow
-                              indent={1}
-                              icon="ti-folder-filled"
-                              placeholder="Module name…"
-                              draft={edit.draft}
-                              setDraft={v => setEdit(e => (e ? { ...e, draft: v } : e))}
-                              onSubmit={submitEdit}
-                              onCancel={cancelEdit}
-                            />
-                          </div>
-                        )}
+                        <span className="sep">/</span>
+                        <span className={activeNode.kind === 'module' ? 'current' : 'crumb'}>
+                          {activeModule.name}
+                        </span>
                       </>
                     )}
-                  </div>
-                );
-              })}
-
-              {/* Hint when no portals AND user is mid-create */}
-              {tree.length === 0 && edit?.kind === 'add-portal' && (
-                <p className="px-3 py-2 text-[10px] italic text-text-3">
-                  Tip: Enter to save, Esc to cancel.
-                </p>
-              )}
+                    {activeSuite && (
+                      <>
+                        <span className="sep">/</span>
+                        <span className="current">{activeSuite.name}</span>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <span className="sep">/</span>
+                    <span className="current">Test cases</span>
+                  </>
+                )}
+              </div>
+              <h1 className="page-title compact">
+                Repository{' '}
+                <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--t-3)', marginLeft: 8 }}>
+                  {totalCases.toLocaleString('en-US')} cases · {totalSections} sections
+                </span>
+              </h1>
             </div>
-          </aside>
+            <div className="page-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowImport(true)}
+                disabled={!projectId}
+                title="Import test cases from a CSV file"
+              >
+                <Ico name="download" />
+                Import
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleExport}
+                disabled={!activeNode || exporting}
+                title={
+                  activeNode
+                    ? `Export ${activeSuite?.name ?? activeModule?.name ?? activePortal?.name} to Excel`
+                    : 'Pick a folder first'
+                }
+              >
+                <Ico name="upload" />
+                Export
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={addSuiteUnderActive}
+                disabled={!activeModule}
+                title={
+                  activeModule ? `Add suite under ${activeModule.name}` : 'Pick a module first'
+                }
+              >
+                <Ico name="plus" />
+                New suite
+              </button>
+            </div>
+          </div>
 
-          {/* Right pane (filters + table) */}
-          <section className="min-w-0 flex-1">
-            {/* Filter chips */}
-            <div ref={filterBarRef} className="mb-4 flex flex-wrap items-center gap-2">
-              <FilterChip
+          {/* Toolbar: selection · bulk actions · filters */}
+          <div className="toolbar" ref={filterBarRef}>
+            <div className="tb-group">
+              <button
+                type="button"
+                className={cn(
+                  'cb',
+                  allSelected && 'on',
+                  !allSelected && selected.size > 0 && 'indet',
+                )}
+                onClick={toggleSelectAll}
+                disabled={cases.length === 0}
+                title={allSelected ? 'Clear selection' : 'Select all on this page'}
+              >
+                <Ico name="check" />
+              </button>
+              <span style={{ fontSize: 12, color: 'var(--t-2)', fontWeight: 500 }}>
+                {selected.size > 0 ? `${selected.size} selected` : 'Select all'}
+              </span>
+            </div>
+            <div className="tb-group">
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={selected.size === 0 || bulkBusy}
+                onClick={() => setShowBulkEdit(true)}
+              >
+                <Ico name="pencil" /> Edit fields
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={selected.size === 0 || bulkBusy}
+                onClick={bulkDuplicate}
+              >
+                <Ico name="copy" /> Duplicate
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={selected.size === 0 || bulkBusy}
+                onClick={() => setShowBulkMove(true)}
+              >
+                <Ico name="move" /> Move
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                style={{ color: 'var(--err)' }}
+                disabled={selected.size === 0 || bulkBusy}
+                onClick={bulkDelete}
+              >
+                <Ico name="trash" /> Delete
+              </button>
+            </div>
+            <div className="tb-group">
+              <FilterSelect
+                label="Status"
+                allLabel="All statuses"
+                width={140}
+                options={STATUS_OPTIONS}
+                selected={statusF}
+                onToggle={v => {
+                  const n = new Set(statusF);
+                  n.has(v) ? n.delete(v) : n.add(v);
+                  setStatusF(n);
+                }}
+                onClear={() => setStatusF(new Set())}
+                isOpen={openFilter === 'Status'}
+                onOpen={() => setOpenFilter(openFilter === 'Status' ? null : 'Status')}
+              />
+              <FilterSelect
                 label="Priority"
-                icon="ti-flag"
+                allLabel="All priorities"
+                width={130}
                 options={caseOptions.priority.map(o => ({ value: o.key, label: o.name }))}
                 selected={priorityF}
                 onToggle={v => {
@@ -1342,9 +1216,10 @@ export function TestCaseList({
                 isOpen={openFilter === 'Priority'}
                 onOpen={() => setOpenFilter(openFilter === 'Priority' ? null : 'Priority')}
               />
-              <FilterChip
+              <FilterSelect
                 label="Type"
-                icon="ti-category"
+                allLabel="All types"
+                width={130}
                 options={caseOptions.type.map(o => ({ value: o.key, label: o.name }))}
                 selected={typeF}
                 onToggle={v => {
@@ -1356,136 +1231,422 @@ export function TestCaseList({
                 isOpen={openFilter === 'Type'}
                 onOpen={() => setOpenFilter(openFilter === 'Type' ? null : 'Type')}
               />
-
-              {activeFilterCount > 0 && (
-                <button
-                  type="button"
-                  onClick={clearAll}
-                  className="rounded-[7px] px-2.5 py-1 text-[12px] text-text-2 hover:bg-surface-2"
+              <div style={{ position: 'relative' }}>
+                <span
+                  style={{
+                    position: 'absolute',
+                    left: 10,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    display: 'flex',
+                    color: 'var(--t-3)',
+                    pointerEvents: 'none',
+                  }}
                 >
-                  Clear all
-                </button>
-              )}
-
-              <div className="relative ml-auto w-[220px]">
-                <i className="ti ti-search pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-text-3" />
+                  <Ico name="search" size={13} />
+                </span>
                 <input
                   type="text"
+                  className="input"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  placeholder="Search in suite…"
-                  className="w-full rounded-[7px] border border-border bg-surface py-1.5 pl-8 pr-3 text-[12px] text-text outline-none placeholder:text-text-3 focus:border-primary focus:ring-[3px] focus:ring-primary-light"
+                  placeholder="Search in section…"
+                  style={{ width: 180, fontSize: 12, padding: '6px 10px 6px 30px' }}
                 />
+              </div>
+              {activeFilterCount > 0 && (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={clearAll}>
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Tree + case list */}
+          <div className="tc-split">
+            {/* Tree */}
+            <div className="tree tc-tree">
+              <div className="tree-search">
+                <Ico name="search" />
+                <input
+                  placeholder="Filter sections…"
+                  value={treeQuery}
+                  onChange={e => setTreeQuery(e.target.value)}
+                />
+              </div>
+
+              {treeLoading && tree.length === 0 && (
+                <p
+                  style={{
+                    padding: '8px 10px',
+                    fontSize: 12,
+                    fontStyle: 'italic',
+                    color: 'var(--t-3)',
+                  }}
+                >
+                  Loading…
+                </p>
+              )}
+              {!treeLoading && tree.length === 0 && !edit && (
+                <p
+                  style={{
+                    padding: '8px 10px',
+                    fontSize: 12,
+                    fontStyle: 'italic',
+                    color: 'var(--t-3)',
+                  }}
+                >
+                  No portals yet — use “New portal” below.
+                </p>
+              )}
+              {tq && !tree.some(portalHit) && tree.length > 0 && (
+                <p
+                  style={{
+                    padding: '8px 10px',
+                    fontSize: 12,
+                    fontStyle: 'italic',
+                    color: 'var(--t-3)',
+                  }}
+                >
+                  No sections match “{treeQuery.trim()}”.
+                </p>
+              )}
+
+              {/* Inline "add portal" input lives at the very top of the tree. */}
+              {edit?.kind === 'add-portal' && (
+                <InlineRow
+                  placeholder="Portal name…"
+                  draft={edit.draft}
+                  setDraft={v => setEdit(e => (e ? { ...e, draft: v } : e))}
+                  onSubmit={submitEdit}
+                  onCancel={cancelEdit}
+                />
+              )}
+
+              {tree
+                .filter(p => !tq || portalHit(p))
+                .map(portal => {
+                  const pOpen = tq ? true : expandedPortals.has(portal.id);
+                  const isRenamingPortal =
+                    edit?.kind === 'rename-portal' && edit.targetId === portal.id;
+                  const mods =
+                    tq && !nameHit(portal.name) ? portal.modules.filter(moduleHit) : portal.modules;
+                  const addingModule = edit?.kind === 'add-module' && edit.targetId === portal.id;
+                  return (
+                    <div key={portal.id}>
+                      <NodeRow
+                        isActive={
+                          activeNode?.kind === 'portal' && activeNode.portal.id === portal.id
+                        }
+                        isRenaming={isRenamingPortal}
+                        drag={dragHandlersFor(
+                          'portals',
+                          portal.id,
+                          tree.map(p => p.id),
+                          reorderPortals,
+                        )}
+                        // Single click selects the portal (its cases show on the right);
+                        // the chevron separately toggles expansion.
+                        onLabelClick={() => setElevated({ kind: 'portal', portalId: portal.id })}
+                        toggle={{ open: pOpen, onToggle: () => togglePortal(portal.id) }}
+                        icon={<Ico name="portal" />}
+                        label={portal.name}
+                        count={portalTotal(portal)}
+                        renameDraft={isRenamingPortal ? edit!.draft : ''}
+                        onRenameChange={v => setEdit(e => (e ? { ...e, draft: v } : e))}
+                        onRenameSubmit={submitEdit}
+                        onRenameCancel={cancelEdit}
+                        actions={
+                          <>
+                            <NodeAction
+                              icon="ti-plus"
+                              title="Add module"
+                              onClick={() => startAdd('add-module', portal.id)}
+                            />
+                            <NodeAction
+                              icon="ti-pencil"
+                              title="Rename portal"
+                              onClick={() => startRename('rename-portal', portal.id, portal.name)}
+                            />
+                            <NodeAction
+                              icon="ti-trash"
+                              title="Delete portal"
+                              danger
+                              onClick={() => removePortal(portal)}
+                            />
+                          </>
+                        }
+                      />
+
+                      {pOpen && (mods.length > 0 || addingModule) && (
+                        <div className="tree-children">
+                          {mods.map(mod => {
+                            const mOpen = tq ? true : expandedModules.has(mod.id);
+                            const isRenamingModule =
+                              edit?.kind === 'rename-module' && edit.targetId === mod.id;
+                            const suites =
+                              tq && !nameHit(mod.name) ? mod.suites.filter(suiteHit) : mod.suites;
+                            const addingSuite =
+                              edit?.kind === 'add-suite' && edit.targetId === mod.id;
+                            return (
+                              <div key={mod.id}>
+                                <NodeRow
+                                  isActive={
+                                    activeNode?.kind === 'module' && activeNode.module.id === mod.id
+                                  }
+                                  isRenaming={isRenamingModule}
+                                  drag={dragHandlersFor(
+                                    `modules:${portal.id}`,
+                                    mod.id,
+                                    portal.modules.map(m => m.id),
+                                    ids => reorderModules(portal.id, ids),
+                                  )}
+                                  // Selecting a module shows its direct + nested cases.
+                                  onLabelClick={() =>
+                                    setElevated({
+                                      kind: 'module',
+                                      portalId: portal.id,
+                                      moduleId: mod.id,
+                                    })
+                                  }
+                                  toggle={{ open: mOpen, onToggle: () => toggleModule(mod.id) }}
+                                  icon={<Ico name="folder" />}
+                                  label={mod.name}
+                                  count={moduleTotal(mod)}
+                                  renameDraft={isRenamingModule ? edit!.draft : ''}
+                                  onRenameChange={v => setEdit(e => (e ? { ...e, draft: v } : e))}
+                                  onRenameSubmit={submitEdit}
+                                  onRenameCancel={cancelEdit}
+                                  actions={
+                                    <>
+                                      <NodeAction
+                                        icon="ti-plus"
+                                        title="Add suite"
+                                        onClick={() => startAdd('add-suite', mod.id)}
+                                      />
+                                      <NodeAction
+                                        icon="ti-copy"
+                                        title="Copy module to another portal"
+                                        onClick={() =>
+                                          setCopyTarget({
+                                            kind: 'module',
+                                            id: mod.id,
+                                            name: mod.name,
+                                            sourcePortalId: portal.id,
+                                          })
+                                        }
+                                      />
+                                      <NodeAction
+                                        icon="ti-pencil"
+                                        title="Rename module"
+                                        onClick={() =>
+                                          startRename('rename-module', mod.id, mod.name)
+                                        }
+                                      />
+                                      <NodeAction
+                                        icon="ti-trash"
+                                        title="Delete module"
+                                        danger
+                                        onClick={() => removeModule(mod)}
+                                      />
+                                    </>
+                                  }
+                                />
+
+                                {mOpen && (suites.length > 0 || addingSuite) && (
+                                  <div className="tree-children">
+                                    {/* Recursive — each suite renders itself + nested children. */}
+                                    {suites.map(suite =>
+                                      renderSuiteNode(
+                                        suite,
+                                        0,
+                                        mod.name,
+                                        mod.id,
+                                        portal.id,
+                                        mod.suites,
+                                      ),
+                                    )}
+
+                                    {/* Inline "add suite" input at the bottom of the module. */}
+                                    {addingSuite && (
+                                      <InlineRow
+                                        placeholder="Suite name…"
+                                        draft={edit.draft}
+                                        setDraft={v => setEdit(e => (e ? { ...e, draft: v } : e))}
+                                        onSubmit={submitEdit}
+                                        onCancel={cancelEdit}
+                                      />
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          {/* Inline "add module" input at the bottom of the portal. */}
+                          {addingModule && (
+                            <InlineRow
+                              placeholder="Module name…"
+                              draft={edit.draft}
+                              setDraft={v => setEdit(e => (e ? { ...e, draft: v } : e))}
+                              onSubmit={submitEdit}
+                              onCancel={cancelEdit}
+                            />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+              <div style={{ marginTop: 10, padding: 6, borderTop: '1px solid var(--bdr)' }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  style={{ width: '100%', justifyContent: 'flex-start', color: 'var(--brand-700)' }}
+                  onClick={() => startAdd('add-portal', null)}
+                  disabled={!projectId}
+                >
+                  <Ico name="plus" /> New portal
+                </button>
               </div>
             </div>
 
-            {/* Table card */}
-            {!activeNode ? (
-              <EmptyState
-                icon="ti-pointer"
-                title="Pick a suite"
-                body="Use the hierarchy on the left to drill down to a suite."
-              />
-            ) : casesLoading && cases.length === 0 ? (
-              <EmptyState icon="ti-loader-2" title="Loading…" body="" spin />
-            ) : cases.length === 0 ? (
-              <EmptyState
-                icon="ti-clipboard-list"
-                title="No test cases match"
-                body={
-                  activeFilterCount > 0
-                    ? 'Try widening or clearing your filters.'
-                    : 'Click "New case" to create the first one.'
-                }
-              />
-            ) : (
-              <>
-                {selected.size > 0 && (
-                  <div className="mb-3 flex items-center gap-3 rounded-lg border border-primary/30 bg-primary-light/40 px-3 py-2 text-[13px]">
-                    <span className="font-medium text-primary-text">
-                      {selected.size} case{selected.size === 1 ? '' : 's'} selected
-                    </span>
-                    <div className="ml-auto flex items-center gap-2">
+            {/* Case list */}
+            <div style={{ minWidth: 0 }}>
+              {!activeNode ? (
+                <div
+                  className="sec-body"
+                  style={{ borderTop: '1px solid var(--bdr)', borderRadius: 12 }}
+                >
+                  <div className="empty">
+                    <b>Pick a section</b>
+                    Use the tree on the left to drill down to a suite.
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="sec-head">
+                    <div className="sec-title">
+                      <span className="ico">
+                        <Ico name="folder" size={14} />
+                      </span>
+                      <h3>
+                        {activeSuite
+                          ? `${activeModule?.name ?? ''} / ${activeSuite.name}`
+                          : (activeModule?.name ?? activePortal?.name ?? '')}
+                      </h3>
+                      <span className="pill pill-brand" style={{ marginLeft: 6 }}>
+                        {total} case{total === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
                       <button
                         type="button"
-                        onClick={() => setShowBulkEdit(true)}
-                        disabled={bulkBusy}
-                        className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-2.5 py-1 text-[12px] text-text hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => {
+                          if (activeNode.kind === 'suite')
+                            startRename('rename-suite', activeNode.suite.id, activeNode.suite.name);
+                          else if (activeNode.kind === 'module')
+                            startRename(
+                              'rename-module',
+                              activeNode.module.id,
+                              activeNode.module.name,
+                            );
+                          else
+                            startRename(
+                              'rename-portal',
+                              activeNode.portal.id,
+                              activeNode.portal.name,
+                            );
+                        }}
                       >
-                        <i className="ti ti-pencil text-[13px]" />
-                        Edit fields
+                        Edit {activeNode.kind === 'suite' ? 'section' : activeNode.kind}
                       </button>
                       <button
                         type="button"
-                        onClick={() => setShowBulkMove(true)}
-                        disabled={bulkBusy}
-                        className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-2.5 py-1 text-[12px] text-text hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => setQuickAdd('')}
+                        title="Type a title and press Enter to add a draft case"
                       >
-                        <i className="ti ti-folder-symlink text-[13px]" />
-                        Move to…
+                        Quick add
                       </button>
                       <button
                         type="button"
-                        onClick={bulkDuplicate}
-                        disabled={bulkBusy}
-                        className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-2.5 py-1 text-[12px] text-text hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setShowNewCase(true)}
                       >
-                        <i className="ti ti-copy text-[13px]" />
-                        Duplicate
-                      </button>
-                      <button
-                        type="button"
-                        onClick={bulkDelete}
-                        disabled={bulkBusy}
-                        className="inline-flex items-center gap-1.5 rounded-[7px] border border-danger/30 bg-surface px-2.5 py-1 text-[12px] text-danger hover:bg-danger-bg disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <i className="ti ti-trash text-[13px]" />
-                        Delete
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSelected(new Set())}
-                        title="Clear selection"
-                        className="rounded p-1 text-text-3 hover:bg-surface-2 hover:text-text"
-                      >
-                        <i className="ti ti-x text-[14px]" />
+                        <Ico name="plus" /> New case
                       </button>
                     </div>
                   </div>
-                )}
-                <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-                  <table className="w-full min-w-[800px] table-fixed border-collapse text-[13px]">
-                    <thead className="bg-surface-2">
-                      <tr>
-                        <th className="w-[36px] border-b border-border px-4 py-2.5 text-left">
-                          <CheckBox
-                            checked={cases.length > 0 && selected.size === cases.length}
-                            onChange={toggleSelectAll}
+
+                  <div className="sec-body">
+                    {/* Inline title entry */}
+                    {quickAdd !== null && (
+                      <div className="ie-wrap">
+                        <div className="inline-edit">
+                          <span className="ie-label">Case title:</span>
+                          <input
+                            autoFocus
+                            value={quickAdd}
+                            onChange={e => setQuickAdd(e.target.value)}
+                            placeholder="Describe what this case verifies…"
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                submitQuickAdd();
+                              }
+                              if (e.key === 'Escape') setQuickAdd(null);
+                            }}
                           />
-                        </th>
-                        <Th width="80px">ID</Th>
-                        <Th>Test Case</Th>
-                        <Th width="95px">Priority</Th>
-                        <Th width="95px">Type</Th>
-                        <Th width="85px">Status</Th>
-                        <Th width="100px">Last Result</Th>
-                        <Th width="95px">Updated</Th>
-                        <th className="w-[56px] border-b border-border px-2 py-2.5" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cases.map(tc => {
+                          <button
+                            type="button"
+                            className="ie-action ok"
+                            title="Add case"
+                            disabled={!quickAdd.trim() || quickBusy}
+                            onClick={submitQuickAdd}
+                          >
+                            <Ico name="check" />
+                          </button>
+                          <button
+                            type="button"
+                            className="ie-action cancel"
+                            title="Cancel"
+                            onClick={() => setQuickAdd(null)}
+                          >
+                            <Ico name="x" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {casesLoading && cases.length === 0 ? (
+                      <div className="empty">Loading…</div>
+                    ) : cases.length === 0 ? (
+                      <div className="empty">
+                        <b>No test cases match</b>
+                        {activeFilterCount > 0
+                          ? 'Try widening or clearing your filters.'
+                          : 'Click “New case” to create the first one.'}
+                      </div>
+                    ) : (
+                      cases.map(tc => {
                         const isSel = selected.has(tc.id);
                         const rowDrag = canReorderCases
                           ? dragHandlersFor(
-                              `cases:${activeNode!.kind === 'suite' ? activeNode!.suite.id : ''}`,
+                              `cases:${activeNode.kind === 'suite' ? activeNode.suite.id : ''}`,
                               tc.id,
                               cases.map(c => c.id),
                               reorderCases,
                             )
                           : null;
+                        const pr = priorityToneDisplay(tc);
+                        const ty = typeDisplay(tc);
+                        const last =
+                          tc.lastResult && tc.lastResult !== 'NotRun' ? tc.lastResult : null;
                         return (
-                          <tr
+                          <div
                             key={tc.id}
                             onClick={() => onOpenCase(tc, cases)}
                             draggable={!!rowDrag}
@@ -1493,191 +1654,98 @@ export function TestCaseList({
                             onDragOver={rowDrag?.onDragOver}
                             onDrop={rowDrag?.onDrop}
                             onDragEnd={rowDrag?.onDragEnd}
+                            style={{ position: 'relative' }}
                             className={cn(
-                              'group cursor-pointer border-b-2 transition-colors last:border-b-0',
-                              rowDrag?.isDragOver ? 'border-primary' : 'border-border',
-                              rowDrag?.isDragging ? 'opacity-40' : '',
-                              isSel ? 'bg-primary-light/60' : 'hover:bg-surface-2',
+                              'case-row',
+                              isSel && 'selected',
+                              rowDrag?.isDragOver && 'drag-over',
+                              rowDrag?.isDragging && 'dragging',
                             )}
                           >
-                            <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                              <div className="flex items-center gap-1.5">
-                                {canReorderCases && (
-                                  <i
-                                    className="ti ti-grip-vertical cursor-grab text-[13px] text-text-3 active:cursor-grabbing"
-                                    title="Drag to reorder"
-                                  />
-                                )}
-                                <CheckBox checked={isSel} onChange={() => toggleSelect(tc.id)} />
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 font-mono text-[12px] text-text-3">
-                              TC-{String(tc.caseNum).padStart(2, '0')}
-                            </td>
-                            <td className="px-4 py-3">
-                              <TruncatedText text={tc.title} className="text-text" />
-                            </td>
-                            <td className="px-4 py-3">
-                              {(() => {
-                                const t = priorityToneDisplay(tc);
-                                return (
-                                  <span
-                                    className={cn(
-                                      'inline-flex items-center gap-1.5 font-medium',
-                                      t.text,
-                                    )}
-                                  >
-                                    <span
-                                      className={cn(
-                                        'h-1.5 w-1.5 flex-shrink-0 rounded-full',
-                                        t.dot,
-                                      )}
-                                    />
-                                    {t.label}
-                                  </span>
-                                );
-                              })()}
-                            </td>
-                            <td className="px-4 py-3">
-                              {(() => {
-                                const t = typeDisplay(tc);
-                                return <Pill className={t.classes}>{t.label}</Pill>;
-                              })()}
-                            </td>
-                            <td className="px-4 py-3">
-                              <Pill className={statusBadge(tc.status)}>{tc.status}</Pill>
-                            </td>
-                            <td className="px-4 py-3">
-                              {(() => {
-                                const t = resultTone(tc.lastResult);
-                                return (
-                                  <span
-                                    className={cn(
-                                      'inline-flex items-center gap-1.5 font-medium',
-                                      t.text,
-                                    )}
-                                  >
-                                    <span
-                                      className={cn(
-                                        'h-1.5 w-1.5 flex-shrink-0 rounded-full',
-                                        t.dot,
-                                      )}
-                                    />
-                                    {t.label}
-                                  </span>
-                                );
-                              })()}
-                            </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-text-2">
-                              {localDateStr(new Date(tc.updatedAt))}
-                            </td>
-                            <td
-                              className="relative px-2 py-3 text-right"
-                              onClick={e => e.stopPropagation()}
-                              data-row-menu
+                            <button
+                              type="button"
+                              className={cn('cb', isSel && 'on')}
+                              onClick={e => {
+                                e.stopPropagation();
+                                toggleSelect(tc.id);
+                              }}
                             >
-                              <button
-                                type="button"
-                                title="Actions"
-                                onClick={() => setOpenRowMenu(m => (m === tc.id ? null : tc.id))}
-                                className={cn(
-                                  'rounded p-1 text-text-3 transition-colors hover:bg-surface-3 hover:text-text',
-                                  openRowMenu === tc.id
-                                    ? 'visible bg-surface-3 text-text'
-                                    : 'invisible group-hover:visible',
-                                )}
-                              >
-                                <i className="ti ti-dots-vertical text-[14px]" />
-                              </button>
-                              {openRowMenu === tc.id && (
-                                <div className="absolute right-2 top-full z-20 mt-1 w-36 overflow-hidden rounded-lg border border-border bg-surface py-1 text-left shadow-lg">
-                                  <RowMenuItem
-                                    icon="ti-eye"
-                                    label="View"
-                                    onClick={() => {
-                                      setOpenRowMenu(null);
-                                      onOpenCase(tc, cases);
-                                    }}
-                                  />
-                                  <RowMenuItem
-                                    icon="ti-copy"
-                                    label="Duplicate"
-                                    onClick={() => duplicateCase(tc)}
-                                  />
-                                  <RowMenuItem
-                                    icon="ti-trash"
-                                    label="Delete"
-                                    danger
-                                    onClick={() => deleteCase(tc)}
-                                  />
-                                </div>
+                              <Ico name="check" />
+                            </button>
+                            <span className="cid">{caseCode(tc.caseNum)}</span>
+                            <span className="ctitle">
+                              {tc.title}
+                              {tc.status === 'Draft' && <span className="draft-tag">· draft</span>}
+                            </span>
+                            <span className="cmeta">
+                              {last && (
+                                <span className={cn('pill', resultPillClass(last))}>{last}</span>
                               )}
-                            </td>
-                          </tr>
+                              <span className={cn('pill', statusPillClass(tc.status))}>
+                                {tc.status !== 'Archived' && <span className="dot" />} {tc.status}
+                              </span>
+                              <span className={cn('pill', priorityPillClass(pr.label))}>
+                                {pr.label}
+                              </span>
+                              <span className={cn('pill', typePillClass(ty.label))}>
+                                {ty.label}
+                              </span>
+                              <OwnerAvatar user={tc.owner} />
+                            </span>
+                          </div>
                         );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Footer / pagination */}
-                <div className="mt-3 flex items-center justify-between gap-3 px-1 text-[12px] text-text-3">
-                  <span>
-                    Showing {cases.length} of {total} case{total === 1 ? '' : 's'}
-                    {selected.size > 0 && (
-                      <>
-                        <span className="mx-2 text-text-3">·</span>
-                        <span className="font-medium text-primary">{selected.size} selected</span>
-                      </>
+                      })
                     )}
-                  </span>
-                  <div className="flex items-center gap-3">
-                    {/* Per-page selector */}
-                    <label className="flex items-center gap-1.5">
-                      <span>Per page</span>
-                      <select
-                        value={pageSize}
-                        onChange={e => setPageSize(Number(e.target.value))}
-                        className="rounded border border-border bg-surface px-1.5 py-0.5 text-[12px] text-text outline-none focus:border-primary"
-                      >
-                        {PAGE_SIZE_OPTIONS.map(opt => (
-                          <option key={opt} value={opt}>
-                            {opt === ALL_PAGE_SIZE ? 'All' : opt}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {/* Page chevrons — hidden when everything fits on one page */}
-                    {totalPages > 1 && (
-                      <div className="flex items-center gap-1">
+
+                    <div className="list-foot">
+                      <span>
+                        Showing {cases.length} of {total} case{total === 1 ? '' : 's'} in this
+                        section
+                      </span>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span>Per page</span>
+                          <select
+                            value={pageSize}
+                            onChange={e => setPageSize(Number(e.target.value))}
+                            className="select btn-sm"
+                            style={{ width: 70, padding: '3px 24px 3px 8px' }}
+                          >
+                            {PAGE_SIZE_OPTIONS.map(opt => (
+                              <option key={opt} value={opt}>
+                                {opt === ALL_PAGE_SIZE ? 'All' : opt}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                         <button
                           type="button"
+                          className="icon-btn"
                           onClick={() => setPage(p => Math.max(1, p - 1))}
                           disabled={page === 1}
-                          className="rounded p-1 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                          <i className="ti ti-chevron-left text-[14px]" />
+                          <Ico name="left" />
                         </button>
-                        <span className="px-1">
-                          Page {page} of {totalPages}
+                        <span style={{ padding: '6px 10px', fontSize: 12 }}>
+                          {page} / {totalPages}
                         </span>
                         <button
                           type="button"
+                          className="icon-btn"
                           onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                           disabled={page >= totalPages}
-                          className="rounded p-1 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                          <i className="ti ti-chevron-right text-[14px]" />
+                          <Ico name="right" />
                         </button>
                       </div>
-                    )}
+                    </div>
                   </div>
-                </div>
-              </>
-            )}
-          </section>
+                </>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Copy module / suite dialog */}
       {copyTarget && (
@@ -1711,24 +1779,6 @@ export function TestCaseList({
         />
       )}
 
-      {showNewCase && activeNode && projectId && (
-        <NewTestCaseModal
-          tree={tree}
-          projectId={projectId}
-          initial={{
-            portalId: activeNode.portal.id,
-            moduleId: activeNode.kind !== 'portal' ? activeNode.module.id : undefined,
-            suiteId: activeNode.kind === 'suite' ? activeNode.suite.id : undefined,
-          }}
-          authorName={authorName}
-          onClose={() => setShowNewCase(false)}
-          onCreated={async () => {
-            setShowNewCase(false);
-            await Promise.all([reloadTree(), fetchCases()]);
-          }}
-        />
-      )}
-
       {showBulkMove && (
         <BulkMoveModal
           tree={tree}
@@ -1754,40 +1804,21 @@ export function TestCaseList({
 
 // ─── helpers ─────────────────────────────────────────────────
 
-function Slash() {
-  return <span className="text-text-3">/</span>;
-}
-
-function Chevron({ open }: { open: boolean }) {
-  return (
-    <i
-      className={cn(
-        'ti ti-chevron-right text-[12px] text-text-3 transition-transform',
-        open && 'rotate-90',
-      )}
-    />
-  );
-}
-
-// Every portal shows the same glyph — a per-portal custom icon made the tree
-// look inconsistent between portals rather than helping distinguish them.
-function PortalGlyph() {
-  return <i className="ti ti-app-window text-[14px] text-text-3" />;
-}
-
 // ─── Hierarchy node row ────────────────────────────────────
-// Renders one portal/module/suite line, with hover-revealed action buttons and
+// Renders one portal/module/suite line in the mockup's `.tree-node` style:
+// chevron · folder icon · name · count, with hover-revealed action buttons and
 // an inline rename input when isRenaming is true.
 
 interface NodeRowProps {
-  indent: number; // 0 = portal, 1 = module, 2 = suite
   isActive: boolean;
   isRenaming: boolean;
-  chevron?: React.ReactNode;
+  /** Expand/collapse control. Every node gets a chevron (a suite can always
+   *  take sub-folders), so this is only omitted for non-expandable rows. */
+  toggle?: { open: boolean; onToggle: () => void } | null;
   icon: React.ReactNode;
   label: string;
-  suffix?: React.ReactNode;
-  bold?: boolean;
+  /** Case count shown on the right (hidden on hover to make room for actions). */
+  count?: number | null;
   onLabelClick: () => void;
   actions: React.ReactNode;
   renameDraft: string;
@@ -1800,14 +1831,12 @@ interface NodeRowProps {
 }
 
 function NodeRow({
-  indent,
   isActive,
   isRenaming,
-  chevron,
+  toggle,
   icon,
   label,
-  suffix,
-  bold,
+  count,
   onLabelClick,
   actions,
   renameDraft,
@@ -1816,91 +1845,90 @@ function NodeRow({
   onRenameCancel,
   drag,
 }: NodeRowProps) {
-  const textSize = indent === 2 ? 'text-[12.5px]' : 'text-[13px]';
-  const baseColor = indent === 0 ? 'text-text' : indent === 1 ? 'text-text-2' : 'text-text-2';
   return (
     <div
+      // role="button" instead of <button>: the chevron inside is itself a
+      // <button>, and nesting buttons is invalid HTML.
+      role="button"
+      tabIndex={0}
       draggable={!!drag && !isRenaming}
       onDragStart={drag?.onDragStart}
       onDragOver={drag?.onDragOver}
       onDrop={drag?.onDrop}
       onDragEnd={drag?.onDragEnd}
+      onClick={isRenaming ? undefined : onLabelClick}
+      onKeyDown={e => {
+        if (isRenaming) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onLabelClick();
+        }
+      }}
       className={cn(
-        'group/node flex items-center rounded-md border-t-2 transition-colors',
-        drag?.isDragOver ? 'border-primary' : 'border-transparent',
-        drag && !isRenaming ? 'cursor-grab active:cursor-grabbing' : '',
-        drag?.isDragging ? 'opacity-40' : '',
-        isActive ? 'bg-primary-light' : 'hover:bg-surface-2',
+        'tree-node',
+        toggle?.open && 'open',
+        isActive && 'active',
+        drag?.isDragOver && 'drag-over',
+        drag?.isDragging && 'dragging',
       )}
     >
-      {drag && !isRenaming && (
-        <i
-          className="ti ti-grip-vertical ml-1 flex-shrink-0 cursor-grab text-[13px] text-text-3 opacity-0 transition-opacity active:cursor-grabbing group-hover/node:opacity-100"
-          title="Drag to reorder"
-        />
-      )}
-      {isRenaming ? (
-        <div className="flex flex-1 items-center gap-1.5 px-2 py-0.5">
-          {chevron ?? <span className="inline-block w-3" />}
-          {icon}
-          <input
-            autoFocus
-            value={renameDraft}
-            onChange={e => onRenameChange(e.target.value)}
-            onBlur={onRenameSubmit}
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                onRenameSubmit();
-              }
-              if (e.key === 'Escape') {
-                e.preventDefault();
-                onRenameCancel();
-              }
-            }}
-            className="min-w-0 flex-1 rounded border border-primary bg-surface px-1.5 py-0.5 text-[12.5px] text-text outline-none focus:ring-2 focus:ring-primary-light"
-          />
-        </div>
+      {toggle ? (
+        <button
+          type="button"
+          className="chev"
+          onClick={e => {
+            e.stopPropagation();
+            toggle.onToggle();
+          }}
+          aria-label={toggle.open ? 'Collapse' : 'Expand'}
+        >
+          <Ico name="chevron" />
+        </button>
       ) : (
-        // A plain <button> can't be used here — `chevron` is itself a
-        // <button> for expandable rows, and nesting <button> inside
-        // <button> is invalid HTML that React (correctly) warns about on
-        // hydration. role="button" + a key handler keeps this clickable
-        // and keyboard-accessible without the nesting.
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={onLabelClick}
+        <span className="chev leaf">
+          <Ico name="chevron" />
+        </span>
+      )}
+      <span className="ico">{icon}</span>
+      {isRenaming ? (
+        <input
+          autoFocus
+          className="rename-input"
+          value={renameDraft}
+          onClick={e => e.stopPropagation()}
+          onChange={e => onRenameChange(e.target.value)}
+          onBlur={onRenameSubmit}
           onKeyDown={e => {
-            if (e.key === 'Enter' || e.key === ' ') {
+            e.stopPropagation();
+            if (e.key === 'Enter') {
               e.preventDefault();
-              onLabelClick();
+              onRenameSubmit();
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              onRenameCancel();
             }
           }}
-          className={cn(
-            'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 px-2 py-1 text-left',
-            textSize,
-            bold ? 'font-medium' : '',
-            isActive ? 'font-semibold text-primary-text' : baseColor,
-          )}
-        >
-          {chevron ?? <span className="inline-block w-3" />}
-          {icon}
-          <span className="flex-1 truncate" title={label}>
-            {label}
-          </span>
-          {suffix}
-        </div>
+        />
+      ) : (
+        <span className="label" title={label}>
+          {label}
+        </span>
       )}
-
-      {!isRenaming && (
-        <div className="mr-1 flex items-center opacity-0 transition-opacity group-hover/node:opacity-100">
-          {actions}
-        </div>
-      )}
+      {!isRenaming && count != null && <span className="count">{count}</span>}
+      {!isRenaming && <span className="node-actions">{actions}</span>}
     </div>
   );
 }
+
+// Tabler icon names the call sites already pass, mapped to the mockup's SVGs.
+const NODE_ACTION_ICONS: Record<string, React.ComponentProps<typeof Ico>['name']> = {
+  'ti-plus': 'plus',
+  'ti-pencil': 'pencil',
+  'ti-trash': 'trash',
+  'ti-copy': 'copy',
+  'ti-folder-plus': 'folder-plus',
+};
 
 // Small icon button used inside the hover action area.
 function NodeAction({
@@ -1918,52 +1946,45 @@ function NodeAction({
     <button
       type="button"
       title={title}
+      className={danger ? 'danger' : undefined}
       onClick={e => {
         e.stopPropagation();
         onClick();
       }}
-      className={cn(
-        'rounded p-1 text-text-3 transition-colors',
-        danger ? 'hover:bg-danger-bg hover:text-danger' : 'hover:bg-surface-3 hover:text-text',
-      )}
     >
-      <i className={cn('ti', icon, 'text-[12px]')} />
+      <Ico name={NODE_ACTION_ICONS[icon] ?? 'plus'} />
     </button>
   );
 }
 
 // Inline input row used when creating a new portal / module / suite.
 function InlineRow({
-  indent,
-  icon,
   placeholder,
   draft,
   setDraft,
   onSubmit,
   onCancel,
 }: {
-  indent: number;
-  icon?: string;
   placeholder: string;
   draft: string;
   setDraft: (v: string) => void;
   onSubmit: () => void;
   onCancel: () => void;
 }) {
-  const textSize = indent === 2 ? 'text-[12.5px]' : 'text-[13px]';
   return (
-    <div className="flex items-center gap-1.5 rounded-md bg-primary-light/40 px-2 py-1">
-      <span className="inline-block w-3" />
-      {icon ? (
-        <i className={cn('ti', icon, 'text-[14px] text-primary')} />
-      ) : (
-        <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
-      )}
+    <div className="tree-node active" style={{ cursor: 'default' }}>
+      <span className="chev leaf">
+        <Ico name="chevron" />
+      </span>
+      <span className="ico">
+        <Ico name="folder" />
+      </span>
       <input
         autoFocus
+        className="rename-input"
         value={draft}
-        onChange={e => setDraft(e.target.value)}
         placeholder={placeholder}
+        onChange={e => setDraft(e.target.value)}
         onBlur={onSubmit}
         onKeyDown={e => {
           if (e.key === 'Enter') {
@@ -1975,84 +1996,8 @@ function InlineRow({
             onCancel();
           }
         }}
-        className={cn(
-          'min-w-0 flex-1 rounded border border-primary bg-surface px-1.5 py-0.5 outline-none focus:ring-2 focus:ring-primary-light',
-          textSize,
-        )}
       />
     </div>
-  );
-}
-
-function Th({ children, width }: { children: React.ReactNode; width?: string }) {
-  return (
-    <th
-      style={width ? { width } : undefined}
-      className="border-b border-border px-4 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.04em] text-text-3"
-    >
-      {children}
-    </th>
-  );
-}
-
-function Pill({ children, className }: { children: React.ReactNode; className: string }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium leading-[1.5]',
-        className,
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
-function CheckBox({ checked, onChange }: { checked: boolean; onChange: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onChange}
-      className={cn(
-        'relative inline-block h-3.5 w-3.5 flex-shrink-0 rounded-[4px] border-[1.5px] align-middle transition-all',
-        checked
-          ? 'border-primary bg-primary'
-          : 'border-border-strong bg-surface hover:border-primary',
-      )}
-    >
-      {checked && (
-        <span
-          className="absolute left-[3px] top-[0.5px] h-2 w-1 rotate-45 border-solid border-white"
-          style={{ borderWidth: '0 2px 2px 0' }}
-        />
-      )}
-    </button>
-  );
-}
-
-function RowMenuItem({
-  icon,
-  label,
-  onClick,
-  danger,
-}: {
-  icon: string;
-  label: string;
-  onClick: () => void;
-  danger?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] transition-colors',
-        danger ? 'text-danger hover:bg-danger-bg' : 'text-text hover:bg-surface-2',
-      )}
-    >
-      <i className={cn('ti', icon, 'text-[13px]')} />
-      {label}
-    </button>
   );
 }
 
@@ -2303,59 +2248,47 @@ function BulkEditModal({
 function OwnerAvatar({ user }: { user: UserSummary | null | undefined }) {
   if (!user) {
     return (
-      <span
+      <div
+        className="avatar sm"
         title="Unassigned"
-        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-border-strong text-[10px] text-text-3"
+        style={{
+          background: 'transparent',
+          border: '1px dashed var(--bdr-3)',
+          color: 'var(--t-4)',
+        }}
       >
         —
-      </span>
+      </div>
     );
   }
   const label = user.name || user.username || user.email || '?';
   return (
-    <span
+    <div
+      className="avatar sm"
       title={`${label} (${user.email})`}
-      className={cn(
-        'inline-flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-semibold',
-        avatarColour(user.id),
-      )}
+      style={{ background: avatarGradient(user.id) }}
     >
       {initials(label)}
-    </span>
-  );
-}
-
-function EmptyState({
-  icon,
-  title,
-  body,
-  spin,
-}: {
-  icon: string;
-  title: string;
-  body: string;
-  spin?: boolean;
-}) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border bg-surface py-20 text-text-3">
-      <i className={cn('ti', icon, 'text-[36px] opacity-50', spin && 'animate-spin')} />
-      <p className="text-[14px] font-medium text-text-2">{title}</p>
-      {body && <p className="max-w-[260px] text-center text-[12px]">{body}</p>}
     </div>
   );
 }
 
-// ─── Generic filter chip ─────────────────────────────────────
+// ─── Filter select ───────────────────────────────────────────
+// Looks like the mockup's `<select class="select btn-sm">` but keeps the
+// app's multi-select behaviour (a popover of checkboxes) — a native <select>
+// can only hold one value.
 
-interface FilterChipOption<T extends string> {
+interface FilterOption<T extends string> {
   value: T;
   label: string;
 }
 
-interface FilterChipProps<T extends string> {
+interface FilterSelectProps<T extends string> {
   label: string;
-  icon: string;
-  options: FilterChipOption<T>[];
+  /** Text shown when nothing is selected, e.g. "All statuses". */
+  allLabel: string;
+  width: number;
+  options: FilterOption<T>[];
   selected: Set<T>;
   onToggle: (value: T) => void;
   onClear: () => void;
@@ -2363,67 +2296,79 @@ interface FilterChipProps<T extends string> {
   onOpen: () => void;
 }
 
-function FilterChip<T extends string>({
+function FilterSelect<T extends string>({
   label,
-  icon,
+  allLabel,
+  width,
   options,
   selected,
   onToggle,
   onClear,
   isOpen,
   onOpen,
-}: FilterChipProps<T>) {
+}: FilterSelectProps<T>) {
   const count = selected.size;
-  // Render the single-value selection inline (e.g. "Status: Active") to match the design.
-  const singleLabel =
-    count === 1 ? (options.find(o => o.value === Array.from(selected)[0])?.label ?? null) : null;
+  const text =
+    count === 0
+      ? allLabel
+      : count === 1
+        ? (options.find(o => o.value === Array.from(selected)[0])?.label ?? allLabel)
+        : `${label} · ${count}`;
   return (
-    <div className="relative">
+    <div style={{ position: 'relative' }}>
       <button
         type="button"
+        className="select btn-sm"
         onClick={onOpen}
-        className={cn(
-          'inline-flex items-center gap-1.5 rounded-[7px] border px-2.5 py-1 text-[12px] transition-colors',
-          count > 0
-            ? 'border-primary bg-primary-light font-medium text-primary-text'
-            : 'border-border bg-surface text-text-2 hover:bg-surface-2',
-        )}
+        style={{
+          width,
+          padding: '6px 28px 6px 10px',
+          fontSize: 12,
+          textAlign: 'left',
+          cursor: 'pointer',
+          ...(count > 0 ? { borderColor: 'var(--brand-500)', color: 'var(--brand-800)' } : null),
+        }}
       >
-        <i className={cn('ti', icon, 'text-[13px]')} />
-        {singleLabel ? `${label}: ${singleLabel}` : label}
-        {count > 1 && (
-          <span className="ml-0.5 rounded-full bg-primary px-1.5 py-px font-mono text-[10px] text-white">
-            {count}
-          </span>
-        )}
-        {count > 0 ? (
-          <i
-            role="button"
-            onClick={e => {
-              e.stopPropagation();
-              onClear();
-            }}
-            className="ti ti-x ml-0.5 text-[12px] hover:text-text"
-          />
-        ) : (
-          <i className={cn('ti ti-chevron-down text-[12px]')} />
-        )}
+        {text}
       </button>
-
       {isOpen && (
-        <div className="absolute left-0 top-[calc(100%+4px)] z-30 w-[180px] rounded-lg border border-border bg-surface py-1.5 shadow-[0_4px_24px_-4px_rgba(28,25,23,0.12)]">
+        <div className="fpop">
           {options.map(opt => {
             const checked = selected.has(opt.value);
             return (
-              <label
-                key={opt.value}
-                className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[13px] hover:bg-surface-2"
-              >
-                <CheckBox checked={checked} onChange={() => onToggle(opt.value)} />
-                <span className="text-text">{opt.label}</span>
+              <label key={opt.value}>
+                <button
+                  type="button"
+                  className={cn('cb', checked && 'on')}
+                  onClick={() => onToggle(opt.value)}
+                >
+                  <Ico name="check" />
+                </button>
+                <span>{opt.label}</span>
               </label>
             );
           })}
+          {count > 0 && (
+            <label
+              style={{ borderTop: '1px solid var(--bdr)', marginTop: 4, color: 'var(--brand-700)' }}
+            >
+              <button
+                type="button"
+                onClick={onClear}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'inherit',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  padding: 0,
+                  fontFamily: 'inherit',
+                }}
+              >
+                Clear selection
+              </button>
+            </label>
+          )}
         </div>
       )}
     </div>
