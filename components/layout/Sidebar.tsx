@@ -2,15 +2,19 @@
 
 import { Page } from '@/types';
 import { cn } from '@/lib/utils';
-import { Logo } from '@/components/ui/Logo';
+import { SIco, SIconName } from '@/components/layout/sts-icons';
+import '@/components/features/sts-v3.css';
 
 interface SidebarProps {
   page: Page;
+
+  onShowProjects: () => void;
 
   // QA Workspace nav
   onShowDashboard: () => void;
   onShowTestCases: () => void;
   onShowTestRunsBoard: () => void;
+  onShowQuickLogs: () => void;
   onShowReports: () => void;
 
   // Configuration nav
@@ -22,81 +26,76 @@ interface SidebarProps {
 const TESTCASE_PAGES: Page[] = ['list', 'view', 'edit'];
 // The Execution screen ('cycle') and Cycle Overview always read as Test
 // Runs in the sidebar, regardless of which cycle was opened.
-const TESTRUNS_BOARD_PAGES: Page[] = ['testRuns', 'cycle', 'cycleOverview'];
+const TESTRUNS_BOARD_PAGES: Page[] = ['testRuns', 'newRun', 'cycle', 'cycleOverview'];
 
-// Slim icon-only rail -- everything workspace-identity-related (which
-// project, who's signed in, theme) now lives in the Topbar above; this rail
-// is purely "which page", same split as the reference layout.
+// Icon-only rail from the SimpliEd mockup — "which page"; workspace identity,
+// search and the account live in the Topbar.
 export function Sidebar({
   page,
+  onShowProjects,
   onShowDashboard,
   onShowTestCases,
   onShowTestRunsBoard,
+  onShowQuickLogs,
   onShowReports,
   onShowMembers,
   onShowSettings,
 }: SidebarProps) {
-  const onDashboard = page === 'dashboard';
-  const onTestCases = TESTCASE_PAGES.includes(page);
-  const onTestRunsBoard = TESTRUNS_BOARD_PAGES.includes(page);
-  const onReports = page === 'reports';
-  const onMembers = page === 'members';
-  const onSettings = page === 'settings';
-
   return (
-    <aside className="flex w-[72px] min-w-[72px] flex-col items-center gap-1 border-r border-border bg-surface py-3">
-      <button
-        type="button"
-        onClick={onShowDashboard}
-        title="Simplitest"
-        aria-label="Simplitest — go to Dashboard"
-        className="mb-2 flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-[10px] bg-primary-light transition-colors hover:bg-primary/20"
-      >
-        <Logo size={24} />
-      </button>
-      <div className="mb-1.5 h-px w-8 flex-shrink-0 bg-border" />
+    <div className="stv3 stv3-host">
+      <aside className="sidebar">
+        <SideBtn
+          active={page === 'projects'}
+          onClick={onShowProjects}
+          icon="briefcase"
+          label="Projects"
+        />
+        <SideBtn
+          active={page === 'dashboard'}
+          onClick={onShowDashboard}
+          icon="overview"
+          label="Overview"
+        />
+        <SideBtn
+          active={TESTCASE_PAGES.includes(page)}
+          onClick={onShowTestCases}
+          icon="file"
+          label="Test cases"
+        />
+        <SideBtn
+          active={TESTRUNS_BOARD_PAGES.includes(page)}
+          onClick={onShowTestRunsBoard}
+          icon="play"
+          label="Test runs"
+        />
+        <SideBtn
+          active={page === 'quickLogs'}
+          onClick={onShowQuickLogs}
+          icon="zap"
+          label="Quick logs"
+        />
+        <SideBtn active={page === 'reports'} onClick={onShowReports} icon="chart" label="Reports" />
 
-      <IconNavItem
-        active={onDashboard}
-        onClick={onShowDashboard}
-        icon={<DashboardIcon />}
-        label="Dashboard"
-      />
-      <IconNavItem
-        active={onTestCases}
-        onClick={onShowTestCases}
-        icon={<TestCasesIcon />}
-        label="Test cases"
-      />
-      <IconNavItem
-        active={onTestRunsBoard}
-        onClick={onShowTestRunsBoard}
-        icon={<PlayIcon />}
-        label="Test Runs"
-      />
-      <IconNavItem
-        active={onReports}
-        onClick={onShowReports}
-        icon={<ChartIcon />}
-        label="Analytics"
-      />
+        <div className="side-divider" />
 
-      <div className="my-1.5 h-px w-8 flex-shrink-0 bg-border" />
-
-      <IconNavItem active={onMembers} onClick={onShowMembers} icon={<PeopleIcon />} label="Teams" />
-      <IconNavItem
-        active={onSettings}
-        onClick={onShowSettings}
-        icon={<CogIcon />}
-        label="Settings"
-      />
-    </aside>
+        <SideBtn
+          active={page === 'members' || page === 'roles'}
+          onClick={onShowMembers}
+          icon="users"
+          label="Teams"
+        />
+        <SideBtn
+          active={page === 'settings'}
+          onClick={onShowSettings}
+          icon="settings"
+          label="Settings"
+        />
+      </aside>
+    </div>
   );
 }
 
-// ─── Icon nav item ────────────────────────────────────────────
-
-function IconNavItem({
+function SideBtn({
   active,
   onClick,
   icon,
@@ -104,7 +103,7 @@ function IconNavItem({
 }: {
   active: boolean;
   onClick: () => void;
-  icon: React.ReactNode;
+  icon: SIconName;
   label: string;
 }) {
   return (
@@ -113,78 +112,9 @@ function IconNavItem({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={cn(
-        'group relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-[10px] transition-colors',
-        active
-          ? 'bg-primary-light text-primary-text'
-          : 'text-text-3 hover:bg-surface-2 hover:text-text',
-      )}
+      className={cn('side-btn', active && 'active')}
     >
-      {active && <span className="absolute inset-y-2 left-0 w-[3px] rounded-r-[3px] bg-primary" />}
-      <span className="flex h-[18px] w-[18px] items-center justify-center">{icon}</span>
+      <SIco name={icon} />
     </button>
-  );
-}
-
-// ─── Icons ──────────────────────────────────────────────────
-
-function DashboardIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
-      <rect x="2" y="2" width="5.5" height="5.5" rx="1" />
-      <rect x="8.5" y="2" width="5.5" height="5.5" rx="1" />
-      <rect x="2" y="8.5" width="5.5" height="5.5" rx="1" />
-      <rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1" />
-    </svg>
-  );
-}
-
-function TestCasesIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
-      <rect x="2.5" y="2" width="11" height="12" rx="1.5" />
-      <line x1="5" y1="5.5" x2="11" y2="5.5" strokeLinecap="round" />
-      <line x1="5" y1="8" x2="11" y2="8" strokeLinecap="round" />
-      <line x1="5" y1="10.5" x2="9" y2="10.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function PlayIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
-      <path d="M5 3l7 5-7 5V3z" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-function ChartIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
-      <path d="M3 13V6M7 13V3M11 13V8" strokeLinecap="round" />
-      <line x1="2" y1="13.5" x2="14" y2="13.5" />
-    </svg>
-  );
-}
-
-function PeopleIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
-      <circle cx="6" cy="6" r="2.5" />
-      <circle cx="11.5" cy="6.5" r="1.8" />
-      <path d="M2 13c0-2 2-3.5 4-3.5s4 1.5 4 3.5M10 13c0-1.5 1.5-2.6 3-2.6" />
-    </svg>
-  );
-}
-
-function CogIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
-      <circle cx="8" cy="8" r="2" />
-      <path
-        d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4M12.6 12.6l-1.4-1.4M4.8 4.8L3.4 3.4"
-        strokeLinecap="round"
-      />
-    </svg>
   );
 }

@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Eye, EyeOff, ArrowRight, Sparkles } from 'lucide-react';
-import { Logo } from '@/components/ui/Logo';
 import { api } from '@/lib/client';
 import type { SessionUser } from '@/hooks/useStore';
+import { BrandMark, SIco } from '@/components/layout/sts-icons';
+import './sts-v3.css';
 
 interface LoginPageProps {
   onLogin: (user: SessionUser) => void;
@@ -18,6 +18,15 @@ const ERR_MESSAGES: Record<string, string> = {
   missing_params: 'Sign-in was cancelled.',
   access_denied: 'Sign-in was cancelled.',
 };
+
+// Hero tiles describe what the workspace does (the sign-in screen has no
+// session, so it can't show live numbers the way the mockup's sample data does).
+const TILES = [
+  { label: 'Organize', value: 'Portals', meta: 'modules, suites & cases' },
+  { label: 'Execute', value: 'Test runs', meta: 'cycles and quick logs' },
+  { label: 'Analyze', value: 'Stability', meta: 'pass rate & trends' },
+  { label: 'Integrate', value: 'Jira sync', meta: 'tickets & sub-tasks' },
+];
 
 export function LoginPage({ onLogin }: LoginPageProps) {
   const [mode, setMode] = useState<Mode>('signin');
@@ -79,251 +88,231 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     }
   };
 
-  return (
-    <div className="grid h-screen w-full grid-cols-1 overflow-hidden bg-bg lg:grid-cols-[1fr_440px]">
-      {/* LEFT — form panel */}
-      <div className="flex items-center justify-center overflow-y-auto p-6 sm:p-10">
-        <div className="w-full max-w-[400px] animate-[fadeUp_0.45s_ease-out]">
-          {/* Logo */}
-          <div className="mb-8 flex items-center gap-2.5">
-            <Logo size={32} />
-            <span className="text-[18px] font-semibold tracking-tight text-text">Simplitest</span>
-          </div>
+  const ssoUnavailable = () =>
+    setError('Single sign-on is not enabled for this workspace — use your email and password.');
 
-          <h1 className="mb-2 text-[26px] font-semibold leading-tight tracking-[-0.02em] text-text">
-            {isRegister ? 'Create your workspace' : 'Sign in to your workspace'}
-          </h1>
-          <p className="mb-7 text-[14px] text-text-2">
-            {isRegister
-              ? 'Set up your QA workspace in seconds.'
-              : 'Welcome back. Enter your details to continue.'}
+  return (
+    <div className="stv3 login">
+      <div className="login-left">
+        <div className="ll-brand">
+          <BrandMark />
+          <div className="ll-brand-name">
+            Simpli<em>Ed</em> · STS
+          </div>
+        </div>
+
+        <div className="login-hero">
+          <div className="login-eyebrow">QA Workspace · v2.0</div>
+          <h2>
+            Build, run, and trace
+            <br />
+            every test in <em>one place</em>.
+          </h2>
+          <p>
+            Hierarchical sections, test cycles, dynamic role permissions, a native execution runner
+            and Jira sync — designed for teams that ship.
           </p>
 
-          {/* Form */}
-          <div className="flex flex-col">
-            {isRegister && (
-              <>
-                <FieldLabel>Display name</FieldLabel>
-                <Input
+          <div className="login-tiles">
+            {TILES.map(t => (
+              <div key={t.label} className="login-tile">
+                <div className="lt-label">{t.label}</div>
+                <div className="lt-value">{t.value}</div>
+                <div className="lt-meta">{t.meta}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="login-right">
+        <form
+          className="login-form"
+          onSubmit={e => {
+            e.preventDefault();
+            handleSubmit();
+          }}
+        >
+          <h3>{isRegister ? 'Create your workspace' : 'Welcome back'}</h3>
+          <div className="lf-sub">
+            {isRegister
+              ? 'Set up your SimpliEd QA workspace in seconds.'
+              : 'Sign in to your SimpliEd QA workspace.'}
+          </div>
+
+          {isRegister && (
+            <>
+              <div className="field">
+                <label className="label">Display name</label>
+                <input
+                  className="input"
                   value={name}
-                  onChange={setName}
+                  onChange={e => setName(e.target.value)}
                   placeholder="Your full name"
                   autoComplete="name"
                 />
-                <FieldLabel>Username</FieldLabel>
-                <Input
+              </div>
+              <div className="field">
+                <label className="label">Username</label>
+                <input
+                  className="input"
                   value={username}
-                  onChange={setUsername}
+                  onChange={e => setUsername(e.target.value)}
                   placeholder="yourname"
                   autoComplete="username"
                 />
-              </>
-            )}
+              </div>
+            </>
+          )}
 
-            <FieldLabel>{isRegister ? 'Email' : 'Work email or username'}</FieldLabel>
-            <Input
-              value={isRegister ? email : identifier}
-              onChange={isRegister ? setEmail : setIdentifier}
-              placeholder={isRegister ? 'you@company.com' : 'aisha@school.edu'}
+          <div className="field">
+            <label className="label">{isRegister ? 'Email' : 'Email or username'}</label>
+            <input
+              className="input"
               type={isRegister ? 'email' : 'text'}
+              value={isRegister ? email : identifier}
+              onChange={e =>
+                isRegister ? setEmail(e.target.value) : setIdentifier(e.target.value)
+              }
+              placeholder={isRegister ? 'you@company.com' : 'ayesha.k@simplied.io'}
               autoComplete={isRegister ? 'email' : 'username'}
             />
+          </div>
 
-            <div className="mb-1.5 flex items-center justify-between">
-              <label className="text-[13px] font-medium text-text">Password</label>
+          <div className="field">
+            <label className="label">
+              Password
               {!isRegister && (
                 <button
                   type="button"
-                  className="cursor-help text-[13px] font-medium text-primary transition-colors hover:text-primary-hover"
                   disabled
                   title="Ask your workspace's Super Admin to reset it from Members"
+                  className="lnk"
+                  style={{ marginLeft: 'auto', fontSize: '11.5px' }}
                 >
                   Forgot?
                 </button>
               )}
-            </div>
-            <div className="relative mb-4">
+            </label>
+            <div className="pw-wrap">
               <input
+                className="input"
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••••"
+                placeholder="••••••••••••"
                 autoComplete={isRegister ? 'new-password' : 'current-password'}
-                onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-                className="w-full rounded-lg border border-border bg-surface px-3.5 py-2.5 pr-10 text-sm text-text outline-none transition-all placeholder:text-text-3 focus:border-primary focus:ring-[3px] focus:ring-primary-light"
               />
               <button
                 type="button"
-                onClick={() => setShowPassword(s => !s)}
+                className="pw-eye"
                 tabIndex={-1}
+                onClick={() => setShowPassword(s => !s)}
                 title={showPassword ? 'Hide password' : 'Show password'}
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text"
               >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                <SIco name={showPassword ? 'eye-off' : 'eye'} />
               </button>
             </div>
+          </div>
 
-            {!isRegister && (
-              <label className="mb-5 flex cursor-pointer items-center gap-2 text-[13px] text-text-2">
-                <CheckBox checked={keepSignedIn} onChange={setKeepSignedIn} />
-                Keep me signed in for 30 days
+          {!isRegister && (
+            <div className="login-row">
+              <label>
+                <button
+                  type="button"
+                  className={keepSignedIn ? 'cb on' : 'cb'}
+                  aria-pressed={keepSignedIn}
+                  onClick={() => setKeepSignedIn(v => !v)}
+                >
+                  <svg viewBox="0 0 12 12">
+                    <path d="M2 6L5 9L10 3" />
+                  </svg>
+                </button>{' '}
+                Keep me signed in
               </label>
-            )}
+            </div>
+          )}
 
-            {error && (
-              <div className="mb-3 rounded-lg border border-danger/30 bg-danger-bg px-3 py-2 text-xs text-danger-text">
-                {error}
-              </div>
-            )}
+          {error && <div className="login-error">{error}</div>}
 
-            <button
-              onClick={handleSubmit}
-              disabled={!canSubmit}
-              className="group relative inline-flex w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-br from-[#3F2DAA] via-[#5544C5] to-[#6B5BD8] px-4 py-3 text-[14px] font-semibold text-white shadow-[0_4px_14px_-2px_rgba(63,45,170,0.45)] ring-1 ring-white/15 transition-all hover:shadow-[0_8px_22px_-3px_rgba(63,45,170,0.55)] hover:brightness-[1.05] active:translate-y-px active:brightness-95 disabled:cursor-not-allowed disabled:from-text-3 disabled:via-text-3 disabled:to-text-3 disabled:shadow-none disabled:ring-0"
-            >
-              {/* Subtle moving shine on hover */}
-              <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/25 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
-              <span className="relative">
-                {submitting
-                  ? isRegister
-                    ? 'Creating workspace…'
-                    : 'Signing in…'
-                  : isRegister
-                    ? 'Create workspace'
-                    : 'Sign in'}
-              </span>
-              <ArrowRight className="relative h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+          <button
+            type="submit"
+            className="btn btn-primary btn-block btn-lg"
+            disabled={!canSubmit}
+            style={isRegister ? { marginTop: 18 } : undefined}
+          >
+            {submitting
+              ? isRegister
+                ? 'Creating workspace…'
+                : 'Signing in…'
+              : isRegister
+                ? 'Create workspace'
+                : 'Sign in'}
+            <SIco name="arrow-right" />
+          </button>
+
+          <div className="divider">or continue with</div>
+          <div className="sso-row">
+            <button type="button" className="sso-btn" onClick={ssoUnavailable}>
+              <svg viewBox="0 0 24 24">
+                <path
+                  d="M22 12c0-5.5-4.5-10-10-10S2 6.5 2 12c0 5 3.7 9.1 8.4 9.9V14.9H8V12h2.4V9.8c0-2.4 1.4-3.7 3.6-3.7 1 0 2.1.2 2.1.2v2.3h-1.2c-1.2 0-1.5.7-1.5 1.5V12h2.6l-.4 2.9h-2.2v7c4.7-.8 8.4-4.9 8.4-9.9z"
+                  fill="#1877F2"
+                />
+              </svg>
+              Google
             </button>
+            <button type="button" className="sso-btn" onClick={ssoUnavailable}>
+              <svg viewBox="0 0 24 24">
+                <path
+                  d="M11 11H2V2h9v9zm11 0h-9V2h9v9zM11 22H2v-9h9v9zm11 0h-9v-9h9v9z"
+                  fill="#0078D4"
+                />
+              </svg>
+              Microsoft
+            </button>
+          </div>
 
-            <div className="mt-7 text-center text-[13px] text-text-3">
-              {isRegister ? (
-                <>
-                  Already have an account?{' '}
-                  <button
-                    onClick={() => switchMode('signin')}
-                    className="font-medium text-primary transition-colors hover:text-primary-hover hover:underline"
-                  >
-                    Sign in
-                  </button>
-                </>
-              ) : (
-                <>
-                  New workspace?{' '}
-                  <button
-                    onClick={() => switchMode('register')}
-                    className="font-medium text-primary transition-colors hover:text-primary-hover hover:underline"
-                  >
-                    Create one
-                  </button>
-                </>
-              )}
+          <div className="login-note">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--brand-700)"
+              strokeWidth="2"
+              style={{ flexShrink: 0, marginTop: 1 }}
+            >
+              <path d="M12 2L4 6v6c0 5 3.5 9.5 8 10 4.5-.5 8-5 8-10V6l-8-4z" />
+            </svg>
+            <div>
+              SSO via SAML 2.0 is available on Enterprise plans.{' '}
+              <a href="#" onClick={e => e.preventDefault()}>
+                Contact admin
+              </a>{' '}
+              if your org requires it.
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* RIGHT — brand panel */}
-      <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#3526A0] via-[#5544C5] to-[#6B5BD8] p-10 text-white lg:flex">
-        {/* Decorative blobs */}
-        <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-32 -left-16 h-80 w-80 rounded-full bg-fuchsia-400/20 blur-3xl" />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_30%_120%,rgba(255,255,255,0.15),transparent_50%)]" />
-
-        <div className="relative flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] opacity-90">
-          <Sparkles className="h-3.5 w-3.5" />
-          Simplitest · v1.0
-        </div>
-
-        <div className="relative animate-[fadeUp_0.6s_0.1s_both]">
-          <div className="mb-7 flex flex-col gap-3">
-            <Stat value="Organize" label="by portal, module, and feature" />
-            <Stat value="Track" label="test runs and quick logs together" offset />
-            <Stat value="See" label="stability trends as you go" />
+          <div className="login-switch">
+            {isRegister ? (
+              <>
+                Already have an account?{' '}
+                <button type="button" onClick={() => switchMode('signin')}>
+                  Sign in
+                </button>
+              </>
+            ) : (
+              <>
+                New workspace?{' '}
+                <button type="button" onClick={() => switchMode('register')}>
+                  Create one
+                </button>
+              </>
+            )}
           </div>
-          <div className="text-[20px] font-semibold leading-snug tracking-[-0.01em]">
-            The QA workspace your team will actually enjoy using.
-          </div>
-        </div>
-
-        <div className="relative text-[12px] opacity-70">
-          © {new Date().getFullYear()} Simplitest
-        </div>
+        </form>
       </div>
-
-      {/* Local keyframes — Tailwind utilities reference them */}
-      <style jsx>{`
-        @keyframes fadeUp {
-          from {
-            opacity: 0;
-            transform: translateY(12px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-      `}</style>
     </div>
-  );
-}
-
-// ─── Components ──────────────────────────────────────────────
-
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <label className="mb-1.5 text-[13px] font-medium text-text">{children}</label>;
-}
-
-function Input({
-  value,
-  onChange,
-  placeholder,
-  type = 'text',
-  autoComplete,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  type?: string;
-  autoComplete?: string;
-}) {
-  return (
-    <input
-      type={type}
-      value={value}
-      onChange={e => onChange(e.target.value)}
-      placeholder={placeholder}
-      autoComplete={autoComplete}
-      className="mb-4 w-full rounded-lg border border-border bg-surface px-3.5 py-2.5 text-sm text-text outline-none transition-all placeholder:text-text-3 focus:border-primary focus:ring-[3px] focus:ring-primary-light"
-    />
-  );
-}
-
-function Stat({ value, label, offset }: { value: string; label: string; offset?: boolean }) {
-  return (
-    <div
-      className={`rounded-[10px] border border-white/10 bg-white/[0.13] p-4 backdrop-blur-md transition-all hover:-translate-y-0.5 hover:bg-white/[0.18] ${offset ? 'ml-7' : ''}`}
-    >
-      <div className="text-[20px] font-semibold leading-tight">{value}</div>
-      <div className="mt-1 text-[12px] opacity-85">{label}</div>
-    </div>
-  );
-}
-
-function CheckBox({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className={`relative inline-block h-3.5 w-3.5 flex-shrink-0 rounded-[4px] border-[1.5px] transition-all ${
-        checked ? 'border-primary bg-primary' : 'border-border-strong bg-surface'
-      }`}
-    >
-      {checked && (
-        <span
-          className="absolute left-[3px] top-[0.5px] h-2 w-1 rotate-45 border-solid border-white"
-          style={{ borderWidth: '0 2px 2px 0' }}
-        />
-      )}
-    </button>
   );
 }

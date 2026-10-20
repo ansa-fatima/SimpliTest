@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { colorClassesOf, PALETTE_COLORS } from '@/lib/colors';
+import { SIco } from '@/components/layout/sts-icons';
+import '../sts-v3.css';
 
 export interface ConfigListItem {
   key: string;
@@ -69,80 +71,81 @@ export function ConfigList({
   };
 
   return (
-    <div className="rounded-lg border border-border bg-surface p-4">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <h4 className="text-[13px] font-semibold text-text">{title}</h4>
-          {description && <p className="mt-0.5 text-[11px] text-text-3">{description}</p>}
-        </div>
+    <div className="card">
+      <div className="card-head">
+        <h3>{title}</h3>
         {canEdit && onCreate && (
           <button
             type="button"
+            className="btn btn-secondary btn-sm"
             onClick={() => setShowAdd(v => !v)}
-            className="inline-flex flex-shrink-0 items-center gap-1 rounded-[7px] border border-border bg-surface px-2.5 py-1 text-[11.5px] font-medium text-text hover:bg-surface-2"
           >
-            <i className="ti ti-plus text-[13px]" />
-            Add
+            <SIco name="plus" /> Add
           </button>
         )}
       </div>
+      <div className="card-pad">
+        {description && (
+          <p style={{ fontSize: 12, color: 'var(--t-3)', margin: '0 0 12px' }}>{description}</p>
+        )}
 
-      {showAdd && onCreate && (
-        <AddItemForm
-          showColor={showColor}
-          countsAsOptions={countsAsOptions}
-          onCreate={async input => {
-            await onCreate(input);
-            setShowAdd(false);
-          }}
-          onCancel={() => setShowAdd(false)}
-        />
-      )}
+        {showAdd && onCreate && (
+          <AddItemForm
+            showColor={showColor}
+            countsAsOptions={countsAsOptions}
+            onCreate={async input => {
+              await onCreate(input);
+              setShowAdd(false);
+            }}
+            onCancel={() => setShowAdd(false)}
+          />
+        )}
 
-      {error && (
-        <div className="mb-2 rounded border border-danger/30 bg-danger-bg px-3 py-2 text-[12px] text-danger-text">
-          {error}
-        </div>
-      )}
+        {error && (
+          <div className="login-error" style={{ marginBottom: 10 }}>
+            {error}
+          </div>
+        )}
 
-      {loading ? (
-        <p className="text-[12px] text-text-3">Loading…</p>
-      ) : items.length === 0 ? (
-        <p className="text-[12px] text-text-3">{emptyLabel}</p>
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          {items.map(item => {
-            const classes = colorClassesOf(item.color);
-            return (
-              <span
-                key={item.key}
-                className={cn(
-                  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium ring-1',
-                  classes.pill,
-                )}
-              >
-                {showColor && <span className={cn('h-1.5 w-1.5 rounded-full', classes.dot)} />}
-                {item.name}
-                {canEdit && (
-                  <button
-                    type="button"
-                    disabled={deletingKey === item.key}
-                    onClick={() => deleteItem(item.key, item.name)}
-                    title={`Delete "${item.name}"`}
-                    className="ml-0.5 rounded p-0.5 hover:bg-black/10"
-                  >
-                    {deletingKey === item.key ? (
-                      <i className="ti ti-loader-2 animate-spin text-[10px]" />
-                    ) : (
-                      <i className="ti ti-x text-[10px]" />
-                    )}
-                  </button>
-                )}
-              </span>
-            );
-          })}
-        </div>
-      )}
+        {loading ? (
+          <p style={{ fontSize: 12, color: 'var(--t-3)', margin: 0 }}>Loading…</p>
+        ) : items.length === 0 ? (
+          <p style={{ fontSize: 12, color: 'var(--t-3)', margin: 0 }}>{emptyLabel}</p>
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {items.map(item => {
+              const classes = colorClassesOf(item.color);
+              return (
+                <span
+                  key={item.key}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium ring-1',
+                    classes.pill,
+                  )}
+                >
+                  {showColor && <span className={cn('h-1.5 w-1.5 rounded-full', classes.dot)} />}
+                  {item.name}
+                  {canEdit && (
+                    <button
+                      type="button"
+                      disabled={deletingKey === item.key}
+                      onClick={() => deleteItem(item.key, item.name)}
+                      title={`Delete "${item.name}"`}
+                      className="ml-0.5 rounded p-0.5 hover:bg-black/10"
+                    >
+                      {deletingKey === item.key ? (
+                        <i className="ti ti-loader-2 animate-spin text-[10px]" />
+                      ) : (
+                        <i className="ti ti-x text-[10px]" />
+                      )}
+                    </button>
+                  )}
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -180,26 +183,38 @@ function AddItemForm({
   };
 
   return (
-    <div className="mb-3 flex flex-wrap items-end gap-2 rounded-md border border-border bg-surface-2/40 p-2.5">
-      <div className="min-w-[140px] flex-1">
-        <input
-          autoFocus
-          value={name}
-          onChange={e => setName(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') submit();
-            if (e.key === 'Escape') onCancel();
-          }}
-          placeholder="Name"
-          maxLength={40}
-          className="w-full rounded border border-border bg-surface px-2.5 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
-        />
-      </div>
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 8,
+        padding: 10,
+        marginBottom: 12,
+        background: 'var(--brand-50)',
+        border: '1px solid var(--brand-bdr)',
+        borderRadius: 'var(--r)',
+      }}
+    >
+      <input
+        autoFocus
+        className="input"
+        style={{ flex: 1, minWidth: 140, width: 'auto' }}
+        value={name}
+        onChange={e => setName(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') submit();
+          if (e.key === 'Escape') onCancel();
+        }}
+        placeholder="Name"
+        maxLength={40}
+      />
       {showColor && (
         <select
+          className="select"
+          style={{ width: 'auto' }}
           value={color}
           onChange={e => setColor(e.target.value)}
-          className="rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
         >
           {PALETTE_COLORS.map(c => (
             <option key={c} value={c}>
@@ -210,9 +225,10 @@ function AddItemForm({
       )}
       {countsAsOptions && (
         <select
+          className="select"
+          style={{ width: 'auto' }}
           value={countsAs}
           onChange={e => setCountsAs(e.target.value)}
-          className="rounded border border-border bg-surface px-2 py-1.5 text-[12.5px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light"
         >
           {countsAsOptions.map(o => (
             <option key={o.value} value={o.value}>
@@ -221,25 +237,20 @@ function AddItemForm({
           ))}
         </select>
       )}
-      <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-[7px] border border-border bg-surface px-2.5 py-1.5 text-[12px] font-medium text-text-3 hover:bg-surface-2"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          disabled={!name.trim() || busy}
-          onClick={submit}
-          className="inline-flex items-center gap-1 rounded-[7px] bg-primary px-2.5 py-1.5 text-[12px] font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {busy && <i className="ti ti-loader-2 animate-spin text-[12px]" />}
-          Create
-        </button>
-      </div>
-      {err && <p className="w-full text-[11.5px] text-danger-text">{err}</p>}
+      <button type="button" className="btn btn-ghost" onClick={onCancel}>
+        Cancel
+      </button>
+      <button
+        type="button"
+        className="btn btn-primary"
+        disabled={!name.trim() || busy}
+        onClick={submit}
+      >
+        {busy ? 'Creating…' : 'Create'}
+      </button>
+      {err && (
+        <p style={{ width: '100%', margin: 0, fontSize: 11.5, color: 'var(--err)' }}>{err}</p>
+      )}
     </div>
   );
 }

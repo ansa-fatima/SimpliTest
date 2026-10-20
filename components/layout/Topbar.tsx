@@ -1,14 +1,18 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ApiTestCase, Project } from '@/types';
-import { avatarColour, cn, relativeTime } from '@/lib/utils';
+import { ApiTestCase, Page, Project } from '@/types';
+import { cn, relativeTime } from '@/lib/utils';
 import { api } from '@/lib/client';
 import { SessionUser } from '@/hooks/useStore';
 import { useTheme } from '@/lib/theme';
+import { BrandMark, SIco } from '@/components/layout/sts-icons';
+import { projectGradient } from '@/lib/projectIdentity';
+import '@/components/features/sts-v3.css';
 
 interface TopbarProps {
   user: SessionUser | null;
+  page: Page;
 
   // Workspace switcher (kept as "project" in the DB).
   projects: Project[];
@@ -16,45 +20,93 @@ interface TopbarProps {
   onSwitchProject: (id: string) => void;
   onCreateProject: (name: string) => void;
   onDeleteProject: (id: string) => void;
+  onShowProjects: () => void;
+  onShowDashboard: () => void;
 
   onOpenCase: (apiCase: ApiTestCase, apiList: ApiTestCase[]) => void;
   onShowProfile: () => void;
   onLogout: () => void;
 }
 
-// Slim utility bar -- brand identity lives in the icon rail's logo mark, so
-// this bar leads with the workspace switcher (where am I) plus quick
-// actions: jump to a case, check recent activity, switch theme, manage
-// account.
+// Purple application bar from the SimpliEd mockup: brand, section name,
+// workspace switcher, global case search, then theme / activity / account.
 export function Topbar({
   user,
+  page,
   projects,
   currentProjectId,
   onSwitchProject,
   onCreateProject,
   onDeleteProject,
+  onShowProjects,
+  onShowDashboard,
   onOpenCase,
   onShowProfile,
   onLogout,
 }: TopbarProps) {
+  const onProjects = page === 'projects';
+  const sectionLabel = onProjects
+    ? 'Testcase System'
+    : page === 'testRuns' || page === 'newRun'
+      ? 'Test runs'
+      : page === 'roles'
+        ? 'Admin · Roles'
+        : page === 'quickLogs'
+          ? 'Quick logs'
+          : page === 'cycleOverview'
+            ? 'Test run'
+            : page === 'cycle'
+              ? 'Execution'
+              : 'Project';
   return (
-    <header className="flex h-14 flex-shrink-0 items-center gap-4 border-b border-border bg-surface px-4">
-      <ProjectSwitcher
-        projects={projects}
-        current={projects.find(p => p.id === currentProjectId) ?? null}
-        onSwitch={onSwitchProject}
-        onCreate={onCreateProject}
-        onDelete={onDeleteProject}
-      />
+    <div className="stv3 stv3-host">
+      <header className="topbar">
+        <button type="button" className="brand" onClick={onShowDashboard} title="SimpliEd">
+          <BrandMark />
+          <div className="brand-name">
+            Simpli<em>Ed</em>
+          </div>
+        </button>
+        <button type="button" className="app-launcher" title="Workspaces" onClick={onShowProjects}>
+          <SIco name="launcher" />
+        </button>
+        <div className="section-name">
+          <SIco
+            name={
+              onProjects
+                ? 'todo'
+                : page === 'testRuns' ||
+                    page === 'newRun' ||
+                    page === 'cycle' ||
+                    page === 'cycleOverview'
+                  ? 'play'
+                  : page === 'quickLogs'
+                    ? 'zap'
+                    : 'briefcase'
+            }
+          />
+          {sectionLabel}
+        </div>
 
-      <CaseSearch projectId={currentProjectId} onOpenCase={onOpenCase} />
+        <ProjectSwitcher
+          projects={projects}
+          current={projects.find(p => p.id === currentProjectId) ?? null}
+          allProjects={onProjects}
+          onSwitch={onSwitchProject}
+          onCreate={onCreateProject}
+          onDelete={onDeleteProject}
+          onShowProjects={onShowProjects}
+        />
 
-      <div className="ml-auto flex flex-shrink-0 items-center gap-2">
-        <ThemeToggleButton />
-        <NotificationBell projectId={currentProjectId} />
-        {user && <UserChip user={user} onLogout={onLogout} onShowProfile={onShowProfile} />}
-      </div>
-    </header>
+        <CaseSearch projectId={currentProjectId} onOpenCase={onOpenCase} />
+
+        <div className="topbar-actions">
+          <ThemeToggleButton />
+          <NotificationBell projectId={currentProjectId} />
+          {user && <UserChip user={user} onLogout={onLogout} onShowProfile={onShowProfile} />}
+        </div>
+      </header>
+    </div>
   );
 }
 
@@ -72,6 +124,7 @@ function CaseSearch({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -81,6 +134,18 @@ function CaseSearch({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
+
+  // ⌘K / Ctrl+K jumps to the search box, as the kbd hint promises.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     const q = query.trim();
@@ -113,23 +178,24 @@ function CaseSearch({
   }, [query, projectId]);
 
   return (
-    <div ref={ref} className="relative w-full max-w-[320px]">
-      <i className="ti ti-search pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-text-3" />
+    <div ref={ref} className="topbar-search">
+      <SIco name="search" />
       <input
+        ref={inputRef}
         value={query}
         onChange={e => setQuery(e.target.value)}
         onFocus={() => results.length > 0 && setOpen(true)}
         onKeyDown={e => e.key === 'Escape' && setOpen(false)}
         placeholder="Search test cases…"
-        className="w-full rounded-full border border-border bg-surface-2 py-1.5 pl-8 pr-3 text-[12.5px] text-text outline-none transition-colors placeholder:text-text-3 focus:border-primary focus:bg-surface"
       />
+      <span className="kbd">⌘K</span>
 
       {open && query.trim() && (
-        <div className="absolute left-0 top-[calc(100%+6px)] z-30 w-[340px] overflow-hidden rounded-lg border border-border bg-surface py-1 text-text shadow-lg">
+        <div className="tb-menu left tb-results">
           {loading ? (
-            <p className="px-3 py-2 text-xs text-text-3">Searching…</p>
+            <p className="tb-menu-label">Searching…</p>
           ) : results.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-text-3">
+            <p className="tb-menu-label" style={{ textTransform: 'none', letterSpacing: 0 }}>
               No test cases match &quot;{query.trim()}&quot;
             </p>
           ) : (
@@ -137,17 +203,17 @@ function CaseSearch({
               <button
                 key={r.id}
                 type="button"
+                className="tb-menu-item"
                 onClick={() => {
                   onOpenCase(r, [r]);
                   setOpen(false);
                   setQuery('');
                 }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] transition-colors hover:bg-surface-2"
               >
-                <span className="flex-shrink-0 font-mono text-[11px] text-text-3">
-                  TC-{String(r.caseNum).padStart(3, '0')}
+                <span style={{ fontFamily: 'var(--f-mono)', fontSize: 11, color: 'var(--t-3)' }}>
+                  C-{String(r.caseNum).padStart(4, '0')}
                 </span>
-                <span className="min-w-0 flex-1 truncate">{r.title}</span>
+                <span className="grow">{r.title}</span>
               </button>
             ))
           )}
@@ -196,64 +262,74 @@ function NotificationBell({ projectId }: { projectId: string | null }) {
     }
   };
 
+  const plain = { textTransform: 'none', letterSpacing: 0 } as const;
+
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} style={{ position: 'relative' }}>
       <button
         type="button"
+        className="tb-icon-btn"
         onClick={toggle}
         aria-label="Recent activity"
         title="Recent activity"
-        className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-border text-text-2 transition-colors hover:bg-surface-2"
       >
-        <i className="ti ti-bell text-[15px]" />
+        <span className="dot" />
+        <SIco name="bell" />
       </button>
 
       {open && (
-        <div className="absolute right-0 top-[calc(100%+6px)] z-30 w-[300px] rounded-lg border border-border bg-surface py-1 text-text shadow-lg">
-          <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-3">
-            Recent activity
-          </p>
-          <div className="max-h-[320px] overflow-auto">
+        <div className="tb-menu right" style={{ width: 320 }}>
+          <p className="tb-menu-label">Recent activity</p>
+          <div style={{ maxHeight: 320, overflow: 'auto' }}>
             {loading ? (
-              <p className="px-3 py-3 text-xs text-text-3">Loading…</p>
+              <p className="tb-menu-label" style={plain}>
+                Loading…
+              </p>
             ) : !events || events.length === 0 ? (
-              <p className="px-3 py-3 text-xs text-text-3">No recent activity</p>
+              <p className="tb-menu-label" style={plain}>
+                No recent activity
+              </p>
             ) : (
               events.slice(0, 8).map((e, i) => (
-                <div key={i} className="flex items-start gap-2 px-3 py-1.5">
-                  <span
-                    className={cn(
-                      'mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[8px] font-bold',
-                      avatarColour(e.actor),
-                    )}
-                  >
-                    {e.actor.slice(0, 1).toUpperCase()}
-                  </span>
-                  <div className="min-w-0 flex-1 text-[11.5px] leading-snug text-text-2">
-                    <b className="font-semibold text-text">{e.actor}</b>{' '}
-                    {e.kind === 'run' ? (
-                      <>
-                        marked <span className="font-mono text-[11px]">{e.caseLabel}</span> as{' '}
-                        <span
-                          className={
+                <div
+                  key={i}
+                  style={{
+                    padding: '7px 10px',
+                    fontSize: 12.5,
+                    color: 'var(--t-2)',
+                    lineHeight: 1.4,
+                  }}
+                >
+                  <b style={{ color: 'var(--t-1)', fontWeight: 600 }}>{e.actor}</b>{' '}
+                  {e.kind === 'run' ? (
+                    <>
+                      marked{' '}
+                      <span style={{ fontFamily: 'var(--f-mono)', fontSize: 11.5 }}>
+                        {e.caseLabel}
+                      </span>{' '}
+                      as{' '}
+                      <b
+                        style={{
+                          color:
                             e.result === 'Passed'
-                              ? 'font-semibold text-success'
+                              ? 'var(--ok)'
                               : e.result === 'Failed'
-                                ? 'font-semibold text-danger'
-                                : 'font-semibold text-warning'
-                          }
-                        >
-                          {e.result}
-                        </span>{' '}
-                        in {e.cycleName}
-                      </>
-                    ) : (
-                      <>
-                        logged a quick log against{' '}
-                        <span className="font-medium text-text">{e.scopeName}</span>
-                      </>
-                    )}
-                    <div className="mt-0.5 text-[10.5px] text-text-3">{relativeTime(e.ts)}</div>
+                                ? 'var(--err)'
+                                : 'var(--warn)',
+                        }}
+                      >
+                        {e.result}
+                      </b>{' '}
+                      in {e.cycleName}
+                    </>
+                  ) : (
+                    <>
+                      logged a quick log against{' '}
+                      <b style={{ color: 'var(--t-1)', fontWeight: 500 }}>{e.scopeName}</b>
+                    </>
+                  )}
+                  <div style={{ fontSize: 11, color: 'var(--t-4)', marginTop: 2 }}>
+                    {relativeTime(e.ts)}
                   </div>
                 </div>
               ))
@@ -270,17 +346,21 @@ function NotificationBell({ projectId }: { projectId: string | null }) {
 interface ProjectSwitcherProps {
   projects: Project[];
   current: Project | null;
+  allProjects: boolean;
   onSwitch: (id: string) => void;
   onCreate: (name: string) => void;
   onDelete: (id: string) => void;
+  onShowProjects: () => void;
 }
 
 function ProjectSwitcher({
   projects,
   current,
+  allProjects,
   onSwitch,
   onCreate,
   onDelete,
+  onShowProjects,
 }: ProjectSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -304,63 +384,49 @@ function ProjectSwitcher({
   };
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        className="flex max-w-[180px] cursor-pointer items-center gap-2 rounded-full border border-border bg-surface-2 py-1.5 pl-2 pr-3 text-left text-text transition-colors hover:bg-surface-3"
-      >
-        <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded bg-primary-light text-[9px] font-bold uppercase text-primary-text">
-          {workspaceInitials(current?.name)}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">
-          {current?.name ?? 'No workspace'}
-        </span>
-        <svg
-          className="h-3 w-3 flex-shrink-0 text-text-3"
-          viewBox="0 0 12 12"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.5}
+    <div ref={ref} style={{ position: 'relative', zIndex: 5 }}>
+      <button type="button" className="project-switcher" onClick={() => setOpen(o => !o)}>
+        <div
+          className="ps-icon"
+          style={
+            allProjects || !current
+              ? undefined
+              : { background: projectGradient(current), color: '#fff' }
+          }
         >
-          <path d="M3 4.5l3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+          {allProjects || !current ? 'QA' : current.name.trim().charAt(0).toUpperCase()}
+        </div>
+        <div className="ps-name">
+          {allProjects ? 'All projects' : (current?.name ?? 'No workspace')}
+        </div>
+        <span className="ps-chev">▾</span>
       </button>
 
       {open && (
-        <div className="absolute left-0 top-[calc(100%+6px)] z-30 w-[240px] overflow-auto rounded-lg border border-border bg-surface py-1 text-text shadow-lg">
-          <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-text-3">
-            Switch workspace
-          </p>
-          <div className="max-h-[240px] overflow-auto">
+        <div className="tb-menu left" style={{ width: 280, marginLeft: 8 }}>
+          <p className="tb-menu-label">Switch workspace</p>
+          <div style={{ maxHeight: 260, overflow: 'auto' }}>
             {projects.map(p => (
-              <div
-                key={p.id}
-                className={cn(
-                  'group/pr flex items-center gap-1 px-1 py-0.5',
-                  p.id === current?.id && 'bg-primary-light',
-                )}
-              >
+              <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                 <button
                   type="button"
+                  className={cn('tb-menu-item', !allProjects && p.id === current?.id && 'on')}
                   onClick={() => {
                     onSwitch(p.id);
                     setOpen(false);
                   }}
-                  className={cn(
-                    'flex flex-1 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors',
-                    p.id === current?.id
-                      ? 'font-semibold text-primary-text'
-                      : 'text-text-2 hover:bg-surface-2',
-                  )}
                 >
-                  <span className="w-3 text-primary-text">{p.id === current?.id ? '✓' : ''}</span>
-                  <span className="flex-1 truncate text-left">{p.name}</span>
+                  <span style={{ width: 12 }}>
+                    {!allProjects && p.id === current?.id ? '✓' : ''}
+                  </span>
+                  <span className="grow">{p.name}</span>
                 </button>
                 {projects.length > 1 && (
                   <button
                     type="button"
                     title="Delete workspace"
+                    className="tb-menu-item danger"
+                    style={{ width: 'auto', padding: '7px 8px' }}
                     onClick={() => {
                       if (
                         confirm(
@@ -371,29 +437,39 @@ function ProjectSwitcher({
                         setOpen(false);
                       }
                     }}
-                    className="mr-1 cursor-pointer rounded p-1 text-text-3 opacity-0 transition-all hover:bg-danger-bg hover:text-danger group-hover/pr:opacity-100"
                   >
                     <svg
-                      className="h-3 w-3"
-                      viewBox="0 0 16 16"
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"
-                      strokeWidth={1.5}
+                      strokeWidth="2"
                     >
-                      <path d="M2 4h12M5 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1M10 8v5M6 8v5M3 4l1 9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-9" />
+                      <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
                     </svg>
                   </button>
                 )}
               </div>
             ))}
           </div>
-
-          <hr className="my-1 border-border" />
-
+          <hr />
+          <button
+            type="button"
+            className="tb-menu-item"
+            onClick={() => {
+              onShowProjects();
+              setOpen(false);
+            }}
+          >
+            <SIco name="grid" size={14} />
+            <span className="grow">All projects</span>
+          </button>
           {creating ? (
-            <div className="px-2 py-1">
+            <div style={{ padding: 4 }}>
               <input
                 autoFocus
+                className="tb-input"
                 value={draft}
                 onChange={e => setDraft(e.target.value)}
                 onKeyDown={e => {
@@ -405,19 +481,20 @@ function ProjectSwitcher({
                 }}
                 onBlur={submit}
                 placeholder="Workspace name…"
-                className="w-full rounded border border-primary bg-surface px-2 py-1 text-xs text-text outline-none focus:ring-2 focus:ring-primary-light"
               />
             </div>
           ) : (
             <button
               type="button"
+              className="tb-menu-item"
+              style={{ color: 'var(--brand-700)' }}
               onClick={() => {
                 setCreating(true);
                 setDraft('');
               }}
-              className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-xs text-primary-text hover:bg-primary-light"
             >
-              <span className="text-sm">+</span> New workspace
+              <SIco name="plus" size={14} />
+              <span className="grow">New workspace</span>
             </button>
           )}
         </div>
@@ -434,12 +511,12 @@ function ThemeToggleButton() {
   return (
     <button
       type="button"
+      className="tb-icon-btn"
       onClick={toggle}
       aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
       title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
-      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-border text-text-2 transition-colors hover:bg-surface-2"
     >
-      <i className={cn('ti text-[15px]', isDark ? 'ti-moon' : 'ti-sun')} />
+      <SIco name={isDark ? 'moon' : 'sun'} />
     </button>
   );
 }
@@ -467,160 +544,65 @@ function UserChip({
     return () => document.removeEventListener('mousedown', h);
   }, [menuOpen]);
 
+  const display = user.name || user.username;
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} style={{ position: 'relative' }}>
       <button
         type="button"
+        className="user-chip"
         onClick={() => setMenuOpen(o => !o)}
-        className="flex flex-shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface-2 py-1 pl-1 pr-3 text-text transition-colors hover:bg-surface-3"
+        title={display}
       >
-        {user.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={user.avatarUrl}
-            alt={user.name || user.username}
-            className="h-7 w-7 flex-shrink-0 rounded-full object-cover"
-          />
-        ) : (
-          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-primary-light text-[10.5px] font-bold text-primary-text">
-            {initials(user.name || user.username)}
-          </span>
-        )}
-        <span className="max-w-[110px] truncate text-[12.5px] font-medium">
-          {user.name || user.username}
-        </span>
+        <div className="avatar">
+          {user.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={user.avatarUrl} alt={display} />
+          ) : (
+            initials(display)
+          )}
+        </div>
+        <span className="uname">{display.split(/\s+/)[0]}</span>
       </button>
 
       {menuOpen && (
-        <div className="absolute right-0 top-[calc(100%+6px)] z-30 w-[220px] rounded-lg border border-border bg-surface py-1 text-text shadow-lg">
-          <MenuRow icon={<PersonIcon />} label={user.email} subtle />
-          <hr className="my-1 border-border" />
-          <MenuRow
-            icon={<PersonIcon />}
-            label="Your profile"
+        <div className="tb-menu right" style={{ width: 230 }}>
+          <button type="button" className="tb-menu-item" disabled>
+            <SIco name="user" size={14} />
+            <span className="grow">{user.email}</span>
+          </button>
+          <hr />
+          <button
+            type="button"
+            className="tb-menu-item"
             onClick={() => {
               setMenuOpen(false);
               onShowProfile();
             }}
-          />
-          <MenuRow
-            icon={
-              <svg
-                className="h-3.5 w-3.5"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  d="M8 1v6m0 0l-3-2m3 2l3-2M2 11l6 4 6-4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            }
-            label="Keyboard shortcuts"
-            comingSoon
-          />
-          <hr className="my-1 border-border" />
-          <MenuRow
-            icon={
-              <svg
-                className="h-3.5 w-3.5"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3M11 11l3-3-3-3M14 8H6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            }
-            label="Sign out"
-            danger
+          >
+            <SIco name="user" size={14} />
+            <span className="grow">Your profile</span>
+          </button>
+          <hr />
+          <button
+            type="button"
+            className="tb-menu-item danger"
             onClick={() => {
               setMenuOpen(false);
               onLogout();
             }}
-          />
+          >
+            <SIco name="logout" size={14} />
+            <span className="grow">Sign out</span>
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-function PersonIcon() {
-  return (
-    <svg
-      className="h-3.5 w-3.5"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <circle cx="8" cy="5.5" r="2.5" />
-      <path d="M3 13c0-2.5 2.5-4.5 5-4.5s5 2 5 4.5" />
-    </svg>
-  );
-}
-
-function MenuRow({
-  icon,
-  label,
-  onClick,
-  danger,
-  subtle,
-  comingSoon,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  onClick?: () => void;
-  danger?: boolean;
-  subtle?: boolean;
-  comingSoon?: boolean;
-}) {
-  const disabled = subtle || comingSoon;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={comingSoon ? 'Coming soon' : undefined}
-      className={cn(
-        'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] transition-colors',
-        disabled && 'cursor-default',
-        subtle && 'text-text-3',
-        comingSoon && !subtle && 'text-text-3',
-        danger && 'text-danger hover:bg-danger-bg',
-        !disabled && !danger && 'text-text-2 hover:bg-surface-2',
-      )}
-    >
-      <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">{icon}</span>
-      <span className="flex-1 truncate">{label}</span>
-      {comingSoon && (
-        <span className="rounded bg-surface-3 px-1.5 py-px text-[9px] font-normal uppercase tracking-wider text-text-3">
-          soon
-        </span>
-      )}
-    </button>
-  );
-}
-
-// ─── tiny helpers ───────────────────────────────────────────
-
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '?';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-function workspaceInitials(name?: string): string {
-  if (!name) return '?';
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
 }

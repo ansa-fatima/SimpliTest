@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/client';
 import { ActivityEvent } from '@/lib/activity';
-import { avatarColour, cn, initials, relativeTime } from '@/lib/utils';
-import { ActivityFeed } from './ActivityFeed';
+import { cn, initials, relativeTime } from '@/lib/utils';
+import { avatarGradient } from '@/components/features/tc-helpers';
+import { SIco } from '@/components/layout/sts-icons';
+import './sts-v3.css';
 
 interface RecentCycle {
   id: string;
@@ -70,7 +72,9 @@ interface DashboardProps {
   onOpenCycle?: (id: string) => void;
   onShowReports?: () => void;
   onShowStabilityReport?: () => void;
+  onShowProjects?: () => void;
   projectId: string | null;
+  projectName?: string;
   userName?: string | null;
 }
 
@@ -79,7 +83,9 @@ export function Dashboard({
   onOpenCycle,
   onShowReports,
   onShowStabilityReport,
+  onShowProjects,
   projectId,
+  projectName,
   userName,
 }: DashboardProps) {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -103,365 +109,778 @@ export function Dashboard({
   }, [projectId]);
 
   if (loading) {
-    return (
-      <div className="flex flex-1 items-center justify-center bg-bg text-sm text-text-3">
-        Loading dashboard…
-      </div>
-    );
+    return <div className="stv3 state-note">Loading overview…</div>;
   }
   if (error || !data) {
     return (
-      <div className="flex flex-1 items-center justify-center bg-bg text-sm text-danger">
+      <div className="stv3 state-note" style={{ color: 'var(--err)' }}>
         {error || 'Failed to load'}
       </div>
     );
   }
 
-  const greeting =
-    new Date().getHours() < 12
-      ? 'Good morning'
-      : new Date().getHours() < 18
-        ? 'Good afternoon'
-        : 'Good evening';
   const activeRunsCount = data.recentCycles.filter(c => c.status === 'Active').length;
   // Most-recent Active cycle, if any — recentCycles is already newest-first.
   // Quick logs are never Active (they're Completed the instant they're
   // logged), so this only ever surfaces a CaseBased run.
   const activeCycle = data.recentCycles.find(c => c.status === 'Active') ?? null;
 
-  const failRate30d =
-    data.runs30d.total > 0 ? Math.round((data.failed30d.total / data.runs30d.total) * 100) : 0;
-  const blockRate30d =
-    data.runs30d.total > 0 ? Math.round((data.blocked30d.total / data.runs30d.total) * 100) : 0;
-
-  // Sparkline series for the stat cards -- the same 8-week buckets that
-  // feed Execution trend below, so a card's mini chart can never disagree
-  // with the full chart it's a preview of.
-  const failedSeries = data.weeklyRuns.map(w => w.fail);
-  const passRateSeries = data.weeklyRuns.map(w => {
-    const total = w.pass + w.fail + w.blocked;
-    return total === 0 ? 0 : Math.round((w.pass / total) * 100);
-  });
+  const verdicts = data.passed30d.total + data.failed30d.total + data.blocked30d.total;
+  const rate = (n: number) => (verdicts > 0 ? ((n / verdicts) * 100).toFixed(1) : '0.0');
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-44 py-6">
-        <div className="mb-5">
-          <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
-            Dashboard
-          </h1>
-          <p className="text-[13px] text-text-2">
-            Simplitest — Test Management Platform · what&apos;s going on right now.
-          </p>
-        </div>
+    <div className="stv3 main-scroll">
+      <div className="breadcrumb">
+        <button type="button" className="crumb btn-link" onClick={onShowProjects}>
+          Projects
+        </button>
+        <span className="sep">/</span>
+        <span className="crumb">{projectName || 'Project'}</span>
+        <span className="sep">/</span>
+        <span className="current">Overview</span>
+      </div>
 
-        <GreetingBanner
-          greeting={greeting}
-          userName={userName}
-          activeCount={activeRunsCount}
-          openFailuresTotal={data.openFailures.total}
-          onShowTestRuns={onShowTestRuns}
+      <GreetingBanner
+        userName={userName}
+        activeCount={activeRunsCount}
+        openFailures={data.openFailures.total}
+        critical={data.criticalIssues}
+        onShowTestRuns={onShowTestRuns}
+      />
+
+      <div className="stat-grid">
+        <Stat
+          tone="ok"
+          icon="pass"
+          label="Passed · 30d"
+          value={data.passed30d.total}
+          trend={data.passed30d.pctChange}
+          note={`${rate(data.passed30d.total)}% rate`}
         />
+        <Stat
+          tone="err"
+          icon="fail"
+          label="Failed · 30d"
+          value={data.failed30d.total}
+          trend={data.failed30d.pctChange}
+          note={`${rate(data.failed30d.total)}% rate`}
+        />
+        <Stat
+          tone="warn"
+          icon="lock"
+          label="Blocked · 30d"
+          value={data.blocked30d.total}
+          trend={data.blocked30d.pctChange}
+          note={`${rate(data.blocked30d.total)}% rate`}
+        />
+        <Stat
+          tone="accent"
+          icon="file"
+          label="Test cases"
+          value={data.totalCases}
+          note={`${data.runs30d.total.toLocaleString()} executions in 30d`}
+        />
+      </div>
 
-        {/* KPI row — total cases, 30d failed, pass rate, critical issues,
-            recurring issues. */}
-        <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <KpiCard label="Total Test Cases" value={data.totalCases.toLocaleString()} />
-          <KpiCard
-            label="Failed (30d)"
-            value={data.failed30d.total.toLocaleString()}
-            trendPct={data.failed30d.pctChange}
-            spark={failedSeries}
-            sparkColor="#DC2626"
-          />
-          <KpiCard
-            label="Pass Rate"
-            value={`${data.passRate.current}%`}
-            trendPct={data.passRate.delta}
-            spark={passRateSeries}
-            sparkColor="#16A34A"
-          />
-          <KpiCard
-            label="Critical Issues"
-            value={data.criticalIssues.toLocaleString()}
-            meta="open · Critical severity"
-            tone={data.criticalIssues > 0 ? 'danger' : undefined}
-          />
-          <KpiCard
-            label="Recurring Issues"
-            value={data.recurringIssues.total.toLocaleString()}
-            meta="failed in 2+ cycles"
-            tone={data.recurringIssues.total > 0 ? 'warning' : undefined}
-          />
-        </div>
+      <div className="grid-2">
+        <div style={{ minWidth: 0 }}>
+          {activeCycle && (
+            <ActiveRunCard cycle={activeCycle} onOpen={onOpenCycle} onShowAll={onShowTestRuns} />
+          )}
 
-        {activeCycle && <ActiveRunHero cycle={activeCycle} onOpen={onOpenCycle} />}
+          <Card
+            icon="clock"
+            title="Recent test runs"
+            action={
+              <button
+                type="button"
+                className="btn-link"
+                style={{ fontSize: 12 }}
+                onClick={onShowTestRuns}
+              >
+                View all test runs →
+              </button>
+            }
+          >
+            {data.recentCycles.length === 0 ? (
+              <div className="empty-note">
+                Nothing yet.{' '}
+                <button type="button" className="btn-link" onClick={onShowTestRuns}>
+                  Create a test run
+                </button>{' '}
+                to get started.
+              </div>
+            ) : (
+              <RecentRunsTable cycles={data.recentCycles.slice(0, 4)} onOpen={onOpenCycle} />
+            )}
+          </Card>
 
-        {/* Execution trend + Cycle-wise test distribution */}
-        <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
-          <Panel
-            title="Execution Trend"
-            secondary="Last 8 weeks — executed, passed, failed and blocked"
+          <Card
+            icon="chart"
+            title="Execution trend"
+            meta="Last 8 weeks — executed, passed, failed and blocked"
+            pad
           >
             <TrendChart weekly={data.weeklyRuns} />
-          </Panel>
+          </Card>
 
-          <ResultDistributionPanel data={data} />
-        </div>
+          <ResultDistributionCard data={data} />
 
-        {/* Coverage by module — full-width table, worst-covered first */}
-        <div className="mb-4">
-          <Panel
-            title="Coverage by Module"
-            secondary="Worst-covered first"
+          <Card
+            icon="overview"
+            title="Coverage by module"
+            meta="Worst-covered first"
             action={
               onShowStabilityReport && (
                 <button
                   type="button"
+                  className="btn-link"
+                  style={{ fontSize: 12 }}
                   onClick={onShowStabilityReport}
-                  className="text-[12px] font-medium text-primary-text hover:underline"
                 >
                   Full stability report →
                 </button>
               )
             }
+            pad
           >
             {data.moduleStability.length === 0 ? (
               <p className="text-[12.5px] text-text-3">No module activity yet.</p>
             ) : (
               <CoverageTable modules={data.moduleStability} limit={5} />
             )}
-          </Panel>
-        </div>
+          </Card>
 
-        {/* Recent test runs */}
-        <div className="mb-4">
-          <Panel
-            title="Recent test runs"
-            action={
-              onShowTestRuns && (
-                <button
-                  type="button"
-                  onClick={onShowTestRuns}
-                  className="text-[12px] font-medium text-primary-text hover:underline"
-                >
-                  View all test runs →
-                </button>
-              )
-            }
-          >
-            {data.recentCycles.length === 0 ? (
-              <p className="text-[13px] text-text-3">
-                Nothing yet.{' '}
-                <button onClick={onShowTestRuns} className="text-primary hover:underline">
-                  Create a test run
-                </button>{' '}
-                to get started.
-              </p>
-            ) : (
-              <RecentRunsTable cycles={data.recentCycles.slice(0, 4)} onOpen={onOpenCycle} />
-            )}
-          </Panel>
-        </div>
-
-        {/* Recurring issues + Recent activity */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Panel
-            title="Recurring Issues"
-            secondary="Failed in 2+ separate test runs"
+          <Card
+            icon="fail"
+            title="Recurring issues"
+            meta="Failed in 2+ separate test runs"
             action={
               onShowReports && (
                 <button
                   type="button"
+                  className="btn-link"
+                  style={{ fontSize: 12 }}
                   onClick={onShowReports}
-                  className="text-[12px] font-medium text-primary-text hover:underline"
                 >
                   Full report →
                 </button>
               )
             }
+            pad
           >
             {data.recurringIssues.items.length === 0 ? (
               <p className="text-[12.5px] text-text-3">No recurring issues right now.</p>
             ) : (
               <RecurringIssuesList items={data.recurringIssues.items} />
             )}
-          </Panel>
+          </Card>
+        </div>
 
-          <Panel title="Recent Activity" secondary="Live from the QA team">
-            {data.recentActivity.length === 0 ? (
-              <p className="text-[12.5px] text-text-3">No activity yet.</p>
-            ) : (
-              <ActivityFeed events={data.recentActivity} />
-            )}
-          </Panel>
+        <div className="rail" style={{ minWidth: 0 }}>
+          <CalendarCard cycles={data.recentCycles} />
+          <ActivityCard events={data.recentActivity} onShowReports={onShowReports} />
         </div>
       </div>
     </div>
   );
 }
 
-// ─── helper components ───────────────────────────────────
+// ─── building blocks ─────────────────────────────────────
 
-function KpiCard({
-  label,
-  value,
-  trendPct,
+function Card({
+  icon,
+  title,
   meta,
-  spark,
-  sparkColor,
-  tone,
+  action,
+  pad,
+  children,
 }: {
-  label: string;
-  value: string;
-  // Signed % change vs. the prior period. Sign alone decides the arrow/colour
-  // -- a falling Failed count is still a numeric "down", shown the same way
-  // a rising one would be, not recoloured for being good news.
-  trendPct?: number;
+  icon: Parameters<typeof SIco>[0]['name'];
+  title: string;
   meta?: string;
-  spark?: number[];
-  sparkColor?: string;
-  // For cards with no prior-period figure to trend against (a live snapshot
-  // like Critical/Recurring issues) -- colours the value itself instead.
-  tone?: 'danger' | 'warning';
+  action?: React.ReactNode;
+  pad?: boolean;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-border bg-surface p-[16px_18px]">
-      <div className="mb-2 text-[12px] font-medium text-text-3">{label}</div>
-      <div
-        className={cn(
-          'mb-2 text-[26px] font-semibold tracking-[-0.02em]',
-          tone === 'danger' ? 'text-danger' : tone === 'warning' ? 'text-warning' : 'text-text',
-        )}
-      >
-        {value}
+    <div className="card" style={{ marginBottom: 18 }}>
+      <div className="card-head">
+        <h3>
+          <SIco name={icon} /> {title}
+        </h3>
+        {action ?? (meta ? <span className="meta">{meta}</span> : null)}
       </div>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1 text-[11.5px] font-medium">
-          {trendPct !== undefined && (
-            <span className={trendPct >= 0 ? 'text-success' : 'text-danger'}>
-              {trendPct >= 0 ? '↗' : '↘'} {trendPct >= 0 ? '+' : ''}
-              {trendPct}%{meta ? '' : ' vs prior 30d'}
-            </span>
-          )}
-          {meta && <span className={trendPct !== undefined ? 'text-text-3' : ''}>{meta}</span>}
-        </div>
-        {spark && spark.length > 1 && <Sparkline values={spark} color={sparkColor ?? '#6B7280'} />}
+      {pad ? <div className="card-pad">{children}</div> : children}
+    </div>
+  );
+}
+
+function Stat({
+  tone,
+  icon,
+  label,
+  value,
+  trend,
+  note,
+}: {
+  tone: 'ok' | 'err' | 'warn' | 'info' | 'accent';
+  icon: Parameters<typeof SIco>[0]['name'];
+  label: string;
+  value: number;
+  // Signed % change vs. the prior period. Sign alone picks the arrow and
+  // colour, same as the mockup (a falling Failed count still reads "down").
+  trend?: number;
+  note: string;
+}) {
+  return (
+    <div className={cn('stat', tone)}>
+      <div className="stat-label">
+        <SIco name={icon} /> {label}
+      </div>
+      <div className="stat-value">{value.toLocaleString()}</div>
+      <div className="stat-meta">
+        {trend !== undefined && (
+          <span className={cn('stat-trend', trend >= 0 ? 'up' : 'down')}>
+            {trend >= 0 ? '▲' : '▼'} {Math.abs(trend)}%
+          </span>
+        )}
+        {trend !== undefined ? `vs prev 30d · ${note}` : note}
       </div>
     </div>
   );
 }
 
-function Sparkline({ values, color }: { values: number[]; color: string }) {
-  const w = 80;
-  const h = 24;
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
-  const range = max - min || 1;
-  const pts = values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * w;
-      const y = h - ((v - min) / range) * h;
-      return `${x},${y}`;
-    })
-    .join(' ');
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="h-[24px] w-[80px] flex-shrink-0">
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.75" />
-    </svg>
-  );
-}
-
-// ─── Greeting banner ──────────────────────────────────────
-
 function GreetingBanner({
-  greeting,
   userName,
   activeCount,
-  openFailuresTotal,
+  openFailures,
+  critical,
   onShowTestRuns,
 }: {
-  greeting: string;
   userName?: string | null;
   activeCount: number;
-  openFailuresTotal: number;
+  openFailures: number;
+  critical: number;
   onShowTestRuns: () => void;
 }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
+  const first = userName?.trim().split(/\s+/)[0];
   return (
-    <div className="mb-6 flex items-start gap-4 rounded-lg border border-primary/20 bg-primary-light px-5 py-4">
-      <div className="flex-1">
-        <div className="text-[13.5px] text-primary-text">
-          <b className="font-semibold">{activeCount}</b> test run{activeCount === 1 ? '' : 's'}{' '}
-          currently in progress, and <b className="font-semibold">{openFailuresTotal}</b> failure
-          {openFailuresTotal === 1 ? '' : 's'} open right now.
-          <span className="ml-1 text-text-3">
-            ({greeting}
-            {userName ? `, ${userName}` : ''} 👋)
-          </span>
+    <div className="greet-banner">
+      <div style={{ flex: 1 }}>
+        <div className="greet-text">
+          Hey{first ? ', ' : ''}
+          {first && <span style={{ color: 'var(--brand-700)' }}>{first}</span>}{' '}
+          <span className="wave">👋</span>
+        </div>
+        <div className="greet-sub">
+          You have{' '}
+          <b>
+            {activeCount} active test run{activeCount === 1 ? '' : 's'}
+          </b>{' '}
+          and{' '}
+          <b>
+            {openFailures} open failure{openFailures === 1 ? '' : 's'}
+          </b>
+          {critical > 0 && <> ({critical} critical)</>}.{' '}
+          <button type="button" onClick={onShowTestRuns}>
+            View test runs →
+          </button>
         </div>
       </div>
       <button
         type="button"
-        onClick={onShowTestRuns}
-        className="flex-shrink-0 text-[12.5px] font-semibold text-primary-text hover:underline"
-      >
-        Go to Test Runs →
-      </button>
-      <button
-        type="button"
-        onClick={() => setDismissed(true)}
+        className="greet-close"
         aria-label="Dismiss"
-        className="flex-shrink-0 text-primary-text/50 transition-colors hover:text-primary-text"
+        onClick={() => setDismissed(true)}
       >
-        <i className="ti ti-x text-[16px]" />
+        <SIco name="x" />
       </button>
     </div>
   );
 }
 
-// ─── Active test run hero ─────────────────────────────────
-
-function ActiveRunHero({ cycle, onOpen }: { cycle: RecentCycle; onOpen?: (id: string) => void }) {
-  const executedPct = cycle.total > 0 ? Math.round((cycle.done / cycle.total) * 100) : 0;
+function ActiveRunCard({
+  cycle,
+  onOpen,
+  onShowAll,
+}: {
+  cycle: RecentCycle;
+  onOpen?: (id: string) => void;
+  onShowAll: () => void;
+}) {
+  const c = cycle.counts;
+  const total = Math.max(cycle.total, 1);
+  const pct = (n: number) => `${Math.round((n / total) * 100)}%`;
+  const legend = [
+    { label: 'Passed', n: c.Passed, color: 'var(--ok)' },
+    { label: 'Failed', n: c.Failed, color: 'var(--err)' },
+    { label: 'Blocked', n: c.Blocked, color: 'var(--warn)' },
+    { label: 'Skipped', n: c.Skipped, color: 'var(--info)' },
+    { label: 'Pending', n: c.NotRun, color: 'var(--bg-2)' },
+  ];
   return (
-    <div className="mb-4 rounded-lg border-2 border-primary bg-surface p-[18px_20px]">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-light px-2.5 py-1 text-[11px] font-semibold text-primary-text">
-          <span className="h-[6px] w-[6px] rounded-full bg-primary" />
-          Active Test Run
-        </span>
-        <button
-          type="button"
-          onClick={() => onOpen?.(cycle.id)}
-          className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-1.5 text-[12.5px] font-medium text-white transition-all hover:bg-primary-hover"
-        >
-          <i className="ti ti-player-play text-[13px]" />
-          Continue
+    <div className="card" style={{ marginBottom: 18 }}>
+      <div className="card-head">
+        <h3>
+          <SIco name="play" /> Active test run
+        </h3>
+        <button type="button" className="btn-link" style={{ fontSize: 12 }} onClick={onShowAll}>
+          All test runs →
         </button>
       </div>
-      <div className="mb-1 truncate text-[17px] font-semibold text-text">{cycle.name}</div>
-      <div className="mb-3 text-[12.5px] text-text-3">
-        Scope: {cycle.scopeName ?? (cycle.scopeType === 'All' ? 'All cases' : cycle.scopeType)}
-      </div>
-      <div className="mb-1.5 h-[8px] overflow-hidden rounded-full bg-surface-3">
-        <div className="h-full rounded-full bg-primary" style={{ width: `${executedPct}%` }} />
-      </div>
-      <div className="flex items-center justify-between text-[12px] text-text-3">
-        <span>
-          {cycle.done} / {cycle.total} executed
-        </span>
-        <span>
-          Pass rate <b className="font-semibold text-text">{cycle.passRate}%</b>
-        </span>
+      <div className="card-pad" style={{ display: 'flex', gap: 18, alignItems: 'center' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <span className="pill pill-brand">
+              <span className="dot" /> In progress
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--t-3)' }}>
+              Started {relativeTime(cycle.createdAt)}
+            </span>
+          </div>
+          <div
+            style={{
+              fontSize: 18,
+              fontWeight: 600,
+              color: 'var(--t-1)',
+              letterSpacing: '-0.015em',
+              marginBottom: 6,
+            }}
+          >
+            {cycle.name}
+          </div>
+          <div style={{ fontSize: 12.5, color: 'var(--t-3)', marginBottom: 14 }}>
+            Scope:{' '}
+            <b style={{ color: 'var(--t-2)', fontWeight: 600 }}>
+              {cycle.scopeName ?? (cycle.scopeType === 'All' ? 'All cases' : cycle.scopeType)}
+            </b>{' '}
+            · {cycle.total} cases · {cycle.done} executed
+          </div>
+          <div className="progress-stacked" style={{ marginBottom: 8 }}>
+            <span style={{ width: pct(c.Passed), background: 'var(--ok)' }} />
+            <span style={{ width: pct(c.Failed), background: 'var(--err)' }} />
+            <span style={{ width: pct(c.Blocked), background: 'var(--warn)' }} />
+            <span style={{ width: pct(c.Skipped), background: 'var(--info)' }} />
+          </div>
+          <div className="run-legend">
+            {legend.map(l => (
+              <span key={l.label}>
+                <i style={{ background: l.color }} />
+                {l.label} {l.n}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 6,
+            paddingLeft: 18,
+            borderLeft: '1px dashed var(--bdr)',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--t-4)',
+              textTransform: 'uppercase',
+              letterSpacing: '.05em',
+              fontWeight: 600,
+            }}
+          >
+            Pass rate
+          </div>
+          <div
+            style={{
+              fontSize: 32,
+              fontWeight: 700,
+              color: 'var(--ok)',
+              letterSpacing: '-0.03em',
+              lineHeight: 1,
+            }}
+          >
+            {cycle.passRate}%
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--t-3)' }}>on executed</div>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            style={{ marginTop: 6 }}
+            onClick={() => onOpen?.(cycle.id)}
+          >
+            <SIco name="play" /> Continue
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-// ─── Execution trend (line chart) ─────────────────────────
+// ─── Recent runs table ───────────────────────────────────
+
+function RecentRunsTable({
+  cycles,
+  onOpen,
+}: {
+  cycles: RecentCycle[];
+  onOpen?: (id: string) => void;
+}) {
+  return (
+    <table className="t">
+      <thead>
+        <tr>
+          <th>Run</th>
+          <th>Status</th>
+          <th>Progress</th>
+          <th>Pass</th>
+          <th>Tester</th>
+          <th />
+        </tr>
+      </thead>
+      <tbody>
+        {cycles.map(c => (
+          <RecentRunRow key={c.id} cycle={c} onOpen={onOpen} />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function RecentRunRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: string) => void }) {
+  const isManual = c.mode === 'Manual';
+  // Quick-log entries don't have per-case runs — express the outcome as a
+  // single Pass/Fail from the verdict counts the API already computed.
+  // A case-based run gets the same once it's no longer Active; still-Active
+  // runs have no verdict yet.
+  const verdict = isManual
+    ? c.counts.Passed > 0
+      ? 'Pass'
+      : 'Fail'
+    : c.status !== 'Active'
+      ? c.counts.Failed + c.counts.Blocked === 0
+        ? 'Pass'
+        : 'Fail'
+      : null;
+  // Manual cycles store their scope as free text instead of an id.
+  const subText = isManual
+    ? [c.portalName, c.moduleName, c.featureName].filter(Boolean).join(' › ') || 'quick log'
+    : c.scopeType === 'All'
+      ? 'all cases'
+      : (c.scopeName ?? c.scopeType);
+  const dateIso = (isManual && c.completedAt) || c.createdAt;
+  const isGroup = /\d+ testers$/.test(c.tester);
+  const pct = c.total > 0 ? Math.round((c.done / c.total) * 100) : 0;
+
+  return (
+    <tr className="click" onClick={() => onOpen?.(c.id)}>
+      <td style={{ maxWidth: 240 }}>
+        <div
+          className="row-title"
+          style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        >
+          {c.name}
+        </div>
+        <div
+          className="id-mono"
+          style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        >
+          {subText} · {relativeTime(dateIso)}
+        </div>
+      </td>
+      <td>
+        {c.status === 'Active' ? (
+          <span className="pill pill-brand">
+            <span className="dot" /> Active
+          </span>
+        ) : verdict === 'Pass' ? (
+          <span className="pill pill-ok">
+            Pass
+            {(c.issueCount ?? 0) > 0 && ` · ${c.issueCount} issue${c.issueCount === 1 ? '' : 's'}`}
+          </span>
+        ) : (
+          <span className="pill pill-err">
+            Fail
+            {(c.issueCount ?? 0) > 0 && ` · ${c.issueCount} issue${c.issueCount === 1 ? '' : 's'}`}
+          </span>
+        )}
+      </td>
+      <td>
+        {isManual ? (
+          <span style={{ fontSize: 11.5, color: 'var(--t-3)' }}>quick log</span>
+        ) : (
+          <>
+            <div className="progress" style={{ width: 120 }}>
+              <span className="progress-bar ok" style={{ width: `${pct}%` }} />
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--t-3)', marginTop: 3 }}>
+              {c.done} / {c.total}
+            </div>
+          </>
+        )}
+      </td>
+      <td
+        style={{
+          color: c.passRate >= 85 ? 'var(--ok)' : c.passRate >= 60 ? 'var(--warn)' : 'var(--err)',
+          fontWeight: 600,
+        }}
+      >
+        {isManual ? '—' : `${c.passRate}%`}
+      </td>
+      <td>
+        {!c.tester ? (
+          <span style={{ fontSize: 12, color: 'var(--t-4)' }}>Unattributed</span>
+        ) : isGroup ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="avatar sm" style={{ background: 'var(--bg-2)', color: 'var(--t-3)' }}>
+              <SIco name="users" size={11} />
+            </div>
+            {c.tester}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="avatar sm" style={{ background: avatarGradient(c.tester) }}>
+              {initials(c.tester)}
+            </div>
+            {c.tester}
+          </div>
+        )}
+      </td>
+      <td>
+        {c.status === 'Active' ? (
+          <button type="button" className="icon-btn" aria-label="Open run">
+            <SIco name="chevron-right" />
+          </button>
+        ) : (
+          <span className="pill pill-neutral">
+            {c.status === 'Completed' ? 'Closed' : c.status}
+          </span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+// ─── Right rail ──────────────────────────────────────────
+
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+function CalendarCard({ cycles }: { cycles: RecentCycle[] }) {
+  const now = new Date();
+  const [offset, setOffset] = useState(0);
+  const view = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+
+  // Days that have run activity (a run created or completed that day).
+  const eventDays = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of cycles) {
+      for (const iso of [c.createdAt, c.completedAt]) {
+        if (!iso) continue;
+        const d = new Date(iso);
+        set.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+      }
+    }
+    return set;
+  }, [cycles]);
+
+  const first = new Date(view.getFullYear(), view.getMonth(), 1);
+  const start = new Date(first);
+  start.setDate(1 - first.getDay());
+  const cells = Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    return d;
+  });
+  // Drop a trailing row that's entirely next month, like the mockup's 6 rows
+  // only when needed.
+  const rows = cells[35].getMonth() === view.getMonth() ? 6 : 5;
+
+  return (
+    <div className="card card-pad-sm">
+      <div className="cal-head">
+        <h4>Calendar</h4>
+        <div className="cal-nav">
+          <button
+            type="button"
+            className="icon-btn btn-sm"
+            aria-label="Previous month"
+            onClick={() => setOffset(o => o - 1)}
+          >
+            <SIco name="chevron-left" />
+          </button>
+          <span style={{ fontSize: 12, color: 'var(--t-2)', fontWeight: 500, padding: '0 6px' }}>
+            {MONTHS[view.getMonth()]} {view.getFullYear()}
+          </span>
+          <button
+            type="button"
+            className="icon-btn btn-sm"
+            aria-label="Next month"
+            onClick={() => setOffset(o => o + 1)}
+          >
+            <SIco name="chevron-right" />
+          </button>
+        </div>
+      </div>
+      <div className="cal-grid">
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+          <span key={i} className="cal-dow">
+            {d}
+          </span>
+        ))}
+        {cells.slice(0, rows * 7).map(d => {
+          const isToday = d.toDateString() === now.toDateString();
+          const dim = d.getMonth() !== view.getMonth();
+          const ev = eventDays.has(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+          return (
+            <span
+              key={d.toISOString()}
+              className={cn('cal-day', dim && 'dim', isToday && 'today', ev && 'has-event')}
+            >
+              {d.getDate()}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((startOf(now) - startOf(d)) / 86_400_000);
+  if (diff <= 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function ActivityCard({
+  events,
+  onShowReports,
+}: {
+  events: ActivityEvent[];
+  onShowReports?: () => void;
+}) {
+  const [tab, setTab] = useState<'all' | 'runs'>('all');
+  const list = (tab === 'runs' ? events.filter(e => e.kind === 'run') : events).slice(0, 6);
+  let lastDay = '';
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h3>
+          <SIco name="clock" /> Activity
+        </h3>
+        <div className="tabs" style={{ marginBottom: 0, borderBottom: 'none' }}>
+          <button
+            type="button"
+            className={cn('tab', tab === 'all' && 'active')}
+            style={{ padding: '4px 10px', fontSize: 11.5 }}
+            onClick={() => setTab('all')}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            className={cn('tab', tab === 'runs' && 'active')}
+            style={{ padding: '4px 10px', fontSize: 11.5 }}
+            onClick={() => setTab('runs')}
+          >
+            Test changes
+          </button>
+        </div>
+      </div>
+      <div className="activity">
+        {list.length === 0 ? (
+          <div className="empty-note" style={{ padding: '24px 16px' }}>
+            No activity yet.
+          </div>
+        ) : (
+          list.map((e, i) => {
+            const day = dayLabel(e.ts);
+            const header = day !== lastDay;
+            lastDay = day;
+            return (
+              <div key={i}>
+                {header && <div className="activity-day">{day}</div>}
+                <div className={cn('activity-item', e.kind === 'run' ? 'a-status' : 'a-create')}>
+                  <div className="a-ico">
+                    <SIco name={e.kind === 'run' ? 'pass' : 'plus'} />
+                  </div>
+                  <div className="a-body">
+                    <div className="a-text">
+                      <b>{e.actor}</b>{' '}
+                      {e.kind === 'run' ? (
+                        <>
+                          marked <b>{e.caseLabel}</b> as{' '}
+                          <b
+                            style={{
+                              color:
+                                e.result === 'Passed'
+                                  ? 'var(--ok)'
+                                  : e.result === 'Failed'
+                                    ? 'var(--err)'
+                                    : 'var(--warn)',
+                            }}
+                          >
+                            {e.result}
+                          </b>
+                        </>
+                      ) : (
+                        <>
+                          logged a quick log against <b>{e.scopeName}</b>
+                        </>
+                      )}
+                    </div>
+                    <div className="a-meta">
+                      {relativeTime(e.ts)}
+                      {e.kind === 'run' ? ` · in ${e.cycleName}` : ''}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+      <div className="card-foot">
+        <span>
+          Showing {list.length} of {events.length} events
+        </span>
+        {onShowReports && (
+          <button
+            type="button"
+            className="btn-link"
+            style={{ fontSize: 11.5 }}
+            onClick={onShowReports}
+          >
+            View reports →
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Charts + lists (data views from the previous dashboard) ─────
 
 function TrendChart({ weekly }: { weekly: DashboardData['weeklyRuns'] }) {
   const W = 600;
@@ -483,7 +902,7 @@ function TrendChart({ weekly }: { weekly: DashboardData['weeklyRuns'] }) {
   return (
     <div>
       <svg viewBox={`0 0 ${W} ${H}`} className="h-[200px] w-full">
-        <g stroke="#E7E5E4" strokeWidth="1">
+        <g stroke="currentColor" strokeOpacity="0.12" strokeWidth="1">
           {Array.from({ length: ySteps + 1 }, (_, i) => {
             const val = (niceMax / ySteps) * i;
             return <line key={i} x1={padL} y1={y(val)} x2={W} y2={y(val)} />;
@@ -580,56 +999,37 @@ export function DonutChart({
   );
 }
 
-function SummaryRow({ color, label, value }: { color: string; label: string; value: number }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="flex items-center gap-1.5 text-text-2">
-        <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} />
-        {label}
-      </span>
-      <span className="font-mono tabular-nums text-text">{value.toLocaleString()}</span>
-    </div>
-  );
-}
-
-// ─── Cycle-wise test distribution ─────────────────────────
-
 // Overall Passed/Failed/Blocked mix over the last 30 days -- blended
-// CaseBased + quick-log counts, same 30d window and numbers already shown
-// in the KPI row above, just visualized as a share of the whole instead of
-// three separate cards. Not run/skipped aren't a verdict, so they're left
-// out of the denominator (same convention as the KPI row's own pass rate).
-function ResultDistributionPanel({ data }: { data: DashboardData }) {
+// CaseBased + quick-log counts, same 30d window and numbers shown in the stat
+// cards above, just visualized as a share of the whole. Not run/skipped aren't
+// a verdict, so they're left out of the denominator.
+function ResultDistributionCard({ data }: { data: DashboardData }) {
   const passed = data.passed30d.total;
   const failed = data.failed30d.total;
   const blocked = data.blocked30d.total;
   const total = passed + failed + blocked;
   const pctOf = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
 
-  if (total === 0) {
-    return (
-      <Panel title="Result Distribution" secondary="Last 30 days">
-        <p className="text-[12.5px] text-text-3">No results in the last 30 days.</p>
-      </Panel>
-    );
-  }
-
   return (
-    <Panel title="Result Distribution" secondary="Last 30 days">
-      <div className="flex flex-col items-center gap-4">
-        <DonutChart
-          pass={pctOf(passed)}
-          fail={pctOf(failed)}
-          block={pctOf(blocked)}
-          value={`${pctOf(passed)}%`}
-        />
-        <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-[13px]">
-          <LegendItem color="#16A34A" label="Passed" value={passed} />
-          <LegendItem color="#DC2626" label="Failed" value={failed} />
-          <LegendItem color="#D97706" label="Blocked" value={blocked} />
+    <Card icon="pass" title="Result distribution" meta="Last 30 days" pad>
+      {total === 0 ? (
+        <p className="text-[12.5px] text-text-3">No results in the last 30 days.</p>
+      ) : (
+        <div className="flex flex-col items-center gap-4">
+          <DonutChart
+            pass={pctOf(passed)}
+            fail={pctOf(failed)}
+            block={pctOf(blocked)}
+            value={`${pctOf(passed)}%`}
+          />
+          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-[13px]">
+            <LegendItem color="#16A34A" label="Passed" value={passed} />
+            <LegendItem color="#DC2626" label="Failed" value={failed} />
+            <LegendItem color="#D97706" label="Blocked" value={blocked} />
+          </div>
         </div>
-      </div>
-    </Panel>
+      )}
+    </Card>
   );
 }
 
@@ -645,7 +1045,14 @@ function LegendItem({ color, label, value }: { color: string; label: string; val
   );
 }
 
-// ─── Recurring issues ──────────────────────────────────────
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} />
+      {label}
+    </span>
+  );
+}
 
 function RecurringIssuesList({ items }: { items: RecurringIssue[] }) {
   return (
@@ -658,7 +1065,7 @@ function RecurringIssuesList({ items }: { items: RecurringIssue[] }) {
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <span className="font-mono text-[11px] text-text-3">
-                TC-{String(i.caseNum).padStart(3, '0')}
+                C-{String(i.caseNum).padStart(4, '0')}
               </span>
               <span
                 className={cn(
@@ -685,8 +1092,6 @@ function RecurringIssuesList({ items }: { items: RecurringIssue[] }) {
     </div>
   );
 }
-
-// ─── Coverage by module (full table) ──────────────────────
 
 function CoverageTable({ modules, limit }: { modules: ModuleStabilityRow[]; limit?: number }) {
   const sorted = [...modules]
@@ -765,180 +1170,5 @@ function CoverageTable({ modules, limit }: { modules: ModuleStabilityRow[]; limi
         </tbody>
       </table>
     </div>
-  );
-}
-
-function Panel({
-  title,
-  secondary,
-  action,
-  children,
-}: {
-  title: string;
-  secondary?: React.ReactNode;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-surface p-[18px_20px]">
-      <div className="mb-3.5 flex items-start justify-between gap-3">
-        <div>
-          <div className="text-[14px] font-semibold text-text">{title}</div>
-          {secondary && <div className="mt-0.5 text-[12px] text-text-3">{secondary}</div>}
-        </div>
-        {action}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} />
-      {label}
-    </span>
-  );
-}
-
-function RecentRunsTable({
-  cycles,
-  onOpen,
-}: {
-  cycles: RecentCycle[];
-  onOpen?: (id: string) => void;
-}) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-[12.5px]">
-        <thead>
-          <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-text-3">
-            <th className="border-b border-border pb-2 pr-3">Run</th>
-            <th className="border-b border-border pb-2 pr-3">Progress</th>
-            <th className="border-b border-border pb-2 pr-3">Result</th>
-            <th className="border-b border-border pb-2">Tester</th>
-          </tr>
-        </thead>
-        <tbody>
-          {cycles.slice(0, 8).map(c => (
-            <RecentRunRow key={c.id} cycle={c} onOpen={onOpen} />
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function RecentRunRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: string) => void }) {
-  const isManual = c.mode === 'Manual';
-  // Quick-log entries don't have per-case runs — express the outcome as a
-  // single Pass/Fail. Read the verdict the API already computed into
-  // `counts` (tracked/untracked Done-Remaining rule) instead of
-  // re-deriving it from issueCount here, which would silently disagree
-  // with the API the moment a quick log gets retested and resolved.
-  //
-  // A case-based run gets the same Pass/Fail badge once it's no longer
-  // Active — auto-complete guarantees a Completed run has NotRun === 0, so
-  // "any case still Failed or Blocked" is always a fully-informed verdict,
-  // not one diluted by cases nobody's run yet. Still-Active runs show no
-  // verdict at all (there isn't one yet), same as before.
-  const verdict = isManual
-    ? c.counts.Passed > 0
-      ? { label: 'Pass', tone: 'text-emerald-700 bg-emerald-50' }
-      : { label: 'Fail', tone: 'text-red-700 bg-red-50' }
-    : c.status !== 'Active'
-      ? c.counts.Failed + c.counts.Blocked === 0
-        ? { label: 'Pass', tone: 'text-emerald-700 bg-emerald-50' }
-        : { label: 'Fail', tone: 'text-red-700 bg-red-50' }
-      : null;
-  // Manual cycles store their scope as free text instead of an id — fall
-  // back to that when scopeName isn't set.
-  const subText = isManual
-    ? [c.portalName, c.moduleName, c.featureName].filter(Boolean).join(' › ') || 'quick log'
-    : c.scopeType === 'All'
-      ? 'all cases'
-      : (c.scopeName ?? c.scopeType);
-  // Manual rows want their completed-on date so back-dated entries read
-  // correctly; CaseBased keep the createdAt.
-  const dateIso = (isManual && c.completedAt) || c.createdAt;
-  // A cycle attributed to more than one tester reads as "N testers" (see
-  // /api/dashboard) rather than a real name -- shown with a group icon
-  // instead of misleading two-letter initials taken from that phrase.
-  const isGroup = /\d+ testers$/.test(c.tester);
-
-  return (
-    <tr
-      onClick={() => onOpen?.(c.id)}
-      className="cursor-pointer border-b border-border last:border-b-0 hover:bg-surface-2"
-    >
-      <td className="max-w-[240px] py-2.5 pr-3">
-        <div className="truncate font-medium text-text">{c.name}</div>
-        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-text-3">
-          <span className="truncate">{subText}</span>
-          <span>·</span>
-          <span className="flex-shrink-0">{relativeTime(dateIso)}</span>
-        </div>
-      </td>
-      <td className="py-2.5 pr-3">
-        {isManual ? (
-          <span className="text-[11px] text-text-3">quick log</span>
-        ) : (
-          <div className="flex items-center gap-2">
-            <div className="h-[6px] w-[70px] overflow-hidden rounded-full bg-surface-3">
-              <div
-                className="h-full rounded-full bg-primary"
-                style={{ width: `${c.total > 0 ? Math.round((c.done / c.total) * 100) : 0}%` }}
-              />
-            </div>
-            <span className="flex-shrink-0 text-[11px] text-text-3">
-              {c.done}/{c.total} · {c.passRate}%
-            </span>
-          </div>
-        )}
-      </td>
-      <td className="py-2.5 pr-3">
-        {verdict ? (
-          <span
-            className={cn(
-              'inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold',
-              verdict.tone,
-            )}
-          >
-            {verdict.label}
-            {(c.issueCount ?? 0) > 0 && ` · ${c.issueCount} issue${c.issueCount === 1 ? '' : 's'}`}
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1 rounded-full bg-primary-light px-2 py-0.5 text-[10.5px] font-semibold text-primary-text">
-            <span className="h-[6px] w-[6px] rounded-full bg-primary" />
-            Active
-          </span>
-        )}
-      </td>
-      <td className="py-2.5">
-        {!c.tester ? (
-          <span className="text-[11.5px] text-text-3">Unattributed</span>
-        ) : isGroup ? (
-          <span className="inline-flex items-center gap-1.5 text-[11.5px] text-text-2">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-surface-3 text-text-3">
-              <i className="ti ti-users text-[11px]" />
-            </span>
-            {c.tester}
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 text-[11.5px] text-text-2">
-            <span
-              className={cn(
-                'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[9px] font-bold',
-                avatarColour(c.tester),
-              )}
-            >
-              {initials(c.tester)}
-            </span>
-            <span className="truncate">{c.tester}</span>
-          </span>
-        )}
-      </td>
-    </tr>
   );
 }

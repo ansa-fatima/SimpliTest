@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
 import { cn } from '@/lib/utils';
+import '../sts-v3.css';
 
 // Settings > Modules & Features -- three-level Portal > Module > Feature
 // tree, kept in its own tables (QaPortal / QaModule / QaFeature) so
@@ -251,7 +252,7 @@ export function ModulesFeaturesCard({
 
   return (
     <div className="lg:col-span-2">
-      <div className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="card">
         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div>
             <h4 className="text-[13px] font-semibold text-text">Portal · Module · Feature</h4>
@@ -292,7 +293,7 @@ export function ModulesFeaturesCard({
               type="button"
               disabled={busy === 'create-portal' || !newPortalName.trim()}
               onClick={createPortal}
-              className="rounded-[7px] bg-primary px-3 py-1.5 text-[12px] font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+              className="btn btn-primary btn-sm"
             >
               Create
             </button>
@@ -434,7 +435,7 @@ export function ModulesFeaturesCard({
                             type="button"
                             disabled={busy === 'create-mod' || !newModuleName.trim()}
                             onClick={() => createModule(portal.id)}
-                            className="rounded-[7px] bg-primary px-3 py-1.5 text-[11.5px] font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+                            className="btn btn-primary btn-sm"
                           >
                             Add
                           </button>

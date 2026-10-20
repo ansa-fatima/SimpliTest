@@ -5,7 +5,7 @@ import { TestCycle, Module } from '@/types';
 import { avatarColour, cn, initials, localDateStr } from '@/lib/utils';
 import { deriveOutcome, CycleOutcome } from '@/lib/cycleOutcome';
 import { exportCycles } from '@/lib/export';
-import { NewCycleModal, CycleFormPayload } from './NewCycleModal';
+import { CycleFormPayload } from './NewCycleModal';
 import { UpdateQuickLogModal } from './QuickLogModal';
 import { CycleFormPanel } from './CycleFormPanel';
 import { ImportCyclesModal } from './ImportCyclesModal';
@@ -13,41 +13,39 @@ import { CycleInfoModal } from './CycleInfoModal';
 import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 import { parseIssueKeys } from '@/lib/jira';
 import { api } from '@/lib/client';
+import { SIco } from '@/components/layout/sts-icons';
+import { avatarGradient } from './tc-helpers';
+import './sts-v3.css';
 
 interface TestRunsBoardProps {
   cycles: TestCycle[];
   loading: boolean;
   modules: Module[];
   projectId: string | null;
+  projectName?: string;
+  /** `runs` = case-based test runs; `quicklogs` = aggregate quick logs. Separate flows. */
+  mode: 'runs' | 'quicklogs';
   /** Session user, used to default the QA Engineer field on a new cycle. */
   currentUserName?: string;
   // Goes straight to the Execution screen — this board is the working view,
   // not the Cycle Overview summary (that's still what Test Cycles opens to).
   onOpenRun: (id: string) => void;
-  onCreate: (input: CycleFormPayload) => Promise<void>;
+  /** Run detail / summary page. */
+  onOpenOverview: (id: string) => void;
+  /** Opens the full-page New test run form. */
+  onNewRun: () => void;
+  onCreate: (input: CycleFormPayload) => Promise<unknown>;
   onUpdate: (id: string, patch: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   /** Refetch the cycles list (used after a bulk import). */
   onReload?: () => void;
 }
 
-type BoardTab = 'all' | 'inprogress' | 'planned' | 'completed';
-type MainTab = 'runs' | 'quicklogs';
-
 // "Planned" isn't a real DB status -- it's an Active cycle nobody has
 // started executing yet (0 runs touched). Once at least one run has a
 // verdict, it reads as "In Progress" instead.
 function isStarted(c: TestCycle): boolean {
   return (c.summary?.done ?? 0) > 0;
-}
-
-function statusTone(c: TestCycle): { label: string; dot: string; text: string } {
-  if (c.status === 'Completed')
-    return { label: 'Completed', dot: 'bg-success', text: 'text-success' };
-  if (c.status === 'Archived') return { label: 'Archived', dot: 'bg-text-3', text: 'text-text-3' };
-  return isStarted(c)
-    ? { label: 'In Progress', dot: 'bg-primary', text: 'text-primary-text' }
-    : { label: 'Planned', dot: 'bg-text-3', text: 'text-text-2' };
 }
 
 // The day-to-day working view -- resume an in-flight cycle or log a quick
@@ -59,16 +57,18 @@ export function TestRunsBoard({
   loading,
   modules,
   projectId,
+  projectName,
+  mode,
   currentUserName,
   onOpenRun,
+  onOpenOverview,
+  onNewRun,
   onCreate,
   onUpdate,
   onDelete,
   onReload,
 }: TestRunsBoardProps) {
-  const [mainTab, setMainTab] = useState<MainTab>('runs');
-  const [tab, setTab] = useState<BoardTab>('all');
-  const [createRun, setCreateRun] = useState(false);
+  const [runsFilter, setRunsFilter] = useState<'all' | 'active' | 'closed' | 'mine'>('all');
   // The rich "Log a test cycle" slide-over (Quick Logs tab) — null when
   // closed, 'new' when creating, or the cycle being edited.
   const [cyclePanel, setCyclePanel] = useState<'new' | TestCycle | null>(null);
@@ -333,252 +333,264 @@ export function TestRunsBoard({
   const planned = caseBased.filter(c => c.status === 'Active' && !isStarted(c));
   const completed = caseBased.filter(c => c.status === 'Completed');
 
-  const visible =
-    tab === 'inprogress'
-      ? inProgress
-      : tab === 'planned'
-        ? planned
-        : tab === 'completed'
-          ? completed
+  const isRuns = mode === 'runs';
+  const activeRuns = caseBased.filter(c => c.status === 'Active');
+  const pendingCases = activeRuns.reduce(
+    (n, c) => n + Math.max(0, (c.summary?.total ?? 0) - (c.summary?.done ?? 0)),
+    0,
+  );
+  const totalIssues = quickLogs.reduce((n, c) => n + (c.issueCount ?? 0), 0);
+  const mine = caseBased.filter(
+    c => !!currentUserName && !!c.tester && c.tester === currentUserName,
+  );
+  const visibleRuns =
+    runsFilter === 'active'
+      ? activeRuns
+      : runsFilter === 'closed'
+        ? completed
+        : runsFilter === 'mine'
+          ? mine
           : caseBased;
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-bg">
-      <div className="flex-1 overflow-y-auto px-44 py-6">
-        {/* Header */}
-        <div className="mb-5 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="m-0 mb-1 text-[22px] font-semibold tracking-[-0.01em] text-text">
-              Test Runs
-            </h1>
-            <p className="text-[13px] text-text-2">
-              Two speeds of testing — resume a case-based cycle, or log a 30-second quick log.
-            </p>
+    <div className="stv3 main-scroll">
+      <div className="page-header">
+        <div>
+          <div className="breadcrumb">
+            <span className="crumb">{projectName || 'Project'}</span>
+            <span className="sep">/</span>
+            <span className="current">{isRuns ? 'Test runs & results' : 'Quick logs'}</span>
           </div>
-          <button
-            type="button"
-            onClick={() => (mainTab === 'runs' ? setCreateRun(true) : setCyclePanel('new'))}
-            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-[7px] bg-primary px-3.5 py-[7px] text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-primary-hover"
-          >
-            <i className="ti ti-plus text-[15px]" />
-            {mainTab === 'runs' ? 'Add Test Run' : 'New cycle'}
-          </button>
-        </div>
-
-        {/* Runs / Quick Logs */}
-        <div className="mb-4 flex items-center gap-5 border-b border-border">
-          <MainTabButton
-            active={mainTab === 'runs'}
-            onClick={() => setMainTab('runs')}
-            label="Runs"
-            count={caseBased.length}
-          />
-          <MainTabButton
-            active={mainTab === 'quicklogs'}
-            onClick={() => setMainTab('quicklogs')}
-            label="Quick Logs"
-            count={quickLogs.length}
-          />
-        </div>
-
-        {mainTab === 'runs' ? (
-          <>
-            {/* Sub-tabs */}
-            <div className="mb-4 flex flex-wrap items-center gap-1.5">
-              <BoardTabButton
-                active={tab === 'all'}
-                onClick={() => setTab('all')}
-                label="All"
-                count={caseBased.length}
-              />
-              <BoardTabButton
-                active={tab === 'inprogress'}
-                onClick={() => setTab('inprogress')}
-                label="In Progress"
-                count={inProgress.length}
-              />
-              <BoardTabButton
-                active={tab === 'planned'}
-                onClick={() => setTab('planned')}
-                label="Planned"
-                count={planned.length}
-              />
-              <BoardTabButton
-                active={tab === 'completed'}
-                onClick={() => setTab('completed')}
-                label="Completed"
-                count={completed.length}
-              />
-            </div>
-
-            {/* Cards */}
-            {loading ? (
-              <div className="flex items-center justify-center py-16 text-[13px] text-text-3">
-                Loading…
-              </div>
-            ) : visible.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-surface py-14 text-text-3">
-                <i className="ti ti-list-check text-[28px] opacity-50" />
-                <p className="text-[13px]">No cycles in this view.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {visible.map(c => (
-                  <RunCard
-                    key={c.id}
-                    cycle={c}
-                    onOpen={() => onOpenRun(c.id)}
-                    onEdit={() => setEditingCycle(c)}
-                    onDelete={() => handleDelete(c)}
-                  />
-                ))}
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            {/* Toolbar: import / export / sample */}
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[12px] text-text-3">
-                Each row is one testing cycle. Click a row to view it, or the pencil to edit —
-                retesting moves Done/Remaining on the same record.
-              </p>
-              <div className="flex flex-shrink-0 items-center gap-1.5">
-                <ToolbarButton
-                  icon={syncAllState.running ? 'ti-loader-2' : 'ti-refresh'}
-                  label={
-                    syncAllState.running
-                      ? `Syncing ${syncAllState.done} / ${syncAllState.total}${
-                          syncAllState.failed > 0 ? ` · ${syncAllState.failed} failed` : ''
-                        }`
-                      : 'Sync all'
-                  }
-                  onClick={syncAll}
-                  disabled={
-                    !projectId ||
-                    syncAllState.running ||
-                    filteredQuickLogs.filter(c => c.ticketLink).length === 0
-                  }
-                />
-                <ToolbarButton
-                  icon="ti-upload"
-                  label="Import"
-                  onClick={() => projectId && setShowImport(true)}
-                  disabled={!projectId}
-                />
-                <ToolbarButton
-                  icon="ti-download"
-                  label="Export"
-                  onClick={() => exportCycles(filteredQuickLogs)}
-                  disabled={filteredQuickLogs.length === 0}
-                />
-              </div>
-            </div>
-
-            {/* Filters */}
-            {quickLogs.length > 0 && (
-              <CycleFilters
-                periodMode={periodMode}
-                setPeriodMode={setPeriodMode}
-                periodStart={periodStart}
-                periodEnd={periodEnd}
-                setPeriodStart={setPeriodStart}
-                setPeriodEnd={setPeriodEnd}
-                sprintFilter={sprintFilter}
-                setSprintFilter={setSprintFilter}
-                moduleFilter={moduleFilter}
-                setModuleFilter={setModuleFilter}
-                engineerFilter={engineerFilter}
-                setEngineerFilter={setEngineerFilter}
-                portalFilter={portalFilter}
-                setPortalFilter={setPortalFilter}
-                outcomeFilter={outcomeFilter}
-                setOutcomeFilter={setOutcomeFilter}
-                outcomeCounts={outcomeCounts}
-                searchQuery={searchQuery}
-                setSearchQuery={setSearchQuery}
-                moduleOptions={moduleOptions}
-                engineerOptions={engineerOptions}
-                portalOptions={portalOptions}
-                sprintOptions={sprintOptions}
-              />
-            )}
-
-            {quickLogs.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-border bg-surface px-4 py-6 text-center text-[12.5px] text-text-3">
-                No testing cycles yet. Click “New cycle” to log one, or Import a sheet.
-              </p>
-            ) : filteredQuickLogs.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-border bg-surface px-4 py-6 text-center text-[12.5px] text-text-3">
-                No cycles match these filters.
-              </p>
+          <h1 className="page-title">
+            {isRuns ? (
+              <>
+                Test runs &amp; <em>results</em>
+              </>
             ) : (
               <>
-                <CyclesTable
-                  rows={pagedQuickLogs}
-                  siteUrl={siteUrl}
-                  onView={id => setViewingCycleId(id)}
-                  onEdit={c => setCyclePanel(c)}
-                  onDelete={handleDelete}
-                />
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-text-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-text-3">Rows per page:</span>
-                    <select
-                      value={pageSize}
-                      onChange={e => setPageSize(Number(e.target.value))}
-                      className="rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
-                    >
-                      {PAGE_SIZES.map(n => (
-                        <option key={n} value={n}>
-                          {n}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-text-3">
-                      {totalRows === 0 ? '0' : `${pageStart + 1} – ${pageEnd}`} of {totalRows}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        disabled={!canPrev}
-                        onClick={() => setPageIndex(p => Math.max(0, p - 1))}
-                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-2 transition-colors enabled:hover:bg-surface-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                        title="Previous page"
-                      >
-                        <i className="ti ti-chevron-left text-[14px]" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!canNext}
-                        onClick={() => setPageIndex(p => p + 1)}
-                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-2 transition-colors enabled:hover:bg-surface-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                        title="Next page"
-                      >
-                        <i className="ti ti-chevron-right text-[14px]" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                Quick <em>logs</em>
               </>
             )}
-          </>
-        )}
+          </h1>
+          <div className="page-sub">
+            {isRuns
+              ? `${activeRuns.length} active ${activeRuns.length === 1 ? 'run' : 'runs'} · ${pendingCases.toLocaleString()} cases pending execution`
+              : `${quickLogs.length} ${quickLogs.length === 1 ? 'log' : 'logs'} · ${totalIssues.toLocaleString()} issues logged — a 30-second aggregate result, no per-case execution`}
+          </div>
+        </div>
+        <div className="page-actions">
+          {isRuns ? (
+            <button type="button" className="btn btn-primary" onClick={onNewRun}>
+              <SIco name="play" />
+              New test run
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={syncAll}
+                disabled={
+                  !projectId ||
+                  syncAllState.running ||
+                  filteredQuickLogs.filter(c => c.ticketLink).length === 0
+                }
+              >
+                <SIco name="retry" />
+                {syncAllState.running
+                  ? `Syncing ${syncAllState.done} / ${syncAllState.total}${
+                      syncAllState.failed > 0 ? ` · ${syncAllState.failed} failed` : ''
+                    }`
+                  : 'Sync all'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => projectId && setShowImport(true)}
+                disabled={!projectId}
+              >
+                <SIco name="upload" />
+                Import
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => exportCycles(filteredQuickLogs)}
+                disabled={filteredQuickLogs.length === 0}
+              >
+                <SIco name="download" />
+                Export
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setCyclePanel('new')}
+              >
+                <SIco name="plus" />
+                New quick log
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
-      {createRun && (
-        <NewCycleModal
-          modules={modules}
-          projectId={projectId}
-          defaultMode="CaseBased"
-          onClose={() => setCreateRun(false)}
-          onSave={async input => {
-            await onCreate(input);
-            setCreateRun(false);
-          }}
-        />
+      {isRuns ? (
+        <>
+          <div className="filter-pills" style={{ marginBottom: 18 }}>
+            {(
+              [
+                ['all', 'All', caseBased.length],
+                ['active', 'Active', activeRuns.length],
+                ['closed', 'Closed', completed.length],
+                ['mine', 'My runs', mine.length],
+              ] as const
+            ).map(([key, label, count]) => (
+              <button
+                key={key}
+                type="button"
+                className={cn('fpill', runsFilter === key && 'active')}
+                onClick={() => setRunsFilter(key)}
+              >
+                {label} <span className="count">{count}</span>
+              </button>
+            ))}
+          </div>
+
+          {loading ? (
+            <div className="card">
+              <div className="empty-note">Loading…</div>
+            </div>
+          ) : visibleRuns.length === 0 ? (
+            <div className="card">
+              <div className="empty-note">
+                {caseBased.length === 0 ? (
+                  <>
+                    No test runs yet.{' '}
+                    <button type="button" className="btn-link" onClick={onNewRun}>
+                      Create the first one
+                    </button>
+                  </>
+                ) : (
+                  'No runs in this view.'
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div className="card-head" style={{ background: 'var(--c-bg)' }}>
+                <h3>
+                  <SIco name="play" /> Test runs
+                </h3>
+                <span className="meta">
+                  {visibleRuns.length} {visibleRuns.length === 1 ? 'run' : 'runs'}
+                </span>
+              </div>
+              <RunsTable
+                rows={visibleRuns}
+                onExecute={onOpenRun}
+                onDetails={onOpenOverview}
+                onEdit={setEditingCycle}
+                onDelete={handleDelete}
+              />
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <p style={{ fontSize: 12, color: 'var(--t-3)', margin: '0 0 12px' }}>
+            Each row is one testing cycle. Click a row to view it, or the pencil to edit — retesting
+            moves Done/Remaining on the same record.
+          </p>
+          {/* Filters */}
+          {quickLogs.length > 0 && (
+            <CycleFilters
+              periodMode={periodMode}
+              setPeriodMode={setPeriodMode}
+              periodStart={periodStart}
+              periodEnd={periodEnd}
+              setPeriodStart={setPeriodStart}
+              setPeriodEnd={setPeriodEnd}
+              sprintFilter={sprintFilter}
+              setSprintFilter={setSprintFilter}
+              moduleFilter={moduleFilter}
+              setModuleFilter={setModuleFilter}
+              engineerFilter={engineerFilter}
+              setEngineerFilter={setEngineerFilter}
+              portalFilter={portalFilter}
+              setPortalFilter={setPortalFilter}
+              outcomeFilter={outcomeFilter}
+              setOutcomeFilter={setOutcomeFilter}
+              outcomeCounts={outcomeCounts}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              moduleOptions={moduleOptions}
+              engineerOptions={engineerOptions}
+              portalOptions={portalOptions}
+              sprintOptions={sprintOptions}
+            />
+          )}
+
+          {quickLogs.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border bg-surface px-4 py-6 text-center text-[12.5px] text-text-3">
+              No quick logs yet. Click “New quick log” to add one, or Import a sheet.
+            </p>
+          ) : filteredQuickLogs.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border bg-surface px-4 py-6 text-center text-[12.5px] text-text-3">
+              No cycles match these filters.
+            </p>
+          ) : (
+            <>
+              <CyclesTable
+                rows={pagedQuickLogs}
+                siteUrl={siteUrl}
+                onView={id => setViewingCycleId(id)}
+                onEdit={c => setCyclePanel(c)}
+                onDelete={handleDelete}
+              />
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-text-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-text-3">Rows per page:</span>
+                  <select
+                    value={pageSize}
+                    onChange={e => setPageSize(Number(e.target.value))}
+                    className="rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
+                  >
+                    {PAGE_SIZES.map(n => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-text-3">
+                    {totalRows === 0 ? '0' : `${pageStart + 1} – ${pageEnd}`} of {totalRows}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={!canPrev}
+                      onClick={() => setPageIndex(p => Math.max(0, p - 1))}
+                      className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-2 transition-colors enabled:hover:bg-surface-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                      title="Previous page"
+                    >
+                      <i className="ti ti-chevron-left text-[14px]" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canNext}
+                      onClick={() => setPageIndex(p => p + 1)}
+                      className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-2 transition-colors enabled:hover:bg-surface-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                      title="Next page"
+                    >
+                      <i className="ti ti-chevron-right text-[14px]" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </>
       )}
 
       {cyclePanel && (
@@ -634,217 +646,242 @@ export function TestRunsBoard({
   );
 }
 
-// ─── Cards ──────────────────────────────────────────────────
+// ─── Test runs table (screen 06) ────────────────────────────
 
-function MainTabButton({
-  active,
-  onClick,
-  label,
-  count,
+function runStatus(c: TestCycle): { label: string; pill: string; dot: boolean } {
+  if (c.status === 'Completed') return { label: 'Closed', pill: 'pill-ok', dot: true };
+  if (c.status === 'Archived') return { label: 'Archived', pill: 'pill-neutral', dot: false };
+  if (!isStarted(c)) return { label: 'Planned', pill: 'pill-neutral', dot: true };
+  const counts = c.summary?.counts;
+  const done = c.summary?.done ?? 0;
+  if (counts && done > 0 && counts.Failed / done >= 0.25)
+    return { label: 'Failing', pill: 'pill-err', dot: true };
+  if (counts && counts.Blocked > 0 && counts.Blocked >= counts.Failed)
+    return { label: 'Blocked', pill: 'pill-warn', dot: true };
+  return { label: 'Running', pill: 'pill-info', dot: true };
+}
+
+function RunsTable({
+  rows,
+  onExecute,
+  onDetails,
+  onEdit,
+  onDelete,
 }: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  count: number;
+  rows: TestCycle[];
+  onExecute: (id: string) => void;
+  onDetails: (id: string) => void;
+  onEdit: (c: TestCycle) => void;
+  onDelete: (c: TestCycle) => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'relative inline-flex items-center gap-1.5 px-1 pb-2.5 text-[13.5px] font-medium transition-colors',
-        active ? 'text-text' : 'text-text-3 hover:text-text-2',
-      )}
-    >
-      {label}
-      <span
-        className={cn(
-          'rounded-full px-1.5 py-px text-[10.5px]',
-          active ? 'bg-primary-light text-primary-text' : 'bg-surface-2 text-text-3',
-        )}
-      >
-        {count}
-      </span>
-      {active && <span className="absolute inset-x-0 bottom-0 h-[2px] rounded-full bg-primary" />}
-    </button>
+    <table className="t">
+      <thead>
+        <tr>
+          <th>Run</th>
+          <th>Status</th>
+          <th>Milestone</th>
+          <th>Progress</th>
+          <th>Pass</th>
+          <th>Owner</th>
+          <th />
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(c => (
+          <RunRow
+            key={c.id}
+            cycle={c}
+            onExecute={() => onExecute(c.id)}
+            onDetails={() => onDetails(c.id)}
+            onEdit={() => onEdit(c)}
+            onDelete={() => onDelete(c)}
+          />
+        ))}
+      </tbody>
+    </table>
   );
 }
 
-function BoardTabButton({
-  active,
-  onClick,
-  label,
-  count,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  count: number;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-[7px] px-2.5 py-1 text-[12.5px] transition-colors',
-        active
-          ? 'bg-primary-light font-semibold text-primary-text'
-          : 'text-text-2 hover:bg-surface-2',
-      )}
-    >
-      {label}
-      <span
-        className={cn(
-          'rounded-full px-1.5 py-px text-[10px]',
-          active ? 'bg-primary/15 text-primary-text' : 'bg-surface-2 text-text-3',
-        )}
-      >
-        {count}
-      </span>
-    </button>
-  );
-}
-
-function RunCard({
-  cycle,
-  onOpen,
+function RunRow({
+  cycle: c,
+  onExecute,
+  onDetails,
   onEdit,
   onDelete,
 }: {
   cycle: TestCycle;
-  onOpen: () => void;
+  onExecute: () => void;
+  onDetails: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const summary = cycle.summary;
-  const total = summary?.total ?? 0;
-  const done = summary?.done ?? 0;
-  const percent = summary?.percent ?? 0;
-  const passed = summary?.counts.Passed ?? 0;
-  const failed = summary?.counts.Failed ?? 0;
-  const blocked = summary?.counts.Blocked ?? 0;
-  const isActive = cycle.status === 'Active';
-  // Real id-based code -- a name-derived one comes up blank for most cycle
-  // names (they rarely end in a trailing number), leaving cards with no code
-  // at all. Matches the QL-XXXX pattern quick logs already use.
-  const code = `C-${cycle.id.slice(-4).toUpperCase()}`;
-  const status = statusTone(cycle);
-  const scopeBits = [
-    cycle.scopeName,
-    cycle.version ? `v${cycle.version.replace(/^v\s*/i, '')}` : null,
-    cycle.environment,
-  ].filter(Boolean);
+  const [menu, setMenu] = useState(false);
+  const s = c.summary;
+  const total = s?.total ?? 0;
+  const done = s?.done ?? 0;
+  const counts = s?.counts ?? { NotRun: 0, Passed: 0, Failed: 0, Blocked: 0, Skipped: 0 };
+  const pct = (n: number) => (total === 0 ? 0 : (n / total) * 100);
+  const passRate = done === 0 ? null : (counts.Passed / done) * 100;
+  const st = runStatus(c);
+  const active = c.status === 'Active';
+  const scope = c.scopeName ?? (c.scopeType === 'All' ? 'All cases' : c.scopeType);
+  const version = c.version ? `v${c.version.replace(/^v\s*/i, '')}` : null;
 
   return (
-    <div className="flex flex-col rounded-lg border border-border bg-surface p-4">
-      <div className="mb-3 flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-[14px] font-semibold text-text">{cycle.name}</p>
-          <p className="truncate text-[11px] text-text-3">
-            {code && `${code} · `}
-            {scopeBits.join(' · ')}
-          </p>
+    <tr>
+      <td>
+        <div className="row-title" style={{ cursor: 'pointer' }} onClick={onDetails}>
+          {c.name}
         </div>
-        <div className="flex flex-shrink-0 items-center gap-1.5">
-          <span
-            className={cn(
-              'inline-flex flex-shrink-0 items-center gap-1.5 text-[11px] font-medium',
-              status.text,
-            )}
-          >
-            <span className={cn('h-1.5 w-1.5 flex-shrink-0 rounded-full', status.dot)} />
-            {status.label}
-          </span>
+        <div className="id-mono">
+          {scope} · {total.toLocaleString()} cases
+        </div>
+      </td>
+      <td>
+        <span className={cn('pill', st.pill)}>
+          {st.dot && <span className="dot" />} {st.label}
+        </span>
+      </td>
+      <td>
+        {version ? (
+          <span className={cn('pill', active ? 'pill-brand' : 'pill-neutral')}>{version}</span>
+        ) : (
+          <span style={{ color: 'var(--t-4)' }}>—</span>
+        )}
+      </td>
+      <td>
+        <div className="progress" style={{ width: 140 }}>
+          <div className="progress-stacked">
+            <span style={{ width: `${pct(counts.Passed)}%`, background: 'var(--ok)' }} />
+            <span style={{ width: `${pct(counts.Failed)}%`, background: 'var(--err)' }} />
+            <span style={{ width: `${pct(counts.Blocked)}%`, background: 'var(--warn)' }} />
+            <span style={{ width: `${pct(counts.Skipped)}%`, background: 'var(--info)' }} />
+          </div>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--t-3)', marginTop: 3 }}>
+          {done.toLocaleString()} / {total.toLocaleString()}
+          {st.label === 'Failing' ? ` · ${counts.Failed} failed` : ''}
+        </div>
+      </td>
+      <td>
+        <span
+          style={{
+            fontWeight: 600,
+            color:
+              passRate === null
+                ? 'var(--t-4)'
+                : passRate >= 85
+                  ? 'var(--ok)'
+                  : passRate >= 60
+                    ? 'var(--warn)'
+                    : 'var(--err)',
+          }}
+        >
+          {passRate === null ? '—' : `${passRate.toFixed(1)}%`}
+        </span>
+      </td>
+      <td>
+        {c.tester ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="avatar sm" style={{ background: avatarGradient(c.tester) }}>
+              {initials(c.tester)}
+            </div>
+            {c.tester.split(/\s+/)[0]}
+          </div>
+        ) : (
+          <span style={{ color: 'var(--t-4)' }}>Unassigned</span>
+        )}
+      </td>
+      <td>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, position: 'relative' }}>
+          {active && (
+            <button
+              type="button"
+              className={cn('btn btn-sm', isStarted(c) ? 'btn-secondary' : 'btn-primary')}
+              onClick={onExecute}
+            >
+              {isStarted(c) ? (
+                'Resume'
+              ) : (
+                <>
+                  <SIco name="play" /> Execute
+                </>
+              )}
+            </button>
+          )}
           <button
             type="button"
-            onClick={onEdit}
-            title="Edit test run"
-            className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-3 hover:bg-surface-2 hover:text-text"
+            className="icon-btn"
+            aria-label="Run actions"
+            onClick={() => setMenu(m => !m)}
           >
-            <i className="ti ti-pencil text-[12px]" />
+            <SIco name="dots" />
           </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            title="Delete test run"
-            className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-text-3 hover:bg-danger-bg hover:text-danger"
-          >
-            <i className="ti ti-trash text-[12px]" />
-          </button>
+          {menu && (
+            <>
+              <div
+                style={{ position: 'fixed', inset: 0, zIndex: 30 }}
+                onClick={() => setMenu(false)}
+              />
+              <div className="tb-menu right" style={{ width: 170, zIndex: 31, top: '100%' }}>
+                <button
+                  type="button"
+                  className="tb-menu-item"
+                  onClick={() => {
+                    setMenu(false);
+                    onDetails();
+                  }}
+                >
+                  <SIco name="info" size={14} />
+                  <span className="grow">View details</span>
+                </button>
+                {!active && (
+                  <button
+                    type="button"
+                    className="tb-menu-item"
+                    onClick={() => {
+                      setMenu(false);
+                      onExecute();
+                    }}
+                  >
+                    <SIco name="play" size={14} />
+                    <span className="grow">View results</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="tb-menu-item"
+                  onClick={() => {
+                    setMenu(false);
+                    onEdit();
+                  }}
+                >
+                  <SIco name="edit" size={14} />
+                  <span className="grow">Edit</span>
+                </button>
+                <hr />
+                <button
+                  type="button"
+                  className="tb-menu-item danger"
+                  onClick={() => {
+                    setMenu(false);
+                    onDelete();
+                  }}
+                >
+                  <SIco name="trash" size={14} />
+                  <span className="grow">Delete</span>
+                </button>
+              </div>
+            </>
+          )}
         </div>
-      </div>
-
-      <div className="mb-1.5 flex items-center justify-between text-[11.5px] text-text-3">
-        <span>
-          {done} / {total} executed
-        </span>
-        <span className="font-semibold text-text">{percent}%</span>
-      </div>
-      <div className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
-        <div className="h-full rounded-full bg-primary" style={{ width: `${percent}%` }} />
-      </div>
-
-      <div className="mb-3 flex items-center justify-between text-[11.5px]">
-        <span className="flex items-center gap-2.5">
-          <span className="text-success">{passed} passed</span>
-          <span className="text-danger">{failed} failed</span>
-          <span className="text-warning">{blocked} blocked</span>
-        </span>
-        {cycle.tester && (
-          <span
-            title={cycle.tester}
-            className={cn(
-              'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
-              avatarColour(cycle.tester),
-            )}
-          >
-            {initials(cycle.tester)}
-          </span>
-        )}
-      </div>
-
-      <button
-        type="button"
-        onClick={onOpen}
-        className={cn(
-          'mt-auto inline-flex items-center justify-center gap-1.5 rounded-[7px] px-3 py-1.5 text-[12.5px] font-medium transition-colors',
-          isActive
-            ? 'bg-primary text-white hover:bg-primary-hover'
-            : 'border border-border bg-surface text-text hover:bg-surface-2',
-        )}
-      >
-        <i className="ti ti-player-play text-[14px]" />
-        {isActive ? 'Resume Execution' : 'View Results'}
-      </button>
-    </div>
+      </td>
+    </tr>
   );
 }
 
 // ─── Quick Logs: toolbar / filters / table ──────────────────
-
-function ToolbarButton({
-  icon,
-  label,
-  onClick,
-  disabled,
-}: {
-  icon: string;
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-1.5 text-[12.5px] font-medium text-text transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      <i className={cn('ti text-[14px]', icon)} />
-      {label}
-    </button>
-  );
-}
 
 function CycleFilters({
   periodMode,

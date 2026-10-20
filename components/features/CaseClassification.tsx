@@ -9,7 +9,7 @@ import { colorClassesOf } from '@/lib/colors';
 // then any custom ones a SuperAdmin has added in Settings > Test
 // Configuration (see lib/options.ts). `key` is what gets submitted to
 // /api/test-cases -- either a built-in's enum literal or a custom
-// WorkspaceOption.id. Shared by NewTestCaseModal and TestCaseEdit so a
+// WorkspaceOption.id. Shared by the test-case form (create + edit) so a
 // case's classification pickers look and behave identically whether
 // creating or editing.
 export interface CaseOption {

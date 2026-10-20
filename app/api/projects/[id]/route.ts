@@ -1,7 +1,8 @@
 import { prisma } from '@/lib/db';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
-import { requireRole, requireWorkspacePermission } from '@/lib/auth';
+import { requireWorkspaceRole, requireWorkspacePermission } from '@/lib/auth';
 import { NextResponse } from 'next/server';
+import { COLOR_KEYS, ICON_KEYS, VISIBILITY_KEYS, normaliseCaseKey } from '@/lib/projectIdentity';
 
 interface Ctx {
   params: { id: string };
@@ -36,6 +37,11 @@ export async function PATCH(req: Request, { params }: Ctx) {
       defaultEnvironment?: string | null;
       defaultPlatform?: string | null;
       integrations?: { slack?: boolean; github?: boolean };
+      description?: string;
+      color?: string | null;
+      icon?: string | null;
+      caseKey?: string | null;
+      visibility?: string;
     }>(req);
 
     const data: {
@@ -43,6 +49,11 @@ export async function PATCH(req: Request, { params }: Ctx) {
       defaultEnvironment?: string | null;
       defaultPlatform?: string | null;
       integrations?: object;
+      description?: string;
+      color?: string | null;
+      icon?: string | null;
+      caseKey?: string | null;
+      visibility?: string;
     } = {};
 
     if (body?.name !== undefined) {
@@ -62,6 +73,22 @@ export async function PATCH(req: Request, { params }: Ctx) {
         github: !!body.integrations?.github,
       };
     }
+    if (body?.description !== undefined) data.description = body.description.trim().slice(0, 500);
+    if (body?.color !== undefined) {
+      if (body.color !== null && !COLOR_KEYS.includes(body.color)) return bad('invalid color');
+      data.color = body.color;
+    }
+    if (body?.icon !== undefined) {
+      if (body.icon !== null && !ICON_KEYS.includes(body.icon)) return bad('invalid icon');
+      data.icon = body.icon;
+    }
+    if (body?.caseKey !== undefined) {
+      data.caseKey = body.caseKey ? normaliseCaseKey(body.caseKey) || null : null;
+    }
+    if (body?.visibility !== undefined) {
+      if (!VISIBILITY_KEYS.includes(body.visibility)) return bad('invalid visibility');
+      data.visibility = body.visibility;
+    }
     if (Object.keys(data).length === 0) return bad('nothing to update');
 
     const project = await prisma.project.update({
@@ -74,9 +101,11 @@ export async function PATCH(req: Request, { params }: Ctx) {
   }
 }
 
-// DELETE /api/projects/:id — cascades to modules, suites, test cases, cycles (SuperAdmin only)
+// DELETE /api/projects/:id — cascades to modules, suites, test cases, cycles.
+// SuperAdmin only, but checked WITHIN this workspace (a workspace's creator is
+// SuperAdmin on its Membership, rarely globally) -- see requireWorkspaceRole.
 export async function DELETE(_req: Request, { params }: Ctx) {
-  const guard = await requireRole('SuperAdmin');
+  const guard = await requireWorkspaceRole(params.id, 'SuperAdmin');
   if (guard instanceof NextResponse) return guard;
 
   try {

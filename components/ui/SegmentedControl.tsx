@@ -14,7 +14,7 @@ interface SegmentedControlProps {
   onChange: (value: string) => void;
 }
 
-// Shared by NewTestCaseModal and TestCaseEdit — one control, one place to
+// Shared by the test-case form — one control, one place to
 // fix if its styling ever needs to change.
 export function SegmentedControl({ options, value, onChange }: SegmentedControlProps) {
   return (
