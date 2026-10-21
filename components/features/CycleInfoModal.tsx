@@ -198,7 +198,13 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
   // is not the same as "Open-to-do", so QA and in-flight statuses get their
   // own buckets and the row badge shows the real Jira status name.
   const statusOf = (s: CycleJiraSubIssue): SubStatus => {
-    if (s.isReopened || s.timesReopened > 0) return 'Reopened';
+    // `isReopened` reflects the ticket's CURRENT status (name contains
+    // "Reopened"). `timesReopened` is a lifetime counter -- it never
+    // decreases, so a ticket moved from Reopened to In QA / In progress
+    // / Done must not keep reading as "Reopened" just because it has
+    // been reopened before. The lifetime count is still available for a
+    // side badge where it is useful.
+    if (s.isReopened) return 'Reopened';
     if (/^verified$/i.test(s.status)) return 'Verified';
     if (s.isDone || /^(done|closed|resolved)$/i.test(s.status)) return 'Done';
     if (/\bqa\b|\btest|review|verif|\buat\b/i.test(s.status)) return 'In QA';
