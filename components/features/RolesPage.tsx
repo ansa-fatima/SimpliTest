@@ -731,6 +731,7 @@ export function RolesPage({
               </div>
               <div style={{ padding: '16px 22px' }}>
                 <div
+                  className="impact-grid"
                   style={{
                     display: 'grid',
                     gridTemplateColumns: '1fr 1fr 1fr',

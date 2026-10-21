@@ -54,7 +54,13 @@ async function jiraFetch(
   if (res.status === 404) throw new JiraApiError('Not found in Jira', 404);
   if (!res.ok) throw new JiraApiError(`Jira returned ${res.status}`, res.status);
   if (res.status === 204) return null;
-  return res.json();
+  try {
+    return await res.json();
+  } catch {
+    // Jira answered 2xx but not with JSON -- typically a login/SSO page, i.e.
+    // the URL isn't the Atlassian Cloud REST endpoint.
+    throw new JiraApiError('Jira did not return the expected data -- check the site URL');
+  }
 }
 
 // Validates credentials by fetching the authenticated user -- the standard

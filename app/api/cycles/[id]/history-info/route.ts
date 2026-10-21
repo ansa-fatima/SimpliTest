@@ -156,6 +156,7 @@ export async function GET(_req: Request, { params }: Ctx) {
         title: true,
         severity: true,
         status: true,
+        isDone: true,
         isReopened: true,
         timesReopened: true,
       },

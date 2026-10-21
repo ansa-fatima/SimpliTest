@@ -57,6 +57,7 @@ export default function Home() {
     openCycle,
     closeQuickLogCycle,
     backFromCycle,
+    goBack,
     createCycle,
     archiveCycle,
     deleteCycle,
@@ -105,6 +106,7 @@ export default function Home() {
     quickLogCycle,
     reportsInitialTab,
     dataVersion,
+    previousPage,
   } = state;
 
   // Show a tiny loading state while we check the session on mount.
@@ -150,7 +152,7 @@ export default function Home() {
         />
       )}
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="app-body flex min-h-0 flex-1 overflow-hidden">
         {/* Sidebar — hidden on login */}
         {page !== 'login' && (
           <Sidebar
@@ -251,7 +253,17 @@ export default function Home() {
               cases={currentCases}
               currentKey={currentKey}
               projectId={currentProjectId}
-              onBack={() => navFeature(currentKey.split(':')[0], currentKey.split(':')[1])}
+              onBack={() => {
+                // A case can be opened from the repository list, the global search,
+                // a notification or the dashboard. Back returns to whichever of those
+                // the user actually came from; only when they came from the
+                // repository itself do we restore its section.
+                const cameFromList =
+                  !previousPage || ['list', 'edit', 'view'].includes(previousPage);
+                if (cameFromList && currentKey)
+                  navFeature(currentKey.split(':')[0], currentKey.split(':')[1]);
+                else goBack('list');
+              }}
               onEdit={showEdit}
               onDelete={() => {
                 if (confirm(`Delete "${currentTC.title}"? This cannot be undone.`)) {

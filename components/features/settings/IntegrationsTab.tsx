@@ -126,9 +126,29 @@ export function IntegrationsTab({
   return (
     <div className="flex flex-col gap-4">
       {error && (
-        <p className="rounded-lg border border-danger/30 bg-danger-bg px-3 py-2 text-[12px] text-danger-text">
-          {error}
-        </p>
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-danger/30 bg-danger-bg px-3 py-2 text-[12px] text-danger-text">
+          <div>
+            <p>{error}</p>
+            {/^Something went wrong/.test(error) && (
+              <p className="mt-0.5 text-[11px] opacity-80">
+                The server couldn&apos;t read this workspace&apos;s integration settings. If the app
+                was just updated, make sure the database schema is current (
+                <code>prisma db push</code> or <code>prisma migrate deploy</code>) — the server log
+                has the exact <code>[api]</code> error.
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              loadJira();
+            }}
+            className="flex-shrink-0 rounded-[7px] border border-danger/40 px-2.5 py-1 text-[11.5px] font-medium hover:bg-white/40"
+          >
+            Retry
+          </button>
+        </div>
       )}
 
       <JiraCard
