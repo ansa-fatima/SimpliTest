@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TestCycle } from '@/types';
 import { useStore } from '@/hooks/useStore';
 import { Sidebar } from '@/components/layout/Sidebar';
@@ -108,6 +108,32 @@ export default function Home() {
     dataVersion,
     previousPage,
   } = state;
+
+  // Browser history: every in-app page change pushes a history entry, and the
+  // browser Back button walks back to the previous section (same rule as the
+  // in-app Back buttons) instead of leaving the app.
+  const navRef = useRef({ page, previousPage, goBack, loadCycles });
+  navRef.current = { page, previousPage, goBack, loadCycles };
+  const fromPop = useRef(false);
+  useEffect(() => {
+    const onPop = () => {
+      const { page: cur, previousPage: prev, goBack: back, loadCycles: reload } = navRef.current;
+      if (cur === 'login' || !prev || prev === cur) return;
+      fromPop.current = true;
+      back('dashboard');
+      reload();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  useEffect(() => {
+    if (page === 'login') return;
+    if (fromPop.current) {
+      fromPop.current = false;
+      return;
+    }
+    window.history.pushState({ page }, '');
+  }, [page]);
 
   // Show a tiny loading state while we check the session on mount.
   if (!authChecked) {
