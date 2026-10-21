@@ -237,6 +237,7 @@ export function GeneralTab({
         </div>
         <div className="card-pad-lg">
           <div
+            className="identity-grid"
             style={{
               display: 'grid',
               gridTemplateColumns: '120px 1fr',

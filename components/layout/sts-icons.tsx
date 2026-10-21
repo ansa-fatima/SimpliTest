@@ -247,19 +247,14 @@ export function SIco({ name, size }: { name: SIconName; size?: number }) {
   );
 }
 
-// Mockup brand mark: white tile with a purple check.
+// Simplitest brand mark: white tile with the brand logo (public/Logo.png).
+// The tile keeps the mockup's chrome -- rounded white square with a soft
+// shadow, same 32px edge used by the Topbar and sized up for the login hero.
 export function BrandMark() {
   return (
     <div className="brand-mark">
-      <svg viewBox="0 0 24 24" fill="none">
-        <path
-          d="M5 12L10 17L19 7"
-          stroke="#3F2DAA"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src="/Logo.png" alt="Simplitest" />
     </div>
   );
 }

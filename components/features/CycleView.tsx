@@ -107,6 +107,8 @@ export function CycleView({
   const [recurring, setRecurring] = useState<RecurringItem[] | null>(null);
   // Big runs (1,000+ cases) render in pages so the case list stays snappy.
   const [limit, setLimit] = useState(200);
+  // Phone layout: the case list is a full-screen drawer toggled from the run bar.
+  const [listOpen, setListOpen] = useState(false);
   // Fetched once here and threaded down to the ticket pill, the Jira sync
   // panel, and the Summary/Report modals -- one fetch per screen instead of
   // each display spot re-checking the connection itself.
@@ -254,6 +256,13 @@ export function CycleView({
           )}
           {cycle.scopeName && <span className="rb-scope">Scope: {cycle.scopeName}</span>}
         </div>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm run-cases-toggle"
+          onClick={() => setListOpen(o => !o)}
+        >
+          <SIco name="list" /> {listOpen ? 'Case detail' : 'Cases'}
+        </button>
         <div className="run-bar-actions">
           <button
             type="button"
@@ -319,7 +328,7 @@ export function CycleView({
           />
         </div>
       ) : (
-        <div className="run-shell">
+        <div className={cn('run-shell', listOpen && 'list-open')}>
           {/* Case list */}
           <div className="run-list">
             <div className="run-list-head">
@@ -397,16 +406,17 @@ export function CycleView({
                   : 'No cases match this filter.'}
               </div>
             ) : (
-              filteredRuns
-                .slice(0, limit)
-                .map(r => (
-                  <RunCaseRow
-                    key={r.id}
-                    run={r}
-                    active={r.id === selectedRunId}
-                    onSelect={() => setSelectedRunId(r.id)}
-                  />
-                ))
+              filteredRuns.slice(0, limit).map(r => (
+                <RunCaseRow
+                  key={r.id}
+                  run={r}
+                  active={r.id === selectedRunId}
+                  onSelect={() => {
+                    setSelectedRunId(r.id);
+                    setListOpen(false);
+                  }}
+                />
+              ))
             )}
             {filteredRuns.length > limit && (
               <div style={{ padding: 12, textAlign: 'center' }}>

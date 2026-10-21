@@ -1422,3 +1422,79 @@
     flex-basis: calc(100% - 100px);
   }
 }
+
+/* ── Responsive layer (tablet / phone) ────────────────────── */
+.tcv3 .page-actions {
+  flex-wrap: wrap;
+}
+@media (max-width: 1100px) {
+  .tcv3 .toolbar {
+    flex-wrap: wrap;
+  }
+  .tcv3 .toolbar .tb-group {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 720px) {
+  .tcv3 .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+  .tcv3 .page-actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .tcv3 .page-title {
+    font-size: 22px;
+  }
+  .tcv3 .toolbar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .tcv3 .toolbar .tb-group {
+    border-right: none;
+    padding-right: 0;
+    width: 100%;
+  }
+  .tcv3 .toolbar .tb-group:last-child {
+    margin-left: 0;
+  }
+  .tcv3 .toolbar .select,
+  .tcv3 .toolbar .tb-search,
+  .tcv3 .toolbar input {
+    flex: 1 1 140px;
+    min-width: 0;
+  }
+  .tcv3 .sec-head {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .tcv3 .sec-head h3 {
+    white-space: normal;
+  }
+  .tcv3 .list-foot {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .tcv3 .tc-tree {
+    height: 260px;
+  }
+  .tcv3 .case-row {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .tcv3 .case-row .cmeta {
+    flex-wrap: wrap;
+  }
+  .tcv3 .card-pad-lg {
+    padding: 16px;
+  }
+  .tcv3 .tag-input {
+    min-width: 0;
+  }
+  .tcv3 .tabs {
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}

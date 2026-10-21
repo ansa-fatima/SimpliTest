@@ -612,7 +612,7 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                         <div
                           key={s.issueKey}
                           className={cn(
-                            'flex items-start gap-3 rounded-lg border border-l-[3px] border-border bg-surface-2 px-3 py-2',
+                            'flex items-start gap-3 rounded-lg border border-l-[3px] border-border bg-surface-2 px-3 py-2 transition-colors hover:bg-primary-light',
                             borderCls,
                           )}
                         >

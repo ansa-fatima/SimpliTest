@@ -831,16 +831,21 @@
 .stv3 .brand-mark {
   width: 32px;
   height: 32px;
-  background: #fff;
-  border-radius: var(--r-sm);
+  /* No tile behind the logo: it sits straight on the purple bar. */
+  background: transparent;
   display: grid;
   place-items: center;
   position: relative;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
 }
-.stv3 .brand-mark svg {
-  width: 18px;
-  height: 18px;
+.stv3 .brand-mark svg,
+.stv3 .brand-mark img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+/* The logo file is purple; on the purple bar it is shown as a white mark. */
+.stv3 .brand-mark img {
+  filter: brightness(0) invert(1);
 }
 .stv3 .brand-name {
   font-size: 18px;
@@ -1382,9 +1387,11 @@
   width: 36px;
   height: 36px;
 }
-.stv3 .login-left .ll-brand .brand-mark svg {
-  width: 20px;
-  height: 20px;
+.stv3 .login-left .ll-brand .brand-mark svg,
+.stv3 .login-left .ll-brand .brand-mark img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
 }
 .stv3 .login-left .ll-brand-name {
   font-size: 20px;
@@ -2065,7 +2072,7 @@
   border-bottom: none;
 }
 .stv3 table.t tbody tr:hover {
-  background: var(--c-bg);
+  background: var(--brand-50);
 }
 .stv3 table.t tbody tr.click {
   cursor: pointer;
@@ -2107,7 +2114,7 @@
   position: relative;
 }
 .stv3 .activity-item:hover {
-  background: var(--c-bg);
+  background: var(--brand-50);
 }
 .stv3 .activity-item .a-ico {
   width: 28px;
@@ -2731,7 +2738,7 @@
   font-size: 12.5px;
 }
 .stv3 .run-case:hover {
-  background: var(--bg-2);
+  background: var(--brand-50);
 }
 .stv3 .run-case.active {
   background: var(--c-surface);
@@ -3386,6 +3393,19 @@
   color: var(--t-4);
 }
 
+/* Tablet widths: drop the user name so brand + switcher + search + actions fit. */
+@media (max-width: 1024px) {
+  .stv3 .topbar {
+    gap: 10px;
+  }
+  .stv3 .user-chip .uname {
+    display: none;
+  }
+  .stv3 .topbar-search {
+    min-width: 0;
+  }
+}
+
 /* Phone widths: keep the account chip and bell reachable in the top bar. */
 @media (max-width: 720px) {
   .stv3 .topbar {
@@ -3435,4 +3455,371 @@
   background: var(--bg-2);
   border-color: var(--bdr-3);
   color: var(--t-1);
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Responsive layer (tablet ≤ 1024, phone ≤ 720)
+   Inline-grid hooks (.split-rail, .stat-grid-5, .two-up, …) use !important
+   because the component styles them inline for the desktop layout.
+   ═════════════════════════════════════════════════════════════════ */
+.stv3 .page-actions {
+  flex-wrap: wrap;
+}
+.stv3 .split-rail {
+  display: grid;
+  gap: 24px;
+}
+.stv3 .split-rail-320 {
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+.stv3 .split-rail-380 {
+  grid-template-columns: minmax(0, 1fr) 380px;
+}
+.stv3 .stat-grid-5 {
+  grid-template-columns: repeat(5, 1fr) !important;
+}
+.stv3 .two-up {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.stv3 .preview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.stv3 .impact-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.stv3 .identity-grid {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 24px;
+  margin-bottom: 18px;
+  align-items: flex-start;
+}
+
+@media (max-width: 1024px) {
+  .stv3.main-scroll {
+    padding: 20px 20px 40px;
+  }
+  .stv3 .split-rail-320,
+  .stv3 .split-rail-380 {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .stv3 .stat-grid-5 {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+  .stv3 .impact-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .stv3 .perm-row {
+    grid-template-columns: auto 1fr auto;
+  }
+  .stv3 .perm-row .pmeta {
+    display: none;
+  }
+  .stv3 .roles-layout {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .stv3 .run-shell {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+  .stv3 .exec-pane {
+    padding: 20px;
+  }
+  .stv3 .run-bar {
+    flex-wrap: wrap;
+  }
+  .stv3 .run-bar-actions {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 720px) {
+  .stv3.main-scroll {
+    padding: 16px 14px 32px;
+  }
+  .stv3 .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+  .stv3 .page-actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .stv3 .page-title {
+    font-size: 22px;
+  }
+  .stv3 .stat-grid,
+  .stv3 .stat-grid-5 {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px;
+  }
+  .stv3 .stat {
+    padding: 14px;
+  }
+  .stv3 .stat .stat-value {
+    font-size: 24px;
+  }
+  .stv3 .two-up,
+  .stv3 .impact-grid,
+  .stv3 .cfg-grid,
+  .stv3 .proj-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .stv3 .preview-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .stv3 .identity-grid {
+    grid-template-columns: 1fr;
+  }
+  .stv3 .form-grid {
+    grid-template-columns: 1fr;
+  }
+  .stv3 .field.span-2,
+  .stv3 .field.span-3 {
+    grid-column: auto;
+  }
+  .stv3 .card-pad-lg {
+    padding: 16px;
+  }
+  .stv3 .card-head {
+    flex-wrap: wrap;
+    padding: 12px 14px;
+  }
+  .stv3 .card-foot {
+    flex-wrap: wrap;
+  }
+  /* Tables keep their columns and scroll sideways inside the card. */
+  .stv3 .card > table.t,
+  .stv3 .card-body > table.t {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .stv3 table.t th,
+  .stv3 table.t td {
+    padding: 10px 12px;
+  }
+  .stv3 .rule-row {
+    grid-template-columns: 1fr 32px;
+  }
+  .stv3 .rule-row > :nth-child(1) {
+    grid-column: 1;
+  }
+  .stv3 .rule-row > :nth-child(2) {
+    display: none;
+  }
+  .stv3 .rule-row > :nth-child(3) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .stv3 .rule-row > :nth-child(4) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .stv3 .mod-row {
+    grid-template-columns: 1fr 56px 56px;
+  }
+  .stv3 .mod-row > :nth-child(2) {
+    display: none;
+  }
+  .stv3 .perm-row {
+    grid-template-columns: auto 1fr;
+    row-gap: 4px;
+  }
+  .stv3 .perm-row .pkey {
+    min-width: 0;
+  }
+  .stv3 .perm-row .pdesc {
+    grid-column: 2;
+  }
+  .stv3 .perm-group-head {
+    flex-wrap: wrap;
+  }
+  .stv3 .proj-list .proj-card {
+    flex-wrap: wrap;
+  }
+  .stv3 .filter-pills {
+    gap: 6px;
+  }
+  .stv3 .tabs {
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .stv3 .settings-layout {
+    gap: 14px;
+  }
+  .stv3 .side-tabs {
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 6px;
+    gap: 4px;
+  }
+  .stv3 .side-tabs > div {
+    display: none;
+  }
+  .stv3 .side-tab {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .stv3 .greet-banner {
+    padding: 14px 16px;
+  }
+  .stv3 .greet-banner .greet-text {
+    font-size: 20px;
+  }
+  .stv3 .cal-day {
+    font-size: 11px;
+  }
+  .stv3 .mode-card {
+    padding: 12px;
+  }
+  .stv3 .chart-card {
+    padding: 14px;
+  }
+  .stv3 .impact-box .ib-v {
+    font-size: 20px;
+  }
+  .stv3 .new-proj-form {
+    flex-wrap: wrap;
+  }
+  .stv3 .new-proj-form .input {
+    max-width: none;
+    flex: 1 1 100%;
+  }
+  /* Runner: stack the case list above the case pane. */
+  .stv3 .run-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(160px, 34%) minmax(0, 1fr);
+  }
+  .stv3 .run-list {
+    border-right: none;
+    border-bottom: 1px solid var(--bdr);
+  }
+  .stv3 .exec-pane {
+    padding: 14px;
+  }
+  .stv3 .exec-status {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px;
+  }
+  .stv3 .exec-head .exec-title {
+    font-size: 17px;
+  }
+  .stv3 .status-row .sbtn {
+    padding: 8px 12px;
+  }
+  .stv3 .run-bar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .stv3 .run-bar-title .rb-name {
+    max-width: 100%;
+  }
+  .stv3 .run-bar-actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .stv3 .steps-list li {
+    gap: 10px;
+  }
+  .stv3 .exec-block-head {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  /* Login: single column, brand panel hidden (already), tighter padding. */
+  .stv3 .login-right {
+    padding: 24px 20px;
+    align-items: flex-start;
+  }
+  .stv3 .sso-row {
+    grid-template-columns: 1fr;
+  }
+  /* Dropdown menus never exceed the viewport. */
+  .stv3 .tb-menu {
+    max-width: calc(100vw - 24px);
+  }
+  .stv3 .tb-menu.tb-results {
+    width: calc(100vw - 24px);
+  }
+}
+
+/* Phone: the icon rail becomes a bottom tab bar so content gets the full width. */
+@media (max-width: 720px) {
+  .app-body {
+    flex-direction: column;
+  }
+  .app-body > main {
+    order: 1;
+    min-height: 0;
+  }
+  .stv3 .sidebar {
+    order: 2;
+    width: 100%;
+    min-width: 0;
+    height: 56px;
+    flex-direction: row;
+    justify-content: space-around;
+    align-items: center;
+    padding: 0 6px;
+    gap: 2px;
+    border-right: none;
+    border-top: 1px solid var(--bdr);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .stv3 .side-btn {
+    width: 42px;
+    height: 42px;
+  }
+  .stv3 .side-btn.active::before {
+    left: 8px;
+    right: 8px;
+    top: -7px;
+    bottom: auto;
+    width: auto;
+    height: 3px;
+    border-radius: 0 0 3px 3px;
+  }
+  .stv3 .side-divider {
+    display: none;
+  }
+}
+
+/* Runner on phones: one pane at a time -- the case detail, or the case list
+   as a drawer opened from the run bar. */
+.stv3 .run-cases-toggle {
+  display: none;
+}
+@media (max-width: 720px) {
+  .stv3 .run-cases-toggle {
+    display: inline-flex;
+    margin-left: auto;
+  }
+  .stv3 .run-shell {
+    display: block;
+    overflow: auto;
+  }
+  .stv3 .run-shell .run-list {
+    display: none;
+    height: 100%;
+    border-bottom: none;
+  }
+  .stv3 .run-shell.list-open .run-list {
+    display: block;
+  }
+  .stv3 .run-shell.list-open .exec-pane {
+    display: none;
+  }
+  .stv3 .run-shell .exec-pane {
+    height: 100%;
+  }
 }

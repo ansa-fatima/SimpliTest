@@ -96,6 +96,10 @@ interface ApiPortalData {
 
 export interface AppState {
   page: Page;
+  /** Pushed every time `page` changes, so Back buttons can return the user to
+   *  the actual previous section (Dashboard, Test runs, Quick logs, …) instead
+   *  of hardcoding one landing page. Null on the very first page. */
+  previousPage: Page | null;
   data: Record<string, TestCase[]>;
   modules: Module[];
   moduleIds: Record<string, string>; // moduleName → id
@@ -145,6 +149,7 @@ export interface AppState {
 export function useStore() {
   const [state, setState] = useState<AppState>({
     page: 'login',
+    previousPage: null,
     data: JSON.parse(JSON.stringify(SEED_DATA)),
     modules: [],
     moduleIds: {},
@@ -321,8 +326,30 @@ export function useStore() {
     })();
   }, [reloadPortals]);
 
+  // Every call that changes `page` goes through here so previousPage stays in
+  // sync -- individual callers never have to remember to set it themselves.
   const update = useCallback((patch: Partial<AppState>) => {
-    setState(s => ({ ...s, ...patch }));
+    setState(s => {
+      const movingPage = patch.page !== undefined && patch.page !== s.page;
+      return { ...s, ...patch, previousPage: movingPage ? s.page : s.previousPage };
+    });
+  }, []);
+
+  // Returns to the previous page, or to `fallback` when there's no record
+  // (first navigation, hard reload, deep link).
+  const goBack = useCallback((fallback: Page = 'dashboard') => {
+    setState(s => ({
+      ...s,
+      page: s.previousPage ?? fallback,
+      previousPage: null,
+      // These are specific to the cycle screens -- clearing them here keeps a
+      // stale CycleView / Overview from flashing while the previous page
+      // reloads its own data.
+      currentCycle: null,
+      runs: [],
+      summary: null,
+      cycleOverview: null,
+    }));
   }, []);
 
   const showToast = useCallback((msg: string, type?: 'success' | 'error') => {
@@ -541,9 +568,7 @@ export function useStore() {
     }
   }, []);
 
-  const showTestCases = useCallback(() => {
-    setState(s => ({ ...s, page: 'list' }));
-  }, []);
+  const showTestCases = useCallback(() => update({ page: 'list' }), [update]);
 
   const navFeature = useCallback(
     (mod: string, feat: string) => {
@@ -555,7 +580,12 @@ export function useStore() {
   const viewTC = useCallback((id: string) => {
     setState(s => {
       const tc = (s.data[s.currentKey] || []).find(c => c.id === id) || null;
-      return { ...s, currentTC: tc, page: 'view' };
+      return {
+        ...s,
+        currentTC: tc,
+        page: 'view',
+        previousPage: s.page === 'view' ? s.previousPage : s.page,
+      };
     });
   }, []);
 
@@ -572,6 +602,7 @@ export function useStore() {
       data: { ...s.data, [s.currentKey]: localCases },
       currentTC: current,
       page: 'view',
+      previousPage: s.page === 'view' ? s.previousPage : s.page,
     }));
   }, []);
 
@@ -833,17 +864,17 @@ export function useStore() {
   }, [showToast, state.currentProjectId]);
 
   const showTestRunsBoard = useCallback(() => {
-    setState(s => ({ ...s, page: 'testRuns' }));
+    update({ page: 'testRuns' });
     loadCycles();
-  }, [loadCycles]);
+  }, [loadCycles, update]);
 
   // Quick logs and test runs are separate flows with their own pages -- same
   // cycles list underneath, split by mode in the board.
   const showQuickLogs = useCallback(() => {
-    setState(s => ({ ...s, page: 'quickLogs' }));
+    update({ page: 'quickLogs' });
     loadCycles();
-  }, [loadCycles]);
-  const showNewRun = useCallback(() => setState(s => ({ ...s, page: 'newRun' })), []);
+  }, [loadCycles, update]);
+  const showNewRun = useCallback(() => update({ page: 'newRun' }), [update]);
 
   const openCycle = useCallback(
     async (cycleId: string) => {
@@ -867,6 +898,7 @@ export function useStore() {
       setState(s => ({
         ...s,
         page: 'cycle',
+        previousPage: s.page === 'cycle' ? s.previousPage : s.page,
         currentCycle: cycle,
         runs: [],
         summary: null,
@@ -910,6 +942,7 @@ export function useStore() {
       setState(s => ({
         ...s,
         page: 'cycleOverview',
+        previousPage: s.page === 'cycleOverview' ? s.previousPage : s.page,
         cycleOverview: null,
         cycleOverviewLoading: true,
       }));
@@ -928,19 +961,15 @@ export function useStore() {
     setState(s => ({ ...s, quickLogCycle: null }));
   }, []);
 
-  // Leaves a cycle/overview screen back to the Test Runs board -- the only
-  // place either one is reached from now.
+  // Leaves a cycle/overview screen back to the page the user came from
+  // (Dashboard, Test runs, Quick logs, Reports, Projects, ...). Falls back to
+  // the Test Runs board on a hard reload where there is no previousPage. The
+  // destination's data is reloaded so leaving a Running run goes back to a
+  // fresh board, not a stale snapshot.
   const backFromCycle = useCallback(() => {
-    setState(s => ({
-      ...s,
-      page: 'testRuns',
-      currentCycle: null,
-      runs: [],
-      summary: null,
-      cycleOverview: null,
-    }));
+    goBack('testRuns');
     loadCycles();
-  }, [loadCycles]);
+  }, [goBack, loadCycles]);
 
   const createCycle = useCallback(
     async (input: {
@@ -1196,6 +1225,7 @@ export function useStore() {
     openProject,
     showTestCases,
     showTestRunsBoard,
+    goBack,
     showQuickLogs,
     showNewRun,
     openCycle,

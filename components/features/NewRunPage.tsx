@@ -384,7 +384,7 @@ export function NewRunPage({
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 380px', gap: 24 }}>
+      <div className="split-rail split-rail-380">
         <div style={{ minWidth: 0 }}>
           <div className="card card-pad-lg" style={{ marginBottom: 16 }}>
             <h3
@@ -814,6 +814,7 @@ export function NewRunPage({
                     </div>
                   </div>
                   <div
+                    className="preview-grid"
                     style={{
                       display: 'grid',
                       gridTemplateColumns: 'repeat(4, 1fr)',

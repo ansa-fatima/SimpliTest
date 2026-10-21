@@ -222,7 +222,7 @@ export function CycleOverview({
         </div>
       </div>
 
-      <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(5,1fr)' }}>
+      <div className="stat-grid stat-grid-5">
         <div className="stat accent">
           <div className="stat-label">Total cases</div>
           <div className="stat-value">{total.toLocaleString()}</div>
@@ -250,7 +250,7 @@ export function CycleOverview({
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 320px', gap: 24 }}>
+      <div className="split-rail split-rail-320">
         <div style={{ minWidth: 0 }}>
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card-head">
@@ -488,6 +488,7 @@ export function CycleOverview({
           </div>
 
           <div
+            className="two-up"
             style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}
           >
             <div className="card">
