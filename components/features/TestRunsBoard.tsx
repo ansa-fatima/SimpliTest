@@ -1223,9 +1223,9 @@ function CycleRow({
         <div className="flex items-center gap-2">
           <span className="font-medium text-text">{c.name || moduleName}</span>
         </div>
-        {(c.moduleName || c.featureName) && (
+        {(c.portalName || c.moduleName || c.featureName) && (
           <p className="text-[11px] text-text-3">
-            {[c.moduleName, c.featureName].filter(Boolean).join(' · ')}
+            {[c.portalName, c.moduleName, c.featureName].filter(Boolean).join(' · ')}
           </p>
         )}
       </td>

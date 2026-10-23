@@ -80,6 +80,7 @@ export function ManualCycleSummaryModal({
 
   // Scope-style meta line (Module / Feature, plus env/platform/version).
   const metaParts: string[] = [];
+  if (cycle.portalName) metaParts.push(cycle.portalName);
   if (cycle.moduleName) metaParts.push(cycle.moduleName);
   if (cycle.featureName) metaParts.push(cycle.featureName);
   if (cycle.environment) metaParts.push(cycle.environment);
