@@ -322,6 +322,14 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
               },
             ]
           : []),
+        ...(cycle.version
+          ? [
+              {
+                k: `v${cycle.version.replace(/^vs*/i, '')}`,
+                cls: 'rounded-full bg-primary-light px-2.5 py-1 font-mono text-[11px] font-medium text-primary-text',
+              },
+            ]
+          : []),
       ]
     : [];
 
