@@ -14,6 +14,7 @@ import { NewRunPage } from '@/components/features/NewRunPage';
 import { CycleOverview } from '@/components/features/CycleOverview';
 import { CycleView } from '@/components/features/CycleView';
 import { Dashboard } from '@/components/features/Dashboard';
+import { MyTodo } from '@/components/features/MyTodo';
 import { ProjectsPage } from '@/components/features/ProjectsPage';
 import { Reports } from '@/components/features/Reports';
 import { Members } from '@/components/features/Members';
@@ -47,6 +48,7 @@ export default function Home() {
     deleteModule,
     deleteFeature,
     showDashboard,
+    showTodo,
     showProjects,
     openProject,
     showTestCases,
@@ -185,6 +187,7 @@ export default function Home() {
             page={page}
             onShowProjects={showProjects}
             onShowDashboard={showDashboard}
+            onShowTodo={showTodo}
             onShowTestCases={showTestCases}
             onShowTestRunsBoard={showTestRunsBoard}
             onShowQuickLogs={showQuickLogs}
@@ -207,6 +210,8 @@ export default function Home() {
               onCreate={createProject}
             />
           )}
+
+          {page === 'todo' && <MyTodo onOpenCycle={openCycle} />}
 
           {page === 'dashboard' && (
             <Dashboard

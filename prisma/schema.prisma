@@ -44,6 +44,7 @@ model User {
   updatedAt           DateTime                 @updatedAt
   sessions            Session[]
   ownedCases          TestCase[]               @relation("OwnedTestCases")
+  assignedCycles      TestCycle[]              @relation("AssignedCycles")
   memberships         Membership[]
   sentInvites         Invite[]                 @relation("SentInvites")
   createdProjects     Project[]                @relation("CreatedProjects")
@@ -635,11 +636,17 @@ model TestCycle {
   mode          CycleMode      @default(CaseBased)
   scopeType     CycleScopeType @default(All)
   scopeId       String? // moduleId or suiteId; null for All / Custom
+  // Planned start of the run (New run form). targetDate is the planned end.
+  startDate     DateTime?
   targetDate    DateTime?
   // When this cycle was actually executed. For Manual (quick-log) entries the
   // user picks it explicitly so back-dated cycles show up on the day they ran.
   // For CaseBased cycles it's left null until the run is closed.
   completedAt   DateTime?
+  // Optional "Assigned tester" from the New run form -- the run lands on that
+  // person's My to-do.
+  assignee      User?          @relation("AssignedCycles", fields: [assigneeId], references: [id], onDelete: SetNull)
+  assigneeId    String?
   projectId     String
   project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   runs          TestRun[]
@@ -710,6 +717,7 @@ model TestCycle {
   @@index([status])
   @@index([projectId])
   @@index([mode])
+  @@index([assigneeId])
   @@map("test_cycles")
 }
 

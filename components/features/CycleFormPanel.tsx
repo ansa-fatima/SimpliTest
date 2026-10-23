@@ -15,9 +15,20 @@ interface ApiModule {
   portalId: string;
   suites: { id: string; name: string }[];
 }
-interface ApiPortal {
+// Settings > Test configuration > Modules & features taxonomy.
+interface QaFeatureNode {
   id: string;
   name: string;
+}
+interface QaModuleNode {
+  id: string;
+  name: string;
+  features: QaFeatureNode[];
+}
+interface QaPortalNode {
+  id: string;
+  name: string;
+  modules: QaModuleNode[];
 }
 interface ApiUser {
   id: string;
@@ -69,7 +80,7 @@ export function CycleFormPanel({
   const isEdit = !!initial;
 
   const [modules, setModules] = useState<ApiModule[]>([]);
-  const [portals, setPortals] = useState<ApiPortal[]>([]);
+  const [qaPortals, setQaPortals] = useState<QaPortalNode[]>([]);
   const [users, setUsers] = useState<ApiUser[]>([]);
 
   // ── Core picks ──────────────────────────────────────────────
@@ -81,10 +92,9 @@ export function CycleFormPanel({
   };
   const initialDate = initial?.completedAt ?? initial?.createdAt;
   const [date, setDate] = useState(initialDate ? initialDate.slice(0, 10) : todayStr());
-  const [moduleId, setModuleId] = useState('');
-  const [suiteId, setSuiteId] = useState('');
-  // Free-text fallbacks so an imported/legacy cycle whose module/feature never
-  // resolved to a real tree node still shows its names.
+  // Portal / Module / Feature are picked from the workspace's configured
+  // taxonomy and stored by name; all three are optional. A legacy cycle whose
+  // names are no longer in the taxonomy still shows them (see withCurrent).
   const [moduleNameFree, setModuleNameFree] = useState(initial?.moduleName ?? '');
   const [featureNameFree, setFeatureNameFree] = useState(initial?.featureName ?? '');
   const [portalNameFree, setPortalNameFree] = useState(initial?.portalName ?? '');
@@ -141,8 +151,8 @@ export function CycleFormPanel({
       .catch(() => {});
     if (projectId) {
       api
-        .get<ApiPortal[]>(`/api/portals?projectId=${projectId}`)
-        .then(setPortals)
+        .get<QaPortalNode[]>(`/api/qa-portals?projectId=${projectId}`)
+        .then(setQaPortals)
         .catch(() => {});
     }
     // Users for the QA Engineer dropdown -- same source the Owner filter
@@ -154,66 +164,33 @@ export function CycleFormPanel({
       .catch(() => {});
   }, [projectId]);
 
-  // Backfill the module/suite pickers from an edited cycle's scope once the
-  // tree loads (a Suite-scoped cycle only carries its own id up front).
-  useEffect(() => {
-    if (!initial || modules.length === 0) return;
-    if (initial.scopeType === 'Suite' && initial.scopeId) {
-      const owner = modules.find(m => m.suites.some(s => s.id === initial.scopeId));
-      if (owner) {
-        setModuleId(owner.id);
-        setSuiteId(initial.scopeId);
-      }
-    } else if (initial.scopeType === 'Module' && initial.scopeId) {
-      if (modules.some(m => m.id === initial.scopeId)) setModuleId(initial.scopeId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modules]);
+  const portalName = portalNameFree;
+  const moduleName = moduleNameFree;
+  const featureName = featureNameFree;
 
-  const selectedModule = modules.find(m => m.id === moduleId) ?? null;
-  const selectedPortal = selectedModule
-    ? (portals.find(p => p.id === selectedModule.portalId) ?? null)
-    : null;
-  const suites = selectedModule?.suites ?? [];
-
-  // Distinct module names seen on existing quick logs -- used as the
-  // free-text picker's suggestion list when the workspace has no real
-  // module tree set up (which is the imported-sheet case). Features are
-  // suggested the same way, but filtered to the module the user picked,
-  // so switching modules swaps the Feature suggestions underneath.
-  const knownModuleNames = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          knownQuickLogs.map(c => c.moduleName).filter((v): v is string => !!v && v.trim() !== ''),
-        ),
-      ).sort(),
-    [knownQuickLogs],
+  const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const currentPortal = qaPortals.find(p => sameName(p.name, portalName)) ?? null;
+  // With no portal chosen, Module lists every configured module.
+  const moduleChoices = (currentPortal ? [currentPortal] : qaPortals).flatMap(p =>
+    p.modules.map(m => ({ ...m, portalName: p.name })),
   );
-  const knownFeaturesForModule = useMemo(() => {
-    const needle = moduleNameFree.trim().toLowerCase();
-    if (!needle) return [] as string[];
-    return Array.from(
-      new Set(
-        knownQuickLogs
-          .filter(c => (c.moduleName ?? '').trim().toLowerCase() === needle)
-          .map(c => c.featureName)
-          .filter((v): v is string => !!v && v.trim() !== ''),
-      ),
-    ).sort();
-  }, [knownQuickLogs, moduleNameFree]);
+  const currentModule = moduleChoices.find(m => sameName(m.name, moduleName)) ?? null;
+  const featureChoices = currentModule?.features ?? [];
+  // Keep a saved name selectable even if it was since removed from setup.
+  const withCurrent = (names: string[], current: string) =>
+    current.trim() && !names.some(n => sameName(n, current)) ? [...names, current] : names;
 
-  const moduleName = selectedModule?.name || moduleNameFree;
-  const featureName = suites.find(s => s.id === suiteId)?.name || featureNameFree;
-  const portalName = selectedPortal?.name || portalNameFree;
-
-  const derivedScope: { scopeType: CycleScopeType; scopeId: string | null } = suiteId
-    ? { scopeType: 'Suite', scopeId: suiteId }
-    : moduleId
-      ? { scopeType: 'Module', scopeId: moduleId }
+  // Quick logs join the Stability report through a test-case-tree scope, so
+  // when the picked module/feature exists there by name, keep that scope.
+  const treeModule = moduleName.trim()
+    ? (modules.find(m => sameName(m.name, moduleName)) ?? null)
+    : null;
+  const treeSuite = treeModule?.suites.find(s => sameName(s.name, featureName)) ?? null;
+  const derivedScope: { scopeType: CycleScopeType; scopeId: string | null } = treeSuite
+    ? { scopeType: 'Suite', scopeId: treeSuite.id }
+    : treeModule
+      ? { scopeType: 'Module', scopeId: treeModule.id }
       : { scopeType: 'All', scopeId: null };
-
-  const moduleMissing = !moduleId && !moduleNameFree.trim();
 
   const autoFill = () => {
     const bits = [
@@ -268,10 +245,6 @@ export function CycleFormPanel({
 
   const submit = async () => {
     setError('');
-    if (moduleMissing) {
-      setError('Module is required');
-      return;
-    }
     if (!date) {
       setError('Date is required');
       return;
@@ -373,7 +346,7 @@ export function CycleFormPanel({
             </span>
             <h2 className="mt-2 text-[17px] font-semibold text-text">Log a test cycle</h2>
             <p className="text-[12.5px] text-text-2">
-              Every field except Module and Date is optional. Stability updates the moment you save.
+              Every field except Date is optional. Stability updates the moment you save.
             </p>
           </div>
           <button
@@ -400,101 +373,82 @@ export function CycleFormPanel({
               />
             </div>
             <div>
-              <label className={labelCls}>
-                Module <span className="text-danger">*</span>
-              </label>
-              {modules.length > 0 ? (
-                <select
-                  value={moduleId}
-                  onChange={e => {
-                    setModuleId(e.target.value);
-                    setSuiteId('');
-                    const m = modules.find(mm => mm.id === e.target.value);
-                    setModuleNameFree(m?.name ?? '');
-                    setPortalNameFree(portals.find(p => p.id === m?.portalId)?.name ?? '');
-                  }}
-                  className={inputCls}
-                >
-                  <option value="">Select…</option>
-                  {modules.map(m => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <>
-                  <input
-                    type="text"
-                    list="cycle-module-suggestions"
-                    value={moduleNameFree}
-                    onChange={e => {
-                      setModuleNameFree(e.target.value);
-                      // Switching module should drop any stale feature pick
-                      // from the previous module's suggestion set.
-                      setFeatureNameFree('');
-                    }}
-                    placeholder={
-                      knownModuleNames.length > 0 ? 'Module name — pick or type…' : 'Module name…'
-                    }
-                    className={inputCls}
-                  />
-                  <datalist id="cycle-module-suggestions">
-                    {knownModuleNames.map(m => (
-                      <option key={m} value={m} />
-                    ))}
-                  </datalist>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <label className={labelCls}>Feature</label>
-            {suites.length > 0 ? (
+              <label className={labelCls}>Portal</label>
               <select
-                value={suiteId}
+                value={portalName}
                 onChange={e => {
-                  setSuiteId(e.target.value);
-                  setFeatureNameFree(suites.find(s => s.id === e.target.value)?.name ?? '');
+                  setPortalNameFree(e.target.value);
+                  // A module from another portal no longer applies.
+                  const p = qaPortals.find(pp => sameName(pp.name, e.target.value));
+                  if (p && !p.modules.some(m => sameName(m.name, moduleName))) {
+                    setModuleNameFree('');
+                    setFeatureNameFree('');
+                  }
                 }}
                 className={inputCls}
               >
                 <option value="">—</option>
-                {suites.map(s => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
+                {withCurrent(
+                  qaPortals.map(p => p.name),
+                  portalName,
+                ).map(n => (
+                  <option key={n} value={n}>
+                    {n}
                   </option>
                 ))}
               </select>
-            ) : (
-              <>
-                <input
-                  type="text"
-                  list="cycle-feature-suggestions"
-                  value={featureNameFree}
-                  onChange={e => setFeatureNameFree(e.target.value)}
-                  placeholder={
-                    moduleNameFree
-                      ? knownFeaturesForModule.length > 0
-                        ? 'Feature — pick from this module or type a new one…'
-                        : 'Feature name…'
-                      : 'Pick a module first'
-                  }
-                  disabled={!moduleNameFree && !selectedModule}
-                  className={cn(inputCls, !moduleNameFree && !selectedModule && 'opacity-60')}
-                />
-                <datalist id="cycle-feature-suggestions">
-                  {knownFeaturesForModule.map(f => (
-                    <option key={f} value={f} />
-                  ))}
-                </datalist>
-              </>
-            )}
-            <p className="mt-1 text-[11px] text-text-3">
-              Feature list follows the module you pick.
-            </p>
+            </div>
           </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-4">
+            <div>
+              <label className={labelCls}>Module</label>
+              <select
+                value={moduleName}
+                onChange={e => {
+                  const m = moduleChoices.find(mm => sameName(mm.name, e.target.value));
+                  setModuleNameFree(e.target.value);
+                  setFeatureNameFree('');
+                  if (m && !portalName) setPortalNameFree(m.portalName);
+                }}
+                className={inputCls}
+              >
+                <option value="">—</option>
+                {withCurrent(
+                  moduleChoices.map(m => m.name),
+                  moduleName,
+                ).map(n => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Feature</label>
+              <select
+                value={featureName}
+                onChange={e => setFeatureNameFree(e.target.value)}
+                disabled={!moduleName && !featureName}
+                className={cn(inputCls, !moduleName && !featureName && 'opacity-60')}
+              >
+                <option value="">{moduleName ? '—' : 'Pick a module first'}</option>
+                {withCurrent(
+                  featureChoices.map(ft => ft.name),
+                  featureName,
+                ).map(n => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <p className="mt-1 text-[11px] text-text-3">
+            {qaPortals.length === 0
+              ? 'No portals set up yet — add them under Settings → Test configuration.'
+              : 'Portals, modules and features come from Settings → Test configuration.'}
+          </p>
 
           <div className="mt-4 grid grid-cols-2 gap-4">
             <div>

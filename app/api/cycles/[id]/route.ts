@@ -76,6 +76,13 @@ export async function PATCH(req: Request, { params }: Ctx) {
     if (body.targetDate !== undefined) {
       data.targetDate = body.targetDate ? new Date(body.targetDate as string) : null;
     }
+    if (body.startDate !== undefined) {
+      data.startDate = body.startDate ? new Date(body.startDate as string) : null;
+    }
+    if (body.assigneeId !== undefined) {
+      data.assigneeId =
+        typeof body.assigneeId === 'string' && body.assigneeId ? body.assigneeId : null;
+    }
     if (body.completedAt !== undefined) {
       data.completedAt = body.completedAt ? new Date(body.completedAt as string) : null;
     }

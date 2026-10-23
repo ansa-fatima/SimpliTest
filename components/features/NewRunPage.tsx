@@ -122,6 +122,9 @@ export function NewRunPage({
   const [environment, setEnvironment] = useState('');
   const [platform, setPlatform] = useState('');
   const [targetDate, setTargetDate] = useState('');
+  const [assigneeId, setAssigneeId] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [testers, setTesters] = useState<{ id: string; name: string; username: string }[]>([]);
   const [reference, setReference] = useState('');
   const [description, setDescription] = useState('');
   const [mode, setMode] = useState<InclusionMode>('rules');
@@ -135,6 +138,16 @@ export function NewRunPage({
   const severities = useOptions(projectId, 'Severity');
   const types = useOptions(projectId, 'TestType');
   const [sections, setSections] = useState<Opt[]>([]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    api
+      .get<{ items: { id: string; name: string; username: string; status: string }[] }>(
+        `/api/members?projectId=${projectId}`,
+      )
+      .then(d => setTesters(d.items.filter(m => m.status === 'Active')))
+      .catch(() => setTesters([]));
+  }, [projectId]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -265,6 +278,8 @@ export function NewRunPage({
       description: description.trim() || undefined,
       mode: 'CaseBased',
       targetDate: targetDate || null,
+      assigneeId: assigneeId || null,
+      startDate: startDate || null,
       version: version || undefined,
       cycleCategory: category || undefined,
       environment: environment || undefined,
@@ -296,6 +311,8 @@ export function NewRunPage({
   const submit = async (start: boolean) => {
     setError('');
     if (!name.trim()) return setError('Give the run a name.');
+    if (startDate && targetDate && targetDate < startDate)
+      return setError('The end date is before the start date.');
     if (caseTotal === 0)
       return setError('This run has no test cases — adjust the inclusion above.');
     const payload = buildPayload();
@@ -425,6 +442,47 @@ export function NewRunPage({
                 </select>
               </div>
               <div className="field">
+                <label className="label">Assigned tester</label>
+                <select
+                  className="select"
+                  value={assigneeId}
+                  onChange={e => setAssigneeId(e.target.value)}
+                >
+                  <option value="">Unassigned</option>
+                  {testers.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.name || t.username}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label className="label">Start date</label>
+                <div className="input-prefix">
+                  <span className="prefix">
+                    <SIco name="calendar" size={13} />
+                  </span>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={e => setStartDate(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="field">
+                <label className="label">End date</label>
+                <div className="input-prefix">
+                  <span className="prefix">
+                    <SIco name="calendar" size={13} />
+                  </span>
+                  <input
+                    type="date"
+                    value={targetDate}
+                    onChange={e => setTargetDate(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="field">
                 <label className="label">Category</label>
                 <select
                   className="select"
@@ -468,19 +526,6 @@ export function NewRunPage({
                     </option>
                   ))}
                 </select>
-              </div>
-              <div className="field">
-                <label className="label">End date</label>
-                <div className="input-prefix">
-                  <span className="prefix">
-                    <SIco name="calendar" size={13} />
-                  </span>
-                  <input
-                    type="date"
-                    value={targetDate}
-                    onChange={e => setTargetDate(e.target.value)}
-                  />
-                </div>
               </div>
               <div className="field">
                 <label className="label">
