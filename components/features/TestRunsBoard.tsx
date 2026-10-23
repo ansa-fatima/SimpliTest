@@ -1223,10 +1223,19 @@ function CycleRow({
         <div className="flex items-center gap-2">
           <span className="font-medium text-text">{c.name || moduleName}</span>
         </div>
-        {(c.portalName || c.moduleName || c.featureName) && (
-          <p className="text-[11px] text-text-3">
-            {[c.portalName, c.moduleName, c.featureName].filter(Boolean).join(' · ')}
-          </p>
+        {(c.portalName || c.moduleName || c.featureName || c.version) && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(c.portalName || c.moduleName || c.featureName) && (
+              <p className="text-[11px] text-text-3">
+                {[c.portalName, c.moduleName, c.featureName].filter(Boolean).join(' · ')}
+              </p>
+            )}
+            {c.version && (
+              <span className="rounded-full bg-primary-light px-1.5 py-px font-mono text-[10px] font-medium text-primary-text">
+                v{c.version.replace(/^vs*/i, '')}
+              </span>
+            )}
+          </div>
         )}
       </td>
       <td className="whitespace-nowrap px-3 py-2.5">
