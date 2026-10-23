@@ -12,6 +12,7 @@ interface SidebarProps {
 
   // QA Workspace nav
   onShowDashboard: () => void;
+  onShowTodo: () => void;
   onShowTestCases: () => void;
   onShowTestRunsBoard: () => void;
   onShowQuickLogs: () => void;
@@ -34,6 +35,7 @@ export function Sidebar({
   page,
   onShowProjects,
   onShowDashboard,
+  onShowTodo,
   onShowTestCases,
   onShowTestRunsBoard,
   onShowQuickLogs,
@@ -56,6 +58,7 @@ export function Sidebar({
           icon="overview"
           label="Overview"
         />
+        <SideBtn active={page === 'todo'} onClick={onShowTodo} icon="todo" label="My to-do" />
         <SideBtn
           active={TESTCASE_PAGES.includes(page)}
           onClick={onShowTestCases}

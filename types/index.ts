@@ -6,6 +6,7 @@ export type Page =
   | 'login'
   | 'projects'
   | 'dashboard'
+  | 'todo'
   | 'list'
   | 'view'
   | 'edit'

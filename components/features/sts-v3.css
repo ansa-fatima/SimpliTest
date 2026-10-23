@@ -3777,7 +3777,10 @@
     overflow-y: hidden;
   }
   .stv3 .side-btn {
-    width: 42px;
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 46px;
+    width: auto;
     height: 42px;
   }
   .stv3 .side-btn.active::before {
@@ -3822,4 +3825,73 @@
   .stv3 .run-shell .exec-pane {
     height: 100%;
   }
+}
+
+/* ── My to-do (screen 13) ─────────────────────────────────────────── */
+.stv3 .t .rcs {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  flex-shrink: 0;
+}
+.stv3 .t .rcs svg {
+  width: 8px;
+  height: 8px;
+  stroke: currentColor;
+  stroke-width: 3;
+  fill: none;
+}
+.stv3 .t .rcs.s-fail {
+  background: var(--err);
+}
+.stv3 .t .rcs.s-retest {
+  background: var(--info);
+}
+.stv3 .t .rcs.s-pending {
+  background: var(--bdr-2);
+}
+.stv3 .fpill.fpill-due {
+  background: var(--err-bg);
+  border-color: var(--err-bdr);
+  color: var(--err);
+}
+.stv3 .fpill.fpill-due:hover {
+  background: var(--err-bg);
+  color: var(--err);
+}
+.stv3 .fpill.fpill-due .count {
+  background: var(--err);
+  color: #fff;
+}
+.stv3 .fpill.fpill-due.active {
+  background: var(--err);
+  border-color: var(--err);
+  color: #fff;
+}
+.stv3 .fpill.fpill-due.active .count {
+  background: rgba(255, 255, 255, 0.28);
+}
+.stv3 .card-head.card-head-err {
+  background: linear-gradient(90deg, var(--err-bg), var(--c-surface));
+  border-bottom-color: var(--err-bdr);
+}
+.stv3 .todo-row {
+  cursor: pointer;
+}
+.stv3 .todo-filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.stv3 .todo-filters .select {
+  width: auto;
+  min-width: 180px;
+}
+/* Keep the status-dot column at the mockup's 40px (16px pad + 18px dot + 6px). */
+.stv3 .todo-row td:first-child {
+  padding-right: 6px;
 }

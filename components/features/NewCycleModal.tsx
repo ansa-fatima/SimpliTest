@@ -26,6 +26,10 @@ export interface CycleFormPayload {
   scopeId?: string | null;
   testCaseIds?: string[];
   targetDate?: string | null;
+  /** Assigned tester (User id) -- the run shows up on their My to-do. */
+  assigneeId?: string | null;
+  /** Planned start date of the run (YYYY-MM-DD). */
+  startDate?: string | null;
   /** When the cycle was actually executed (Manual-mode back-dating). */
   completedAt?: string | null;
   // Manual-mode fields

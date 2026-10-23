@@ -204,6 +204,8 @@ export async function POST(req: Request) {
       testCaseIds?: string[];
       targetDate?: string | null;
       completedAt?: string | null;
+      assigneeId?: string | null;
+      startDate?: string | null;
 
       // Manual-mode fields
       portalName?: string;
@@ -380,6 +382,8 @@ export async function POST(req: Request) {
         scopeType: body.scopeType,
         scopeId: body.scopeId ?? null,
         targetDate: body.targetDate ? new Date(body.targetDate) : null,
+        assigneeId: body.assigneeId || null,
+        startDate: body.startDate ? new Date(body.startDate) : null,
         // Optional run-context fields — useful even with case-by-case execution.
         environment: body.environment?.trim() || null,
         platform: body.platform?.trim() || null,

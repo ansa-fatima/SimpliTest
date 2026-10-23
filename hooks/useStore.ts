@@ -537,6 +537,7 @@ export function useStore() {
   }, []);
 
   const showDashboard = useCallback(() => update({ page: 'dashboard' }), [update]);
+  const showTodo = useCallback(() => update({ page: 'todo' }), [update]);
   const showProjects = useCallback(() => update({ page: 'projects' }), [update]);
   // Picking a project card makes it the active workspace and lands on its overview.
   const openProject = useCallback(
@@ -1246,6 +1247,7 @@ export function useStore() {
     renamePortal,
     closeCycle,
     showReports,
+    showTodo,
     showMembers,
     showRoles,
     showSettings,

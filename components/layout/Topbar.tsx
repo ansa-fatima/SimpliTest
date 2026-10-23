@@ -45,19 +45,22 @@ export function Topbar({
   onLogout,
 }: TopbarProps) {
   const onProjects = page === 'projects';
+  const onTodo = page === 'todo';
   const sectionLabel = onProjects
     ? 'Testcase System'
-    : page === 'testRuns' || page === 'newRun'
-      ? 'Test runs'
-      : page === 'roles'
-        ? 'Admin · Roles'
-        : page === 'quickLogs'
-          ? 'Quick logs'
-          : page === 'cycleOverview'
-            ? 'Test run'
-            : page === 'cycle'
-              ? 'Execution'
-              : 'Project';
+    : onTodo
+      ? 'My to-do'
+      : page === 'testRuns' || page === 'newRun'
+        ? 'Test runs'
+        : page === 'roles'
+          ? 'Admin · Roles'
+          : page === 'quickLogs'
+            ? 'Quick logs'
+            : page === 'cycleOverview'
+              ? 'Test run'
+              : page === 'cycle'
+                ? 'Execution'
+                : 'Project';
   return (
     <div className="stv3 stv3-host">
       <header className="topbar">
@@ -73,7 +76,7 @@ export function Topbar({
         <div className="section-name">
           <SIco
             name={
-              onProjects
+              onProjects || onTodo
                 ? 'todo'
                 : page === 'testRuns' ||
                     page === 'newRun' ||
@@ -88,15 +91,17 @@ export function Topbar({
           {sectionLabel}
         </div>
 
-        <ProjectSwitcher
-          projects={projects}
-          current={projects.find(p => p.id === currentProjectId) ?? null}
-          allProjects={onProjects}
-          onSwitch={onSwitchProject}
-          onCreate={onCreateProject}
-          onDelete={onDeleteProject}
-          onShowProjects={onShowProjects}
-        />
+        {!onTodo && (
+          <ProjectSwitcher
+            projects={projects}
+            current={projects.find(p => p.id === currentProjectId) ?? null}
+            allProjects={onProjects}
+            onSwitch={onSwitchProject}
+            onCreate={onCreateProject}
+            onDelete={onDeleteProject}
+            onShowProjects={onShowProjects}
+          />
+        )}
 
         <CaseSearch projectId={currentProjectId} onOpenCase={onOpenCase} />
 
