@@ -68,7 +68,9 @@ export function TestRunsBoard({
   onDelete,
   onReload,
 }: TestRunsBoardProps) {
-  const [runsFilter, setRunsFilter] = useState<'all' | 'active' | 'closed' | 'mine'>('all');
+  const [runsFilter, setRunsFilter] = useState<'all' | 'planned' | 'active' | 'closed' | 'mine'>(
+    'all',
+  );
   // The rich "Log a test cycle" slide-over (Quick Logs tab) — null when
   // closed, 'new' when creating, or the cycle being edited.
   const [cyclePanel, setCyclePanel] = useState<'new' | TestCycle | null>(null);
@@ -344,13 +346,15 @@ export function TestRunsBoard({
     c => !!currentUserName && !!c.tester && c.tester === currentUserName,
   );
   const visibleRuns =
-    runsFilter === 'active'
-      ? activeRuns
-      : runsFilter === 'closed'
-        ? completed
-        : runsFilter === 'mine'
-          ? mine
-          : caseBased;
+    runsFilter === 'planned'
+      ? planned
+      : runsFilter === 'active'
+        ? inProgress
+        : runsFilter === 'closed'
+          ? completed
+          : runsFilter === 'mine'
+            ? mine
+            : caseBased;
 
   return (
     <div className="stv3 main-scroll">
@@ -440,7 +444,8 @@ export function TestRunsBoard({
             {(
               [
                 ['all', 'All', caseBased.length],
-                ['active', 'Active', activeRuns.length],
+                ['planned', 'Planned', planned.length],
+                ['active', 'Active', inProgress.length],
                 ['closed', 'Closed', completed.length],
                 ['mine', 'My runs', mine.length],
               ] as const
@@ -948,13 +953,14 @@ function CycleFilters({
 }) {
   const selectCls =
     'rounded-full border border-border bg-[var(--c-surface)] px-3 py-1.5 text-[12.5px] text-[var(--t-1)] outline-none focus:border-[var(--brand-700)] sts-select';
-  const labelCls = 'text-[10.5px] font-semibold uppercase tracking-wide text-[var(--t-3)]';
+  const labelCls =
+    'whitespace-nowrap text-[10.5px] font-semibold uppercase tracking-wide text-[var(--t-3)]';
   return (
     <div className="mb-4 flex flex-col gap-3 rounded-xl border border-border bg-[var(--c-surface)] p-3">
       {/* Row 0 -- Search box + Outcome chips. Search covers title, module,
           feature, ticket and tester, so the keyboard-first way to find a
           cycle is the one typists expect. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-2">
         <div className="relative w-full sm:w-auto sm:min-w-[220px] sm:flex-1">
           <i className="ti ti-search pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-[var(--t-3)]" />
           <input
@@ -975,27 +981,26 @@ function CycleFilters({
             </button>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-          <span className={cn(labelCls, 'mr-1')}>Outcome</span>
+        <FilterRow label="Outcome" labelCls={labelCls} scroll>
           <FilterChip
             active={outcomeFilter === ''}
             onClick={() => setOutcomeFilter('')}
             label={`All · ${outcomeCounts.all}`}
           />
-          {(['Pass', 'Fail', 'Blocked', 'Open'] as const).map(o => (
+          {(['Open', 'Pass', 'Fail', 'Blocked'] as const).map(o => (
             <FilterChip
               key={o}
+              tone={o === 'Pass' ? 'ok' : o === 'Fail' ? 'err' : o === 'Open' ? 'warn' : 'neutral'}
               active={outcomeFilter === o}
               onClick={() => setOutcomeFilter(outcomeFilter === o ? '' : o)}
               label={`${o} · ${outcomeCounts[o]}`}
             />
           ))}
-        </div>
+        </FilterRow>
       </div>
 
       {/* Row 1 -- Period pills + Sprints dropdown */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <span className={cn(labelCls, 'mr-1')}>Period</span>
+      <FilterRow label="Period" labelCls={labelCls} scroll>
         <FilterChip
           active={periodMode === 'all'}
           onClick={() => {
@@ -1013,7 +1018,7 @@ function CycleFilters({
         <select
           value={sprintFilter}
           onChange={e => setSprintFilter(e.target.value)}
-          className={selectCls}
+          className={cn(selectCls, 'flex-shrink-0')}
         >
           <option value="">Sprints</option>
           {sprintOptions.map(s => (
@@ -1023,7 +1028,7 @@ function CycleFilters({
           ))}
         </select>
         {periodMode === 'custom' && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-shrink-0 items-center gap-2">
             <input
               type="date"
               value={periodStart}
@@ -1044,24 +1049,23 @@ function CycleFilters({
                   setPeriodStart('');
                   setPeriodEnd('');
                 }}
-                className="text-[11.5px] text-[var(--t-3)] underline-offset-2 hover:text-text hover:underline"
+                className="text-[11.5px] text-[var(--t-3)] underline-offset-2 hover:text-[var(--t-1)] hover:underline"
               >
                 Clear
               </button>
             )}
           </div>
         )}
-      </div>
+      </FilterRow>
 
-      {/* Row 2 -- Module / Engineer dropdowns + Portal pills. Each label stays
-          with its control, and the dropdowns stretch to full width on phones. */}
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2.5">
-        <div className="flex w-full items-center gap-2 sm:w-auto">
-          <span className={labelCls}>Module</span>
+      {/* Row 2 -- Module / Engineer dropdowns + Portal pills. Every row is a
+          fixed label column + its own controls, so everything lines up. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-5 sm:gap-y-2.5">
+        <FilterRow label="Module" labelCls={labelCls}>
           <select
             value={moduleFilter}
             onChange={e => setModuleFilter(e.target.value)}
-            className={cn(selectCls, 'min-w-0 flex-1 sm:flex-none')}
+            className={cn(selectCls, 'w-full sm:w-auto')}
           >
             <option value="">All modules</option>
             {moduleOptions.map(m => (
@@ -1070,14 +1074,13 @@ function CycleFilters({
               </option>
             ))}
           </select>
-        </div>
+        </FilterRow>
 
-        <div className="flex w-full items-center gap-2 sm:w-auto">
-          <span className={labelCls}>Engineer</span>
+        <FilterRow label="Engineer" labelCls={labelCls}>
           <select
             value={engineerFilter}
             onChange={e => setEngineerFilter(e.target.value)}
-            className={cn(selectCls, 'min-w-0 flex-1 sm:flex-none')}
+            className={cn(selectCls, 'w-full sm:w-auto')}
           >
             <option value="">All engineers</option>
             {engineerOptions.map(m => (
@@ -1086,11 +1089,10 @@ function CycleFilters({
               </option>
             ))}
           </select>
-        </div>
+        </FilterRow>
 
         {portalOptions.length > 0 && (
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-            <span className={cn(labelCls, 'mr-1')}>Portal</span>
+          <FilterRow label="Portal" labelCls={labelCls} scroll>
             <FilterChip
               active={portalFilter === ''}
               onClick={() => setPortalFilter('')}
@@ -1104,31 +1106,87 @@ function CycleFilters({
                 label={p}
               />
             ))}
-          </div>
+          </FilterRow>
         )}
       </div>
     </div>
   );
 }
 
+// One filter line: a fixed-width label column (so every row's controls start
+// at the same x on phones) next to its controls. `scroll` makes the controls
+// swipe sideways on phones instead of wrapping; from sm up it's inline + wrapping.
+function FilterRow({
+  label,
+  labelCls,
+  scroll,
+  children,
+}: {
+  label: string;
+  labelCls: string;
+  scroll?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-[68px_minmax(0,1fr)] items-center gap-x-2 sm:flex sm:w-auto sm:flex-wrap sm:gap-x-3">
+      <span className={labelCls}>{label}</span>
+      <div
+        className={cn(
+          'min-w-0',
+          scroll &&
+            'chip-scroll flex flex-nowrap items-center gap-2 overflow-x-auto sm:flex-wrap sm:overflow-visible',
+        )}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+type ChipTone = 'ok' | 'err' | 'warn' | 'neutral';
+
+// Tinted chip classes per status colour (STS tokens, so dark mode follows).
+const CHIP_TONE: Record<ChipTone, { idle: string; on: string }> = {
+  ok: {
+    idle: 'border-[var(--ok-bdr)] bg-[var(--ok-bg)] text-[var(--ok)] hover:brightness-95',
+    on: 'border-[var(--ok)] bg-[var(--ok)] text-white',
+  },
+  err: {
+    idle: 'border-[var(--err-bdr)] bg-[var(--err-bg)] text-[var(--err)] hover:brightness-95',
+    on: 'border-[var(--err)] bg-[var(--err)] text-white',
+  },
+  warn: {
+    idle: 'border-[var(--warn-bdr)] bg-[var(--warn-bg)] text-[var(--warn)] hover:brightness-95',
+    on: 'border-[var(--warn)] bg-[var(--warn)] text-white',
+  },
+  neutral: {
+    idle: 'border-[var(--neutral-bdr)] bg-[var(--neutral-bg)] text-[var(--neutral)] hover:brightness-95',
+    on: 'border-[var(--neutral)] bg-[var(--neutral)] text-white',
+  },
+};
+
 function FilterChip({
   active,
   onClick,
   label,
+  tone,
 }: {
   active: boolean;
   onClick: () => void;
   label: string;
+  tone?: ChipTone;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        'rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors',
-        active
-          ? 'border border-[var(--brand-700)] bg-[var(--brand-700)] text-white'
-          : 'border border-border bg-[var(--c-surface)] text-[var(--t-2)] hover:bg-[var(--bg-2)] hover:text-[var(--t-1)]',
+        'flex-shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+        tone
+          ? cn('border', active ? CHIP_TONE[tone].on : CHIP_TONE[tone].idle)
+          : active
+            ? 'border border-[var(--brand-700)] bg-[var(--brand-700)] text-white'
+            : 'border border-border bg-[var(--c-surface)] text-[var(--t-2)] hover:bg-[var(--bg-2)] hover:text-[var(--t-1)]',
       )}
     >
       {label}
@@ -1160,7 +1218,7 @@ function CyclesTable({
 }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-border bg-[var(--c-surface)]">
-      <table className="w-full border-collapse text-[13px]">
+      <table className="ql-table w-full border-collapse text-[13px]">
         <thead>
           <tr className="border-b border-border bg-[var(--c-bg)] text-[11.5px] uppercase tracking-[0.05em] text-[var(--t-3)]">
             <th className="whitespace-nowrap px-3 py-[11px] text-left font-semibold">Date</th>
@@ -1227,10 +1285,10 @@ function CycleRow({
       onClick={onView}
       className="cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-[var(--brand-50)]"
     >
-      <td className="whitespace-nowrap px-3 py-2.5 text-[var(--t-2)]">
+      <td className="ql-date whitespace-nowrap px-3 py-2.5 text-[var(--t-2)]">
         {localDateStr(new Date(c.completedAt ?? c.createdAt))}
       </td>
-      <td className="px-3 py-2.5">
+      <td className="ql-title px-3 py-2.5">
         <div className="flex items-center gap-2">
           <span className="font-medium text-[var(--t-1)]">{c.name || moduleName}</span>
         </div>
@@ -1252,7 +1310,7 @@ function CycleRow({
           </div>
         )}
       </td>
-      <td className="whitespace-nowrap px-3 py-2.5">
+      <td className="ql-tester whitespace-nowrap px-3 py-2.5" data-label="Tested by">
         {tester ? (
           <span className="inline-flex items-center gap-1.5 text-[13px] text-[var(--t-2)]">
             <span className="avatar sm" style={{ background: avatarGradient(tester) }}>
@@ -1264,9 +1322,17 @@ function CycleRow({
           <span className="text-[var(--t-3)]">—</span>
         )}
       </td>
-      <td className="whitespace-nowrap px-3 py-2.5 text-[var(--t-2)]">{c.environment || '—'}</td>
-      <td className="whitespace-nowrap px-3 py-2.5 text-[var(--t-2)]">{c.cycleCategory || '—'}</td>
-      <td className="whitespace-nowrap px-3 py-2.5" onClick={e => e.stopPropagation()}>
+      <td className="ql-env whitespace-nowrap px-3 py-2.5 text-[var(--t-2)]" data-label="Env">
+        {c.environment || '—'}
+      </td>
+      <td className="ql-type whitespace-nowrap px-3 py-2.5 text-[var(--t-2)]" data-label="Type">
+        {c.cycleCategory || '—'}
+      </td>
+      <td
+        className="ql-ticket whitespace-nowrap px-3 py-2.5"
+        data-label="Ticket"
+        onClick={e => e.stopPropagation()}
+      >
         {(() => {
           const keys = parseIssueKeys(c.ticketLink);
           if (keys.length === 0) {
@@ -1295,7 +1361,7 @@ function CycleRow({
           );
         })()}
       </td>
-      <td className="whitespace-nowrap px-3 py-2.5">
+      <td className="ql-issues whitespace-nowrap px-3 py-2.5" data-label="Issues">
         <div className="flex items-center gap-1.5">
           <span className="font-semibold text-[var(--t-1)]">{total}</span>
           {total > 0 &&
@@ -1313,15 +1379,18 @@ function CycleRow({
             ))}
         </div>
       </td>
-      <td className="whitespace-nowrap px-3 py-2.5 text-right">
+      <td className="ql-open whitespace-nowrap px-3 py-2.5 text-right" data-label="Open">
         <span className={cn('font-semibold', open > 0 ? 'text-[var(--t-1)]' : 'text-[var(--t-3)]')}>
           {open}
         </span>
       </td>
-      <td className="whitespace-nowrap px-3 py-2.5">
+      <td className="ql-outcome whitespace-nowrap px-3 py-2.5">
         <span className={cn('pill', tonePill)}>{outcome}</span>
       </td>
-      <td className="whitespace-nowrap px-3 py-2.5 text-right" onClick={e => e.stopPropagation()}>
+      <td
+        className="ql-actions whitespace-nowrap px-3 py-2.5 text-right"
+        onClick={e => e.stopPropagation()}
+      >
         <div className="flex items-center justify-end gap-1">
           <button
             type="button"

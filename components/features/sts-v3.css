@@ -4013,3 +4013,177 @@ select.sts-select {
     justify-self: end;
   }
 }
+
+/* Quick logs table: fixed column widths so the columns don't jump around as
+   the filters change which rows are shown; the title column takes the rest. */
+@media (min-width: 901px) {
+  .stv3 table.ql-table {
+    table-layout: fixed;
+    min-width: 1240px;
+  }
+  .stv3 table.ql-table th:nth-child(1) {
+    width: 104px;
+  }
+  .stv3 table.ql-table th:nth-child(3) {
+    width: 170px;
+  }
+  .stv3 table.ql-table th:nth-child(4) {
+    width: 96px;
+  }
+  .stv3 table.ql-table th:nth-child(5) {
+    width: 112px;
+  }
+  .stv3 table.ql-table th:nth-child(6) {
+    width: 150px;
+  }
+  .stv3 table.ql-table th:nth-child(7) {
+    width: 150px;
+  }
+  .stv3 table.ql-table th:nth-child(8) {
+    width: 64px;
+  }
+  .stv3 table.ql-table th:nth-child(9) {
+    width: 96px;
+  }
+  .stv3 table.ql-table th:nth-child(10) {
+    width: 76px;
+  }
+}
+
+/* Quick logs on phones/tablets: a compact card per log instead of a
+   sideways-scrolling table -- title first, then short facts that wrap inline
+   (no per-field labels), actions pinned to the top-right corner. */
+@media (max-width: 900px) {
+  .stv3 table.ql-table,
+  .stv3 table.ql-table tbody {
+    display: block;
+    width: 100%;
+  }
+  .stv3 table.ql-table thead {
+    display: none;
+  }
+  .stv3 table.ql-table tr {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--bdr);
+  }
+  .stv3 table.ql-table tr:last-child {
+    border-bottom: none;
+  }
+  .stv3 table.ql-table td {
+    display: block;
+    padding: 0 !important;
+    border: none;
+    min-width: 0;
+    text-align: left !important;
+    white-space: normal !important;
+    font-size: 12px;
+  }
+  /* Title takes a full line; room on the right for the edit/delete buttons. */
+  .stv3 table.ql-table .ql-title {
+    order: 1;
+    flex: 1 0 100%;
+    padding-right: 58px !important;
+    font-size: 13px;
+  }
+  .stv3 table.ql-table .ql-actions {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+  }
+  /* Line 2: outcome pill, date, env, type. */
+  .stv3 table.ql-table .ql-outcome {
+    order: 2;
+  }
+  .stv3 table.ql-table .ql-date {
+    order: 3;
+    color: var(--t-3);
+  }
+  .stv3 table.ql-table .ql-env,
+  .stv3 table.ql-table .ql-type {
+    order: 4;
+    color: var(--t-3);
+  }
+  .stv3 table.ql-table .ql-env::before,
+  .stv3 table.ql-table .ql-type::before {
+    content: '·';
+    margin-right: 12px;
+    color: var(--t-4);
+  }
+  /* Line 3: who and which ticket. */
+  .stv3 table.ql-table .ql-tester {
+    order: 5;
+  }
+  .stv3 table.ql-table .ql-ticket {
+    order: 6;
+    margin-left: auto;
+  }
+  /* Line 4: issue counts. */
+  .stv3 table.ql-table .ql-issues {
+    order: 7;
+  }
+  .stv3 table.ql-table .ql-open {
+    order: 8;
+    margin-left: auto;
+    color: var(--t-3);
+  }
+  .stv3 table.ql-table .ql-open::before {
+    content: 'Open ';
+    color: var(--t-4);
+  }
+  .stv3 table.ql-table .ql-issues::before {
+    content: 'Issues ';
+    color: var(--t-4);
+    margin-right: 4px;
+  }
+  .stv3 table.ql-table .ql-issues > div {
+    display: inline-flex;
+    vertical-align: middle;
+  }
+}
+
+/* Chip rows that scroll sideways on phones instead of wrapping (hidden
+   scrollbar; the row simply swipes). */
+.stv3 .chip-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.stv3 .chip-scroll::-webkit-scrollbar {
+  display: none;
+}
+.stv3 .chip-scroll > * {
+  flex-shrink: 0;
+}
+@media (min-width: 640px) {
+  .stv3 .chip-scroll > * {
+    flex-shrink: 1;
+  }
+}
+
+/* Phones: soften the edges of the swipeable chip rows so a half-hidden chip
+   fades out instead of being sliced off right next to the label. The 12px
+   padding keeps resting chips fully opaque and in the same x position. */
+@media (max-width: 639px) {
+  .stv3 .chip-scroll {
+    margin-inline: -12px;
+    padding-inline: 12px;
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      #000 12px,
+      #000 calc(100% - 12px),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      #000 12px,
+      #000 calc(100% - 12px),
+      transparent 100%
+    );
+  }
+}
