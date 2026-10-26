@@ -62,7 +62,7 @@ export function JiraTicketLink({
       target="_blank"
       rel="noreferrer"
       onClick={e => e.stopPropagation()}
-      className={cn(className, 'hover:text-primary hover:underline')}
+      className={cn('text-[#0052CC] hover:text-[#0747A6]', className, 'hover:underline')}
     >
       {label}
     </a>

@@ -1097,7 +1097,7 @@ function JiraSyncPanel({
           <JiraTicketLink
             ticketLink={cycle.ticketLink!}
             siteUrl={cycle.jiraSiteUrl ?? siteUrl}
-            className="truncate font-mono text-[12px] text-text-2"
+            className="truncate font-mono text-[12px] text-[#0052CC] hover:text-[#0747A6]"
           />
         </div>
         {jiraConnected && (

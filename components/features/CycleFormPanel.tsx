@@ -8,6 +8,7 @@ import { CycleFormPayload } from './NewCycleModal';
 import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 import type { JiraSubIssueInfo } from '@/lib/jira';
 import { CYCLE_OUTCOMES, deriveOutcome } from '@/lib/cycleOutcome';
+import './sts-v3.css';
 
 interface ApiModule {
   id: string;
@@ -43,6 +44,7 @@ const CATEGORIES = ['Functional', 'Regression', 'Stability', 'UI', 'Performance'
 
 const inputCls =
   'w-full rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary-light';
+const selectCls = `${inputCls} sts-select`;
 const labelCls = 'mb-1 block text-[11px] font-semibold uppercase tracking-wide text-text-2';
 
 interface CycleFormPanelProps {
@@ -385,7 +387,7 @@ export function CycleFormPanel({
                     setFeatureNameFree('');
                   }
                 }}
-                className={inputCls}
+                className={selectCls}
               >
                 <option value="">—</option>
                 {withCurrent(
@@ -411,7 +413,7 @@ export function CycleFormPanel({
                   setFeatureNameFree('');
                   if (m && !portalName) setPortalNameFree(m.portalName);
                 }}
-                className={inputCls}
+                className={selectCls}
               >
                 <option value="">—</option>
                 {withCurrent(
@@ -430,7 +432,7 @@ export function CycleFormPanel({
                 value={featureName}
                 onChange={e => setFeatureNameFree(e.target.value)}
                 disabled={!moduleName && !featureName}
-                className={cn(inputCls, !moduleName && !featureName && 'opacity-60')}
+                className={cn(selectCls, !moduleName && !featureName && 'opacity-60')}
               >
                 <option value="">{moduleName ? '—' : 'Pick a module first'}</option>
                 {withCurrent(
@@ -540,7 +542,7 @@ export function CycleFormPanel({
               <select
                 value={outcome}
                 onChange={e => setOutcome(e.target.value)}
-                className={inputCls}
+                className={selectCls}
               >
                 {CYCLE_OUTCOMES.map(o => (
                   <option key={o} value={o}>
@@ -566,7 +568,7 @@ export function CycleFormPanel({
                     if (v === '__custom__') return; // keep whatever free-text is in `engineer`
                     setEngineer(v);
                   }}
-                  className={inputCls}
+                  className={selectCls}
                 >
                   <option value="">Unattributed</option>
                   {users.map(u => (

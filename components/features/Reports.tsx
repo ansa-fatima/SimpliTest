@@ -5,6 +5,7 @@ import { api } from '@/lib/client';
 import { avatarColour, cn, initials, relativeTime, severityBadge } from '@/lib/utils';
 import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 import { CycleInfoModal } from './CycleInfoModal';
+import { SIco } from '@/components/layout/sts-icons';
 import { Portal, RunResult, Severity } from '@/types';
 
 interface ReportsProps {
@@ -560,7 +561,7 @@ function ReportJumpCard({
     <button
       type="button"
       onClick={onClick}
-      className="group flex flex-col rounded-lg border border-border bg-surface p-5 text-left transition-colors hover:border-primary hover:shadow-sm"
+      className="group flex flex-col rounded-xl border border-border bg-[var(--c-surface)] p-5 text-left transition-colors hover:border-[var(--brand-300)] hover:shadow-sm"
     >
       <div className="mb-3 flex items-start justify-between">
         <span
@@ -571,7 +572,9 @@ function ReportJumpCard({
         >
           <i className={cn('ti', meta.icon, 'text-[20px]')} />
         </span>
-        <i className="ti ti-chevron-right flex-shrink-0 text-[16px] text-text-3 transition-transform group-hover:translate-x-0.5" />
+        <span className="report-jump-arrow">
+          <SIco name="chevron-right" size={22} />
+        </span>
       </div>
       <h3 className="text-[15px] font-semibold text-text">{meta.label}</h3>
       <p className="mt-1 text-[12.5px] leading-relaxed text-text-3">{meta.description}</p>
@@ -902,7 +905,7 @@ function StabilityReport({
                         title={m.total > 0 ? `View ${m.total} contributing log(s)` : undefined}
                         className={cn(
                           'flex-shrink-0 rounded px-1 py-0.5',
-                          m.total > 0 && 'cursor-pointer hover:bg-surface-2',
+                          m.total > 0 && 'cursor-pointer hover:bg-[var(--brand-50)]',
                         )}
                       >
                         <StabilityStats node={m} />
@@ -937,7 +940,7 @@ function StabilityReport({
                               }
                               className={cn(
                                 'flex-shrink-0 rounded px-1 py-0.5',
-                                s.total > 0 && 'cursor-pointer hover:bg-surface-2',
+                                s.total > 0 && 'cursor-pointer hover:bg-[var(--brand-50)]',
                               )}
                             >
                               <StabilityStats node={s} compact />
@@ -1488,7 +1491,7 @@ function CycleHistoryReport({
                   <tr
                     key={c.id}
                     onClick={() => setViewingCycleId(c.id)}
-                    className="cursor-pointer border-b border-border last:border-b-0 hover:bg-surface-2"
+                    className="cursor-pointer border-b border-border last:border-b-0 hover:bg-[var(--brand-50)]"
                   >
                     <td
                       className="max-w-[220px] truncate px-3 py-2 font-medium text-text"
@@ -1651,7 +1654,7 @@ function JiraIssueRowView({
               <JiraTicketLink
                 ticketLink={issue.issueKey}
                 siteUrl={resolvedSiteUrl}
-                className="font-mono text-[10.5px] text-text-3"
+                className="font-mono text-[10.5px] text-[#0052CC] hover:text-[#0747A6]"
               />
               {resolvedSiteUrl && <i className="ti ti-external-link text-[10px] text-text-3" />}
             </span>

@@ -553,7 +553,7 @@ export function TestRunsBoard({
                   <select
                     value={pageSize}
                     onChange={e => setPageSize(Number(e.target.value))}
-                    className="rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
+                    className="sts-select rounded-md border border-border bg-[var(--c-surface)] py-1 !pr-7 pl-2 text-[12px] text-[var(--t-1)] outline-none focus:border-[var(--brand-700)]"
                   >
                     {PAGE_SIZES.map(n => (
                       <option key={n} value={n}>
@@ -675,7 +675,7 @@ function RunsTable({
   onDelete: (c: TestCycle) => void;
 }) {
   return (
-    <table className="t">
+    <table className="t runs-table">
       <thead>
         <tr>
           <th>Run</th>
@@ -732,7 +732,7 @@ function RunRow({
 
   return (
     <tr>
-      <td>
+      <td className="rt-title">
         <div className="row-title" style={{ cursor: 'pointer' }} onClick={onDetails}>
           {c.name}
         </div>
@@ -740,19 +740,19 @@ function RunRow({
           {scope} · {total.toLocaleString()} cases
         </div>
       </td>
-      <td>
+      <td className="rt-status">
         <span className={cn('pill', st.pill)}>
           {st.dot && <span className="dot" />} {st.label}
         </span>
       </td>
-      <td>
+      <td className={cn('rt-milestone', !version && 'rt-empty')}>
         {version ? (
           <span className={cn('pill', active ? 'pill-brand' : 'pill-neutral')}>{version}</span>
         ) : (
           <span style={{ color: 'var(--t-4)' }}>—</span>
         )}
       </td>
-      <td>
+      <td className="rt-progress">
         <div className="progress" style={{ width: 140 }}>
           <div className="progress-stacked">
             <span style={{ width: `${pct(counts.Passed)}%`, background: 'var(--ok)' }} />
@@ -766,7 +766,7 @@ function RunRow({
           {st.label === 'Failing' ? ` · ${counts.Failed} failed` : ''}
         </div>
       </td>
-      <td>
+      <td className="rt-pass" data-label="Pass">
         <span
           style={{
             fontWeight: 600,
@@ -783,7 +783,7 @@ function RunRow({
           {passRate === null ? '—' : `${passRate.toFixed(1)}%`}
         </span>
       </td>
-      <td>
+      <td className="rt-owner" data-label="Owner">
         {c.tester ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <div className="avatar sm" style={{ background: avatarGradient(c.tester) }}>
@@ -795,7 +795,7 @@ function RunRow({
           <span style={{ color: 'var(--t-4)' }}>Unassigned</span>
         )}
       </td>
-      <td>
+      <td className="rt-actions">
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, position: 'relative' }}>
           {active && (
             <button
@@ -947,53 +947,55 @@ function CycleFilters({
   sprintOptions: string[];
 }) {
   const selectCls =
-    'rounded-full border border-border bg-surface px-3 py-1.5 text-[12.5px] text-text outline-none focus:border-primary';
-  const labelCls = 'text-[10.5px] font-semibold uppercase tracking-wide text-text-3';
+    'rounded-full border border-border bg-[var(--c-surface)] px-3 py-1.5 text-[12.5px] text-[var(--t-1)] outline-none focus:border-[var(--brand-700)] sts-select';
+  const labelCls = 'text-[10.5px] font-semibold uppercase tracking-wide text-[var(--t-3)]';
   return (
-    <div className="mb-4 flex flex-col gap-3 rounded-lg border border-border bg-surface p-3">
+    <div className="mb-4 flex flex-col gap-3 rounded-xl border border-border bg-[var(--c-surface)] p-3">
       {/* Row 0 -- Search box + Outcome chips. Search covers title, module,
           feature, ticket and tester, so the keyboard-first way to find a
           cycle is the one typists expect. */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="relative min-w-[220px] flex-1">
-          <i className="ti ti-search pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-text-3" />
+        <div className="relative w-full sm:w-auto sm:min-w-[220px] sm:flex-1">
+          <i className="ti ti-search pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-[var(--t-3)]" />
           <input
             type="search"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search title, module, feature, ticket or tester…"
-            className="w-full rounded-full border border-border bg-surface py-1.5 pl-8 pr-3 text-[12.5px] text-text outline-none focus:border-primary"
+            className="w-full rounded-full border border-border bg-[var(--c-surface)] py-1.5 pl-8 pr-3 text-[12.5px] text-[var(--t-1)] outline-none focus:border-[var(--brand-700)]"
           />
           {searchQuery && (
             <button
               type="button"
               onClick={() => setSearchQuery('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-3 hover:text-text"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--t-3)] hover:text-[var(--t-1)]"
               title="Clear search"
             >
               <i className="ti ti-x text-[12px]" />
             </button>
           )}
         </div>
-        <span className={labelCls}>Outcome</span>
-        <FilterChip
-          active={outcomeFilter === ''}
-          onClick={() => setOutcomeFilter('')}
-          label={`All · ${outcomeCounts.all}`}
-        />
-        {(['Pass', 'Fail', 'Blocked', 'Open'] as const).map(o => (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+          <span className={cn(labelCls, 'mr-1')}>Outcome</span>
           <FilterChip
-            key={o}
-            active={outcomeFilter === o}
-            onClick={() => setOutcomeFilter(outcomeFilter === o ? '' : o)}
-            label={`${o} · ${outcomeCounts[o]}`}
+            active={outcomeFilter === ''}
+            onClick={() => setOutcomeFilter('')}
+            label={`All · ${outcomeCounts.all}`}
           />
-        ))}
+          {(['Pass', 'Fail', 'Blocked', 'Open'] as const).map(o => (
+            <FilterChip
+              key={o}
+              active={outcomeFilter === o}
+              onClick={() => setOutcomeFilter(outcomeFilter === o ? '' : o)}
+              label={`${o} · ${outcomeCounts[o]}`}
+            />
+          ))}
+        </div>
       </div>
 
       {/* Row 1 -- Period pills + Sprints dropdown */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <span className={labelCls}>Period</span>
+        <span className={cn(labelCls, 'mr-1')}>Period</span>
         <FilterChip
           active={periodMode === 'all'}
           onClick={() => {
@@ -1028,7 +1030,7 @@ function CycleFilters({
               onChange={e => setPeriodStart(e.target.value)}
               className={selectCls}
             />
-            <span className="text-[12px] text-text-3">→</span>
+            <span className="text-[12px] text-[var(--t-3)]">→</span>
             <input
               type="date"
               value={periodEnd}
@@ -1042,7 +1044,7 @@ function CycleFilters({
                   setPeriodStart('');
                   setPeriodEnd('');
                 }}
-                className="text-[11.5px] text-text-3 underline-offset-2 hover:text-text hover:underline"
+                className="text-[11.5px] text-[var(--t-3)] underline-offset-2 hover:text-text hover:underline"
               >
                 Clear
               </button>
@@ -1051,39 +1053,44 @@ function CycleFilters({
         )}
       </div>
 
-      {/* Row 2 -- Module / Engineer dropdowns + Portal pills */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <span className={labelCls}>Module</span>
-        <select
-          value={moduleFilter}
-          onChange={e => setModuleFilter(e.target.value)}
-          className={selectCls}
-        >
-          <option value="">All modules</option>
-          {moduleOptions.map(m => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
+      {/* Row 2 -- Module / Engineer dropdowns + Portal pills. Each label stays
+          with its control, and the dropdowns stretch to full width on phones. */}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2.5">
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <span className={labelCls}>Module</span>
+          <select
+            value={moduleFilter}
+            onChange={e => setModuleFilter(e.target.value)}
+            className={cn(selectCls, 'min-w-0 flex-1 sm:flex-none')}
+          >
+            <option value="">All modules</option>
+            {moduleOptions.map(m => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
 
-        <span className={cn(labelCls, 'ml-3')}>Engineer</span>
-        <select
-          value={engineerFilter}
-          onChange={e => setEngineerFilter(e.target.value)}
-          className={selectCls}
-        >
-          <option value="">All engineers</option>
-          {engineerOptions.map(m => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <span className={labelCls}>Engineer</span>
+          <select
+            value={engineerFilter}
+            onChange={e => setEngineerFilter(e.target.value)}
+            className={cn(selectCls, 'min-w-0 flex-1 sm:flex-none')}
+          >
+            <option value="">All engineers</option>
+            {engineerOptions.map(m => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
 
         {portalOptions.length > 0 && (
-          <>
-            <span className={cn(labelCls, 'ml-3')}>Portal</span>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+            <span className={cn(labelCls, 'mr-1')}>Portal</span>
             <FilterChip
               active={portalFilter === ''}
               onClick={() => setPortalFilter('')}
@@ -1097,7 +1104,7 @@ function CycleFilters({
                 label={p}
               />
             ))}
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -1120,8 +1127,8 @@ function FilterChip({
       className={cn(
         'rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors',
         active
-          ? 'bg-primary text-white'
-          : 'border border-border bg-surface text-text-2 hover:bg-surface-2',
+          ? 'border border-[var(--brand-700)] bg-[var(--brand-700)] text-white'
+          : 'border border-border bg-[var(--c-surface)] text-[var(--t-2)] hover:bg-[var(--bg-2)] hover:text-[var(--t-1)]',
       )}
     >
       {label}
@@ -1129,11 +1136,13 @@ function FilterChip({
   );
 }
 
-function outcomeTone(outcome: CycleOutcome): { bg: string; text: string } {
-  if (outcome === 'Pass') return { bg: 'bg-success-bg', text: 'text-success-text' };
-  if (outcome === 'Fail') return { bg: 'bg-danger-bg', text: 'text-danger-text' };
-  if (outcome === 'Blocked') return { bg: 'bg-slate-500/15', text: 'text-slate-600' };
-  return { bg: 'bg-warning-bg', text: 'text-warning-text' }; // Open
+// Outcome -> the redesign's bordered pill (same look as Pass/Fail in the
+// other lists): green / red / grey / amber.
+function outcomePill(outcome: CycleOutcome): string {
+  if (outcome === 'Pass') return 'pill-ok';
+  if (outcome === 'Fail') return 'pill-err';
+  if (outcome === 'Blocked') return 'pill-neutral';
+  return 'pill-warn'; // Open
 }
 
 function CyclesTable({
@@ -1150,20 +1159,22 @@ function CyclesTable({
   onDelete: (c: TestCycle) => void;
 }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full border-collapse text-[12.5px]">
+    <div className="overflow-x-auto rounded-xl border border-border bg-[var(--c-surface)]">
+      <table className="w-full border-collapse text-[13px]">
         <thead>
-          <tr className="border-b border-border bg-surface-2 text-[10.5px] uppercase tracking-wide text-text-3">
-            <th className="px-3 py-2.5 text-left font-semibold">Date</th>
-            <th className="px-3 py-2.5 text-left font-semibold">Module · Feature</th>
-            <th className="px-3 py-2.5 text-left font-semibold">Tested by</th>
-            <th className="px-3 py-2.5 text-left font-semibold">Env</th>
-            <th className="px-3 py-2.5 text-left font-semibold">Type</th>
-            <th className="px-3 py-2.5 text-left font-semibold">Ticket</th>
-            <th className="px-3 py-2.5 text-left font-semibold">Issues</th>
-            <th className="px-3 py-2.5 text-right font-semibold">Open</th>
-            <th className="px-3 py-2.5 text-left font-semibold">Outcome</th>
-            <th className="px-3 py-2.5 text-right font-semibold" />
+          <tr className="border-b border-border bg-[var(--c-bg)] text-[11.5px] uppercase tracking-[0.05em] text-[var(--t-3)]">
+            <th className="whitespace-nowrap px-3 py-[11px] text-left font-semibold">Date</th>
+            <th className="whitespace-nowrap px-3 py-[11px] text-left font-semibold">
+              Portal · Module · Feature
+            </th>
+            <th className="whitespace-nowrap px-3 py-[11px] text-left font-semibold">Tested by</th>
+            <th className="whitespace-nowrap px-3 py-[11px] text-left font-semibold">Env</th>
+            <th className="whitespace-nowrap px-3 py-[11px] text-left font-semibold">Type</th>
+            <th className="whitespace-nowrap px-3 py-[11px] text-left font-semibold">Ticket</th>
+            <th className="whitespace-nowrap px-3 py-[11px] text-left font-semibold">Issues</th>
+            <th className="whitespace-nowrap px-3 py-[11px] text-right font-semibold">Open</th>
+            <th className="whitespace-nowrap px-3 py-[11px] text-left font-semibold">Outcome</th>
+            <th className="whitespace-nowrap px-3 py-[11px] text-right font-semibold" />
           </tr>
         </thead>
         <tbody>
@@ -1199,7 +1210,7 @@ function CycleRow({
   const total = c.issueCount ?? 0;
   const open = c.remainingCount ?? Math.max(0, total - (c.doneCount ?? 0));
   const outcome = deriveOutcome(c);
-  const tone = outcomeTone(outcome);
+  const tonePill = outcomePill(outcome);
   const moduleName = c.moduleName || c.portalName || 'Unscoped';
   const tester = (c.loggedBy ?? '').trim();
   // Per-severity chips -- label is for the hover tooltip; `pill` is the
@@ -1214,25 +1225,28 @@ function CycleRow({
   return (
     <tr
       onClick={onView}
-      className="cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-surface-2"
+      className="cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-[var(--brand-50)]"
     >
-      <td className="whitespace-nowrap px-3 py-2.5 text-text-2">
+      <td className="whitespace-nowrap px-3 py-2.5 text-[var(--t-2)]">
         {localDateStr(new Date(c.completedAt ?? c.createdAt))}
       </td>
       <td className="px-3 py-2.5">
         <div className="flex items-center gap-2">
-          <span className="font-medium text-text">{c.name || moduleName}</span>
+          <span className="font-medium text-[var(--t-1)]">{c.name || moduleName}</span>
         </div>
         {(c.portalName || c.moduleName || c.featureName || c.version) && (
           <div className="flex flex-wrap items-center gap-1.5">
             {(c.portalName || c.moduleName || c.featureName) && (
-              <p className="text-[11px] text-text-3">
+              <p className="text-[11.5px] text-[var(--t-3)]">
                 {[c.portalName, c.moduleName, c.featureName].filter(Boolean).join(' · ')}
               </p>
             )}
             {c.version && (
-              <span className="rounded-full bg-primary-light px-1.5 py-px font-mono text-[10px] font-medium text-primary-text">
-                v{c.version.replace(/^vs*/i, '')}
+              <span
+                className="pill pill-brand"
+                style={{ padding: '1px 8px', fontSize: 10.5, fontFamily: 'var(--f-mono)' }}
+              >
+                v{c.version.replace(/^v\s*/i, '')}
               </span>
             )}
           </div>
@@ -1240,32 +1254,27 @@ function CycleRow({
       </td>
       <td className="whitespace-nowrap px-3 py-2.5">
         {tester ? (
-          <span className="inline-flex items-center gap-1.5 text-[12px] text-text-2">
-            <span className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-primary/15 text-[9.5px] font-semibold uppercase text-primary">
-              {tester
-                .split(/\s+/)
-                .map(w => w[0])
-                .filter(Boolean)
-                .slice(0, 2)
-                .join('')}
+          <span className="inline-flex items-center gap-1.5 text-[13px] text-[var(--t-2)]">
+            <span className="avatar sm" style={{ background: avatarGradient(tester) }}>
+              {initials(tester)}
             </span>
             {tester}
           </span>
         ) : (
-          <span className="text-text-3">—</span>
+          <span className="text-[var(--t-3)]">—</span>
         )}
       </td>
-      <td className="whitespace-nowrap px-3 py-2.5 text-text-2">{c.environment || '—'}</td>
-      <td className="whitespace-nowrap px-3 py-2.5 text-text-2">{c.cycleCategory || '—'}</td>
+      <td className="whitespace-nowrap px-3 py-2.5 text-[var(--t-2)]">{c.environment || '—'}</td>
+      <td className="whitespace-nowrap px-3 py-2.5 text-[var(--t-2)]">{c.cycleCategory || '—'}</td>
       <td className="whitespace-nowrap px-3 py-2.5" onClick={e => e.stopPropagation()}>
         {(() => {
           const keys = parseIssueKeys(c.ticketLink);
           if (keys.length === 0) {
             // Nothing parseable: fall back to showing the raw text (not clickable).
             return c.ticketLink ? (
-              <span className="font-mono text-[11.5px] text-text-2">{c.ticketLink}</span>
+              <span className="font-mono text-[11.5px] text-[var(--t-2)]">{c.ticketLink}</span>
             ) : (
-              <span className="text-text-3">—</span>
+              <span className="text-[var(--t-3)]">—</span>
             );
           }
           // One link per key, so clicking NPD-10577 opens 10577 -- not the
@@ -1277,9 +1286,9 @@ function CycleRow({
                   <JiraTicketLink
                     ticketLink={k}
                     siteUrl={c.jiraSiteUrl ?? siteUrl}
-                    className="font-mono text-[11.5px]"
+                    className="font-mono text-[11.5px] font-medium text-[#0052CC] hover:text-[#0747A6]"
                   />
-                  {i < keys.length - 1 && <span className="text-text-3">,</span>}
+                  {i < keys.length - 1 && <span className="text-[var(--t-3)]">,</span>}
                 </span>
               ))}
             </span>
@@ -1288,7 +1297,7 @@ function CycleRow({
       </td>
       <td className="whitespace-nowrap px-3 py-2.5">
         <div className="flex items-center gap-1.5">
-          <span className="font-semibold text-text">{total}</span>
+          <span className="font-semibold text-[var(--t-1)]">{total}</span>
           {total > 0 &&
             sev.map(s => (
               <span
@@ -1305,18 +1314,12 @@ function CycleRow({
         </div>
       </td>
       <td className="whitespace-nowrap px-3 py-2.5 text-right">
-        <span className={cn('font-semibold', open > 0 ? 'text-text' : 'text-text-3')}>{open}</span>
+        <span className={cn('font-semibold', open > 0 ? 'text-[var(--t-1)]' : 'text-[var(--t-3)]')}>
+          {open}
+        </span>
       </td>
       <td className="whitespace-nowrap px-3 py-2.5">
-        <span
-          className={cn(
-            'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
-            tone.bg,
-            tone.text,
-          )}
-        >
-          {outcome}
-        </span>
+        <span className={cn('pill', tonePill)}>{outcome}</span>
       </td>
       <td className="whitespace-nowrap px-3 py-2.5 text-right" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-end gap-1">
@@ -1324,7 +1327,7 @@ function CycleRow({
             type="button"
             onClick={onEdit}
             title="Edit cycle"
-            className="flex h-6 w-6 items-center justify-center rounded text-text-3 hover:bg-surface-3 hover:text-text"
+            className="flex h-6 w-6 items-center justify-center rounded text-[var(--t-3)] hover:bg-surface-3 hover:text-[var(--t-1)]"
           >
             <i className="ti ti-pencil text-[13px]" />
           </button>
@@ -1332,7 +1335,7 @@ function CycleRow({
             type="button"
             onClick={onDelete}
             title="Delete cycle"
-            className="flex h-6 w-6 items-center justify-center rounded text-text-3 hover:bg-danger-bg hover:text-danger"
+            className="flex h-6 w-6 items-center justify-center rounded text-[var(--t-3)] hover:bg-danger-bg hover:text-danger"
           >
             <i className="ti ti-trash text-[13px]" />
           </button>

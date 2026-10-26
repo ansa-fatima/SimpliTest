@@ -105,6 +105,10 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
   const [syncError, setSyncError] = useState('');
   const siteUrl = useJiraSiteUrl(projectId);
   const jiraConnected = siteUrl !== null;
+  // Each linked parent ticket with its current Jira status (ticketLink can hold several).
+  const [parents, setParents] = useState<
+    { key: string; title: string | null; status: string | null; category: string | null }[]
+  >([]);
 
   const fetchInfo = useCallback(
     () => api.get<CycleHistoryInfo>(`/api/cycles/${cycleId}/history-info`),
@@ -122,6 +126,21 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
       cancelled = true;
     };
   }, [fetchInfo]);
+
+  useEffect(() => {
+    if (!cycle?.ticketLink) {
+      setParents([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get<{ items: typeof parents }>(`/api/cycles/${cycleId}/parent-tickets`)
+      .then(r => !cancelled && setParents(r.items))
+      .catch(() => !cancelled && setParents([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [cycleId, cycle?.ticketLink, cycle?.jiraSyncedAt]);
 
   // Pulls fresh counts/status straight from the linked ticket, same
   // "Sync from Jira" the create/edit forms already offer -- this view
@@ -233,35 +252,35 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
   // deliberately NOT red so a healthy row full of Reopens doesn't scream
   // "failed".
   const JIRA_STATUS: Record<SubStatus, { badge: string; border: string; dot: string }> = {
-    'In QA': {
-      badge: 'bg-sky-500/15 text-sky-700',
-      border: 'border-l-sky-500',
-      dot: 'bg-sky-500',
+    'Open-to-do': {
+      badge: 'bg-[#DFE1E6] text-[#42526E]',
+      border: 'border-l-[#97A0AF]',
+      dot: 'bg-[#97A0AF]',
     },
     'In progress': {
-      badge: 'bg-blue-500/15 text-blue-700',
-      border: 'border-l-blue-500',
-      dot: 'bg-blue-500',
+      badge: 'bg-[#DEEBFF] text-[#0747A6]',
+      border: 'border-l-[#4C9AFF]',
+      dot: 'bg-[#4C9AFF]',
     },
-    Verified: {
-      badge: 'bg-emerald-500/15 text-emerald-600',
-      border: 'border-l-emerald-500',
-      dot: 'bg-emerald-500',
-    },
-    Done: {
-      badge: 'bg-emerald-500/15 text-emerald-700',
-      border: 'border-l-emerald-600',
-      dot: 'bg-emerald-600',
-    },
-    'Open-to-do': {
-      badge: 'bg-slate-500/15 text-slate-500',
-      border: 'border-l-slate-400',
-      dot: 'bg-slate-400',
+    'In QA': {
+      badge: 'bg-[#DEEBFF] text-[#0747A6]',
+      border: 'border-l-[#2684FF]',
+      dot: 'bg-[#2684FF]',
     },
     Reopened: {
-      badge: 'bg-orange-500/15 text-orange-600',
-      border: 'border-l-orange-500',
-      dot: 'bg-orange-500',
+      badge: 'bg-[#DFE1E6] text-[#42526E]',
+      border: 'border-l-[#97A0AF]',
+      dot: 'bg-[#97A0AF]',
+    },
+    Done: {
+      badge: 'bg-[#E3FCEF] text-[#006644]',
+      border: 'border-l-[#36B37E]',
+      dot: 'bg-[#36B37E]',
+    },
+    Verified: {
+      badge: 'bg-[#ABF5D1] text-[#006644]',
+      border: 'border-l-[#00875A]',
+      dot: 'bg-[#00875A]',
     },
   };
 
@@ -281,19 +300,17 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
     // list, so a reader coming from Jira doesn't have to re-learn colours.
     if (!cycle) return { label: '—', cls: 'bg-surface-3 text-text-2' };
     if (subTotal === 0) return { label: cycle.status, cls: 'bg-surface-3 text-text-2' };
-    if (subRollup.Reopened > 0)
-      return { label: 'Reopened', cls: 'bg-orange-500/15 text-orange-600' };
+    if (subRollup.Reopened > 0) return { label: 'Reopened', cls: JIRA_STATUS.Reopened.badge };
     if (subRollup['Open-to-do'] + subRollup['In progress'] + subRollup['In QA'] > 0)
-      return { label: 'QA In Progress', cls: 'bg-sky-500/15 text-sky-700' };
-    if (subRollup.Verified > 0)
-      return { label: 'QA Approved', cls: 'bg-emerald-500/15 text-emerald-700' };
-    return { label: 'QA Passed', cls: 'bg-emerald-500/15 text-emerald-600' };
+      return { label: 'QA In Progress', cls: JIRA_STATUS['In progress'].badge };
+    if (subRollup.Verified > 0) return { label: 'QA Approved', cls: JIRA_STATUS.Verified.badge };
+    return { label: 'QA Passed', cls: JIRA_STATUS.Done.badge };
   })();
   const outcomeTone =
     cycle?.status === 'Completed' && cycle?.remainingCount === 0
-      ? { label: 'Pass', bg: 'bg-success/15 text-success' }
+      ? { label: 'Pass', bg: 'border border-[#86efac] bg-[#dcfce7] text-[#16a34a]' }
       : cycle?.remainingCount && cycle.remainingCount > 0
-        ? { label: 'Open', bg: 'bg-warning/15 text-warning' }
+        ? { label: 'Open', bg: 'border border-[#fcd34d] bg-[#fef3c7] text-[#d97706]' }
         : { label: cycle?.status ?? '—', bg: 'bg-surface-3 text-text-2' };
 
   const headerChips: { k: string; cls: string }[] = cycle
@@ -310,7 +327,7 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
           ? [
               {
                 k: cycle.cycleCategory,
-                cls: 'rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary',
+                cls: 'rounded-full bg-[#eeeafb] px-2.5 py-1 text-[11px] font-medium text-[#3f2daa]',
               },
             ]
           : []),
@@ -325,8 +342,8 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
         ...(cycle.version
           ? [
               {
-                k: `v${cycle.version.replace(/^vs*/i, '')}`,
-                cls: 'rounded-full bg-primary-light px-2.5 py-1 font-mono text-[11px] font-medium text-primary-text',
+                k: `v${cycle.version.replace(/^v\s*/i, '')}`,
+                cls: 'rounded-full bg-[#eeeafb] px-2.5 py-1 font-mono text-[11px] font-medium text-[#3f2daa]',
               },
             ]
           : []),
@@ -370,11 +387,11 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                 {localDateStr(new Date(cycle.completedAt ?? cycle.createdAt))}
               </span>
               {cycle.ticketLink && (
-                <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-[11px]">
+                <span className="inline-flex items-center rounded-full bg-[#eeeafb] px-2.5 py-1 text-[11px]">
                   <JiraTicketLink
                     ticketLink={cycle.ticketLink}
                     siteUrl={cycle.jiraSiteUrl ?? siteUrl}
-                    className="font-mono font-medium text-primary"
+                    className="font-mono font-medium text-[#3f2daa]"
                   />
                 </span>
               )}
@@ -542,7 +559,7 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                     <div
                       className={cn(
                         'h-full rounded-full',
-                        percent === 100 ? 'bg-success' : 'bg-primary',
+                        percent === 100 ? 'bg-success' : 'bg-[#3f2daa]',
                       )}
                       style={{ width: `${percent}%` }}
                     />
@@ -563,17 +580,60 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                   Recurring Test Cases section above), not a Jira one. */}
               {cycle.jiraSubIssues.length > 0 && (
                 <div>
-                  <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-2">
-                    <i className="ti ti-list-check text-[13px] text-text-3" />
-                    Sub-tasks{cycle.ticketLink ? ' · pulled from ' : ''}
-                    {cycle.ticketLink && (
-                      <JiraTicketLink
-                        ticketLink={cycle.ticketLink}
-                        siteUrl={cycle.jiraSiteUrl ?? siteUrl}
-                        className="rounded-md bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] normal-case tracking-normal text-primary"
-                      />
-                    )}
-                  </p>
+                  <div className="mb-2 flex flex-col gap-1.5">
+                    {(parents.length > 0
+                      ? parents
+                      : cycle.ticketLink
+                        ? [
+                            {
+                              key: cycle.ticketLink,
+                              title: null,
+                              status: cycle.jiraStatus,
+                              category: null,
+                            },
+                          ]
+                        : [{ key: '', title: null, status: null, category: null }]
+                    ).map((p, i) => (
+                      <div key={p.key || i} className="flex items-center justify-between gap-2">
+                        <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-2">
+                          {i === 0 ? (
+                            <>
+                              <i className="ti ti-list-check text-[13px] text-text-3" />
+                              <span className="flex-shrink-0">
+                                Sub-tasks{cycle.ticketLink ? ' · pulled from ' : ''}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="flex-shrink-0 pl-[19px] text-text-3">and</span>
+                          )}
+                          {p.key && (
+                            <JiraTicketLink
+                              ticketLink={p.key}
+                              siteUrl={cycle.jiraSiteUrl ?? siteUrl}
+                              className="rounded-md bg-[#eeeafb] px-1.5 py-0.5 font-mono text-[11px] normal-case tracking-normal text-[#3f2daa]"
+                            />
+                          )}
+                        </p>
+                        {p.status && (
+                          <span
+                            title={
+                              p.title ? `${p.key}: ${p.title}` : 'Parent ticket status in Jira'
+                            }
+                            className={cn(
+                              'flex-shrink-0 rounded-full px-2.5 py-0.5 text-[10.5px] font-semibold',
+                              p.category === 'done'
+                                ? JIRA_STATUS.Done.badge
+                                : p.category === 'indeterminate'
+                                  ? JIRA_STATUS['In progress'].badge
+                                  : JIRA_STATUS['Open-to-do'].badge,
+                            )}
+                          >
+                            {p.status}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[11px]">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span
@@ -587,27 +647,25 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                       <span className="mx-1 h-3 w-px bg-border" />
                       {(
                         [
-                          'Verified',
-                          'Done',
-                          'In QA',
-                          'In progress',
                           'Open-to-do',
+                          'In progress',
+                          'In QA',
                           'Reopened',
+                          'Done',
+                          'Verified',
                         ] as const
-                      )
-                        .filter(k => subRollup[k] > 0 || k === 'Verified' || k === 'Done')
-                        .map(k => (
-                          <span
-                            key={k}
-                            className={cn(
-                              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium',
-                              JIRA_STATUS[k].badge,
-                            )}
-                          >
-                            <span className="font-bold">{subRollup[k]}</span>
-                            {k}
-                          </span>
-                        ))}
+                      ).map(k => (
+                        <span
+                          key={k}
+                          className={cn(
+                            'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium',
+                            JIRA_STATUS[k].badge,
+                          )}
+                        >
+                          <span className="font-bold">{subRollup[k]}</span>
+                          {k}
+                        </span>
+                      ))}
                     </div>
                     <span className="font-medium text-text-2">{stillOpen} still open</span>
                   </div>
@@ -620,7 +678,7 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                         <div
                           key={s.issueKey}
                           className={cn(
-                            'flex items-start gap-3 rounded-lg border border-l-[3px] border-border bg-surface-2 px-3 py-2 transition-colors hover:bg-primary-light',
+                            'flex items-start gap-3 rounded-lg border border-l-[3px] border-border bg-surface-2 px-3 py-2 transition-colors hover:bg-[#f6f4fe]',
                             borderCls,
                           )}
                         >

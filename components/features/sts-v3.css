@@ -527,6 +527,7 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%236B7280' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
+  background-size: 20px 20px;
   padding-right: 32px;
 }
 .stv3 .select.btn-sm {
@@ -3894,4 +3895,121 @@
 /* Keep the status-dot column at the mockup's 40px (16px pad + 18px dot + 6px). */
 .stv3 .todo-row td:first-child {
   padding-right: 6px;
+}
+
+/* Every native <select> that is not already a themed `.select` gets the same
+   custom grey chevron (Reports, quick-log form, filters, ...). The legacy
+   `.sts-select` class stays as an explicit opt-in for the same look. */
+select:not(.select):not([multiple]):not([size]),
+select.sts-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%236B7280' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 20px 20px;
+  padding-right: 32px;
+}
+
+/* Arrow on the Reports "Jump to a report" cards. */
+.report-jump-arrow {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: #6b7280;
+  background: transparent;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    transform 0.15s;
+}
+.report-jump-arrow svg {
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}
+.group:hover .report-jump-arrow {
+  background: #f6f4fe;
+  color: #3f2daa;
+  transform: translateX(2px);
+}
+
+/* Test runs list on phones/tablets: each run becomes a stacked card instead of a
+   sideways-scrolling table (the Execute button used to be off-screen). */
+@media (max-width: 900px) {
+  .stv3 .card > table.t.runs-table {
+    display: block;
+    overflow: visible;
+    white-space: normal;
+  }
+  .stv3 table.runs-table thead {
+    display: none;
+  }
+  .stv3 table.runs-table tbody {
+    display: block;
+  }
+  .stv3 table.runs-table tr {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    grid-template-areas:
+      'title title title'
+      'status milestone .'
+      'progress progress progress'
+      'pass owner actions';
+    gap: 10px 14px;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--bdr);
+  }
+  .stv3 table.runs-table tr:last-child {
+    border-bottom: none;
+  }
+  .stv3 table.runs-table td {
+    display: block;
+    padding: 0;
+    border: none;
+    min-width: 0;
+  }
+  .stv3 table.runs-table .rt-title {
+    grid-area: title;
+  }
+  .stv3 table.runs-table .rt-status {
+    grid-area: status;
+  }
+  .stv3 table.runs-table .rt-milestone {
+    grid-area: milestone;
+  }
+  .stv3 table.runs-table .rt-milestone.rt-empty {
+    display: none;
+  }
+  .stv3 table.runs-table .rt-progress {
+    grid-area: progress;
+  }
+  .stv3 table.runs-table .rt-progress .progress {
+    width: 100% !important;
+  }
+  .stv3 table.runs-table .rt-pass {
+    grid-area: pass;
+  }
+  .stv3 table.runs-table .rt-owner {
+    grid-area: owner;
+  }
+  .stv3 table.runs-table .rt-pass::before,
+  .stv3 table.runs-table .rt-owner::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--t-4);
+    margin-bottom: 2px;
+  }
+  .stv3 table.runs-table .rt-actions {
+    grid-area: actions;
+    justify-self: end;
+  }
 }
