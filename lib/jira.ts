@@ -419,3 +419,43 @@ export function withReopenHistory<T extends JiraSubIssueInfo>(
     return { ...s, timesReopened };
   });
 }
+
+export interface JiraParentStatus {
+  key: string;
+  title: string | null;
+  status: string | null;
+  /** Jira's status category: "new" (To Do), "indeterminate" (In progress) or "done". */
+  category: string | null;
+}
+
+// Live status of each linked parent ticket -- one cheap request per key (only
+// the status + summary fields), all in parallel. A ticket that can't be read
+// comes back with a null status instead of failing the whole lookup.
+export async function fetchParentStatuses(
+  creds: JiraCreds,
+  keys: string[],
+): Promise<JiraParentStatus[]> {
+  return Promise.all(
+    keys.map(async key => {
+      try {
+        const issue = (await jiraFetch(
+          creds,
+          `/rest/api/3/issue/${encodeURIComponent(key)}?fields=status,summary`,
+        )) as {
+          fields: {
+            summary?: string;
+            status?: { name?: string; statusCategory?: { key?: string } };
+          };
+        };
+        return {
+          key,
+          title: issue.fields.summary ?? null,
+          status: issue.fields.status?.name ?? null,
+          category: issue.fields.status?.statusCategory?.key ?? null,
+        };
+      } catch {
+        return { key, title: null, status: null, category: null };
+      }
+    }),
+  );
+}
