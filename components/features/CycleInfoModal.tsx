@@ -21,7 +21,18 @@ interface RecurringCase {
   severity: string;
   cycleCount: number;
 }
-type SubStatus = 'Verified' | 'Done' | 'In QA' | 'In progress' | 'Open-to-do' | 'Reopened';
+type SubStatus = 'Verified' | 'Done' | 'In QA' | 'Dev' | 'In progress' | 'Open-to-do' | 'Reopened';
+
+// How each bucket is worded in the summary bar (Jira workflow names).
+const STATUS_LABEL: Record<SubStatus, string> = {
+  'Open-to-do': 'Open-To Do',
+  'In progress': 'In Progress',
+  Dev: 'Dev',
+  'In QA': 'QA',
+  Reopened: 'Reopened',
+  Verified: 'Verified',
+  Done: 'Done',
+};
 
 interface CycleJiraSubIssue {
   issueKey: string;
@@ -227,13 +238,15 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
     if (/^verified$/i.test(s.status)) return 'Verified';
     if (s.isDone || /^(done|closed|resolved)$/i.test(s.status)) return 'Done';
     if (/\bqa\b|\btest|review|verif|\buat\b/i.test(s.status)) return 'In QA';
-    if (/progress|develop|doing|implement|coding/i.test(s.status)) return 'In progress';
+    if (/\bdev\b|develop/i.test(s.status)) return 'Dev';
+    if (/progress|doing|implement|coding/i.test(s.status)) return 'In progress';
     return 'Open-to-do';
   };
   const subRollup: Record<SubStatus, number> = {
     Verified: 0,
     Done: 0,
     'In QA': 0,
+    Dev: 0,
     'In progress': 0,
     'Open-to-do': 0,
     Reopened: 0,
@@ -251,36 +264,43 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
   // (default), Reopened orange (moved/attention), with the Reopened case
   // deliberately NOT red so a healthy row full of Reopens doesn't scream
   // "failed".
+  // Colours sampled from Jira's own status lozenges: To Do / Reopened neutral
+  // grey, In Progress / Dev / QA / Verified blue, Done lime green.
   const JIRA_STATUS: Record<SubStatus, { badge: string; border: string; dot: string }> = {
     'Open-to-do': {
-      badge: 'bg-[#DFE1E6] text-[#42526E]',
-      border: 'border-l-[#97A0AF]',
-      dot: 'bg-[#97A0AF]',
+      badge: 'border border-[#D0D2D2] bg-[#F0F1F2] text-[#44546F]',
+      border: 'border-l-[#8590A2]',
+      dot: 'bg-[#8590A2]',
     },
     'In progress': {
-      badge: 'bg-[#DEEBFF] text-[#0747A6]',
-      border: 'border-l-[#4C9AFF]',
-      dot: 'bg-[#4C9AFF]',
+      badge: 'border border-[#8FB8F6] bg-[#CFE1FD] text-[#0055CC]',
+      border: 'border-l-[#579DFF]',
+      dot: 'bg-[#579DFF]',
+    },
+    Dev: {
+      badge: 'border border-[#8FB8F6] bg-[#CFE1FD] text-[#0055CC]',
+      border: 'border-l-[#579DFF]',
+      dot: 'bg-[#579DFF]',
     },
     'In QA': {
-      badge: 'bg-[#DEEBFF] text-[#0747A6]',
+      badge: 'border border-[#8FB8F6] bg-[#CFE1FD] text-[#0055CC]',
       border: 'border-l-[#2684FF]',
       dot: 'bg-[#2684FF]',
     },
     Reopened: {
-      badge: 'bg-[#DFE1E6] text-[#42526E]',
-      border: 'border-l-[#97A0AF]',
-      dot: 'bg-[#97A0AF]',
-    },
-    Done: {
-      badge: 'bg-[#E3FCEF] text-[#006644]',
-      border: 'border-l-[#36B37E]',
-      dot: 'bg-[#36B37E]',
+      badge: 'border border-[#D0D2D2] bg-[#F0F1F2] text-[#44546F]',
+      border: 'border-l-[#8590A2]',
+      dot: 'bg-[#8590A2]',
     },
     Verified: {
-      badge: 'bg-[#ABF5D1] text-[#006644]',
-      border: 'border-l-[#00875A]',
-      dot: 'bg-[#00875A]',
+      badge: 'border border-[#8FB8F6] bg-[#CFE1FD] text-[#0055CC]',
+      border: 'border-l-[#1D7AFC]',
+      dot: 'bg-[#1D7AFC]',
+    },
+    Done: {
+      badge: 'border border-[#B3DF72] bg-[#D3F1A7] text-[#37471F]',
+      border: 'border-l-[#94C748]',
+      dot: 'bg-[#94C748]',
     },
   };
 
@@ -301,7 +321,7 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
     if (!cycle) return { label: '—', cls: 'bg-surface-3 text-text-2' };
     if (subTotal === 0) return { label: cycle.status, cls: 'bg-surface-3 text-text-2' };
     if (subRollup.Reopened > 0) return { label: 'Reopened', cls: JIRA_STATUS.Reopened.badge };
-    if (subRollup['Open-to-do'] + subRollup['In progress'] + subRollup['In QA'] > 0)
+    if (subRollup['Open-to-do'] + subRollup['In progress'] + subRollup.Dev + subRollup['In QA'] > 0)
       return { label: 'QA In Progress', cls: JIRA_STATUS['In progress'].badge };
     if (subRollup.Verified > 0) return { label: 'QA Approved', cls: JIRA_STATUS.Verified.badge };
     return { label: 'QA Passed', cls: JIRA_STATUS.Done.badge };
@@ -636,23 +656,15 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                   </div>
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[11px]">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span
-                        className={cn(
-                          'inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide',
-                          qaStatus.cls,
-                        )}
-                      >
-                        {qaStatus.label}
-                      </span>
-                      <span className="mx-1 h-3 w-px bg-border" />
                       {(
                         [
                           'Open-to-do',
                           'In progress',
+                          'Dev',
                           'In QA',
                           'Reopened',
-                          'Done',
                           'Verified',
+                          'Done',
                         ] as const
                       ).map(k => (
                         <span
@@ -663,7 +675,7 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
                           )}
                         >
                           <span className="font-bold">{subRollup[k]}</span>
-                          {k}
+                          {STATUS_LABEL[k]}
                         </span>
                       ))}
                     </div>

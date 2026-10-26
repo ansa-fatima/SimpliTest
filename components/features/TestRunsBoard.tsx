@@ -41,6 +41,66 @@ interface TestRunsBoardProps {
   onReload?: () => void;
 }
 
+// Profile pictures: a log/run only stores the tester's NAME, so look the person
+// up by name / username / email (one shared fetch, refreshed every 10 seconds).
+type AvatarMap = Map<string, string>;
+let avatarCache: { at: number; p: Promise<AvatarMap> } | null = null;
+function loadAvatars(): Promise<AvatarMap> {
+  if (!avatarCache || Date.now() - avatarCache.at > 10_000) {
+    avatarCache = {
+      at: Date.now(),
+      p: api
+        .get<{ name: string | null; username: string; email: string; avatarUrl: string | null }[]>(
+          '/api/users',
+        )
+        .then(users => {
+          const m: AvatarMap = new Map();
+          for (const u of users) {
+            if (!u.avatarUrl) continue;
+            for (const k of [u.name, u.username, u.email])
+              if (k && k.trim()) m.set(k.trim().toLowerCase(), u.avatarUrl);
+          }
+          return m;
+        })
+        .catch(() => new Map<string, string>()),
+    };
+  }
+  return avatarCache.p;
+}
+function useUserAvatars(): AvatarMap {
+  const [m, setM] = useState<AvatarMap>(new Map());
+  useEffect(() => {
+    let live = true;
+    loadAvatars().then(x => live && setM(x));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return m;
+}
+
+// Initials-in-a-gradient circle, or the person's profile picture when they have one.
+function PersonAvatar({ name, avatars }: { name: string; avatars: AvatarMap }) {
+  const url = avatars.get(name.trim().toLowerCase());
+  if (url) {
+    return (
+      <span className="avatar sm" style={{ background: 'transparent', overflow: 'hidden' }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={url}
+          alt={name}
+          style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+        />
+      </span>
+    );
+  }
+  return (
+    <span className="avatar sm" style={{ background: avatarGradient(name) }}>
+      {initials(name)}
+    </span>
+  );
+}
+
 // "Planned" isn't a real DB status -- it's an Active cycle nobody has
 // started executing yet (0 runs touched). Once at least one run has a
 // verdict, it reads as "In Progress" instead.
@@ -721,6 +781,7 @@ function RunRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const avatars = useUserAvatars();
   // The menu is position:fixed (anchored to the button) because the table card
   // clips overflow -- an absolutely positioned dropdown got cut off inside it.
   const [menu, setMenu] = useState<{ top: number; right: number } | null>(null);
@@ -791,9 +852,7 @@ function RunRow({
       <td className="rt-owner" data-label="Owner">
         {c.tester ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div className="avatar sm" style={{ background: avatarGradient(c.tester) }}>
-              {initials(c.tester)}
-            </div>
+            <PersonAvatar name={c.tester} avatars={avatars} />
             {c.tester.split(/\s+/)[0]}
           </div>
         ) : (
@@ -1265,6 +1324,7 @@ function CycleRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const avatars = useUserAvatars();
   const total = c.issueCount ?? 0;
   const open = c.remainingCount ?? Math.max(0, total - (c.doneCount ?? 0));
   const outcome = deriveOutcome(c);
@@ -1313,9 +1373,7 @@ function CycleRow({
       <td className="ql-tester whitespace-nowrap px-3 py-2.5" data-label="Tested by">
         {tester ? (
           <span className="inline-flex items-center gap-1.5 text-[13px] text-[var(--t-2)]">
-            <span className="avatar sm" style={{ background: avatarGradient(tester) }}>
-              {initials(tester)}
-            </span>
+            <PersonAvatar name={tester} avatars={avatars} />
             {tester}
           </span>
         ) : (
