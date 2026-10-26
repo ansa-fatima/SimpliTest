@@ -4187,3 +4187,17 @@ select.sts-select {
     );
   }
 }
+
+/* Test runs table (desktop): the actions column hugs its buttons and sits at
+   the right edge, so spare width goes to the run name instead of leaving a
+   blank gap after the buttons. */
+@media (min-width: 901px) {
+  .stv3 table.runs-table th:last-child,
+  .stv3 table.runs-table td.rt-actions {
+    width: 1%;
+    white-space: nowrap;
+  }
+  .stv3 table.runs-table td.rt-actions > div {
+    justify-content: flex-end;
+  }
+}
