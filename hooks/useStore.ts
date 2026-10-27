@@ -794,6 +794,30 @@ export function useStore() {
     [showToast, state.currentTC],
   );
 
+  // Re-reads the open case from the server (after an AI improve / undo changed it
+  // behind the store's back) and swaps it into the list + the open view.
+  const refreshCurrentCase = useCallback(async () => {
+    const apiId = state.currentTC?.apiId;
+    if (!apiId) return;
+    try {
+      const fresh = toLocalTestCase(await api.get<ApiTestCase>(`/api/test-cases/${apiId}`));
+      setState(s => {
+        if (!s.currentTC || s.currentTC.apiId !== apiId) return s;
+        const cases = [...(s.data[s.currentKey] || [])];
+        const idx = cases.findIndex(c => c.id === s.currentTC!.id);
+        if (idx >= 0) cases[idx] = fresh;
+        return {
+          ...s,
+          data: { ...s.data, [s.currentKey]: cases },
+          currentTC: fresh,
+          dataVersion: s.dataVersion + 1,
+        };
+      });
+    } catch (e) {
+      showToast(`Could not refresh the test case: ${(e as Error).message}`, 'error');
+    }
+  }, [showToast, state.currentTC?.apiId]);
+
   // Persisted delete — DELETEs /api/test-cases/:apiId. Local removal happens regardless
   // so the UI is responsive; failures show a toast and a list reload will recover.
   const deleteTC = useCallback(
@@ -1214,6 +1238,7 @@ export function useStore() {
     viewTC,
     showEdit,
     saveEdit,
+    refreshCurrentCase,
     deleteTC,
     duplicateTC,
     addModule,

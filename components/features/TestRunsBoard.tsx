@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { TestCycle, Module } from '@/types';
 import { avatarColour, cn, initials, localDateStr } from '@/lib/utils';
-import { deriveOutcome, CycleOutcome } from '@/lib/cycleOutcome';
+import { deriveOutcome, outcomeAfterSync, CycleOutcome } from '@/lib/cycleOutcome';
 import { exportCycles } from '@/lib/export';
 import { CycleFormPayload } from './NewCycleModal';
 import { UpdateQuickLogModal } from './QuickLogModal';
@@ -14,7 +14,7 @@ import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 import { parseIssueKeys } from '@/lib/jira';
 import { api } from '@/lib/client';
 import { SIco } from '@/components/layout/sts-icons';
-import { avatarGradient } from './tc-helpers';
+import { PersonAvatar, useUserAvatars } from './PersonAvatar';
 import './sts-v3.css';
 
 interface TestRunsBoardProps {
@@ -39,66 +39,6 @@ interface TestRunsBoardProps {
   onDelete: (id: string) => Promise<void>;
   /** Refetch the cycles list (used after a bulk import). */
   onReload?: () => void;
-}
-
-// Profile pictures: a log/run only stores the tester's NAME, so look the person
-// up by name / username / email (one shared fetch, refreshed every 10 seconds).
-type AvatarMap = Map<string, string>;
-let avatarCache: { at: number; p: Promise<AvatarMap> } | null = null;
-function loadAvatars(): Promise<AvatarMap> {
-  if (!avatarCache || Date.now() - avatarCache.at > 10_000) {
-    avatarCache = {
-      at: Date.now(),
-      p: api
-        .get<{ name: string | null; username: string; email: string; avatarUrl: string | null }[]>(
-          '/api/users',
-        )
-        .then(users => {
-          const m: AvatarMap = new Map();
-          for (const u of users) {
-            if (!u.avatarUrl) continue;
-            for (const k of [u.name, u.username, u.email])
-              if (k && k.trim()) m.set(k.trim().toLowerCase(), u.avatarUrl);
-          }
-          return m;
-        })
-        .catch(() => new Map<string, string>()),
-    };
-  }
-  return avatarCache.p;
-}
-function useUserAvatars(): AvatarMap {
-  const [m, setM] = useState<AvatarMap>(new Map());
-  useEffect(() => {
-    let live = true;
-    loadAvatars().then(x => live && setM(x));
-    return () => {
-      live = false;
-    };
-  }, []);
-  return m;
-}
-
-// Initials-in-a-gradient circle, or the person's profile picture when they have one.
-function PersonAvatar({ name, avatars }: { name: string; avatars: AvatarMap }) {
-  const url = avatars.get(name.trim().toLowerCase());
-  if (url) {
-    return (
-      <span className="avatar sm" style={{ background: 'transparent', overflow: 'hidden' }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={url}
-          alt={name}
-          style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
-        />
-      </span>
-    );
-  }
-  return (
-    <span className="avatar sm" style={{ background: avatarGradient(name) }}>
-      {initials(name)}
-    </span>
-  );
 }
 
 // "Planned" isn't a real DB status -- it's an Active cycle nobody has
@@ -214,8 +154,10 @@ export function TestRunsBoard({
           siteUrl: string;
           subIssues: unknown[];
         }>(`/api/projects/${projectId}/integrations/jira/fetch`, { ticketLink: c.ticketLink });
+        const nextOutcome = outcomeAfterSync(c.outcome, result);
         await api.patch(`/api/cycles/${c.id}`, {
           ...(result.title ? { name: result.title } : {}),
+          ...(nextOutcome ? { outcome: nextOutcome } : {}),
           jiraStatus: result.status,
           jiraSyncedAt: new Date().toISOString(),
           jiraSiteUrl: result.siteUrl,

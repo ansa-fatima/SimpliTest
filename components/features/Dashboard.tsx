@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/client';
 import { ActivityEvent } from '@/lib/activity';
 import { cn, initials, relativeTime } from '@/lib/utils';
-import { avatarGradient } from '@/components/features/tc-helpers';
+import { PersonAvatar, useUserAvatars } from '@/components/features/PersonAvatar';
 import { SIco } from '@/components/layout/sts-icons';
 import './sts-v3.css';
 
@@ -573,6 +573,7 @@ function RecentRunRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: 
       ? 'all cases'
       : (c.scopeName ?? c.scopeType);
   const dateIso = (isManual && c.completedAt) || c.createdAt;
+  const avatars = useUserAvatars();
   const isGroup = /\d+ testers$/.test(c.tester);
   const pct = c.total > 0 ? Math.round((c.done / c.total) * 100) : 0;
 
@@ -643,9 +644,7 @@ function RecentRunRow({ cycle: c, onOpen }: { cycle: RecentCycle; onOpen?: (id: 
           </div>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div className="avatar sm" style={{ background: avatarGradient(c.tester) }}>
-              {initials(c.tester)}
-            </div>
+            <PersonAvatar name={c.tester} avatars={avatars} />
             {c.tester}
           </div>
         )}

@@ -41,6 +41,7 @@ export default function Home() {
     viewTC,
     showEdit,
     saveEdit,
+    refreshCurrentCase,
     deleteTC,
     duplicateTC,
     addModule,
@@ -303,6 +304,7 @@ export default function Home() {
               }}
               onDuplicate={duplicateTC}
               onView={viewTC}
+              onRefresh={refreshCurrentCase}
             />
           )}
 

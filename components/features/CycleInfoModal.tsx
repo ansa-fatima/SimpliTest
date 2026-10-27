@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/client';
+import { outcomeAfterSync } from '@/lib/cycleOutcome';
 import { cn, localDateStr, severityBadge } from '@/lib/utils';
 import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 import type { JiraSubIssueInfo } from '@/lib/jira';
@@ -63,6 +64,7 @@ interface CycleHistoryInfo {
   completedAt: string | null;
   ticketLink: string | null;
   jiraStatus: string | null;
+  outcome?: string | null;
   jiraSyncedAt: string | null;
   jiraSiteUrl: string | null;
   issueCount: number;
@@ -179,6 +181,9 @@ export function CycleInfoModal({ cycleId, projectId, onClose }: CycleInfoModalPr
         // this view shows the name it patches, so a resync updates both.
         ...(result.title ? { name: result.title } : {}),
         jiraStatus: result.status,
+        ...(outcomeAfterSync(cycle.outcome, result)
+          ? { outcome: outcomeAfterSync(cycle.outcome, result) }
+          : {}),
         jiraSyncedAt: new Date().toISOString(),
         jiraSiteUrl: result.siteUrl,
         issueCount: result.issueCount,

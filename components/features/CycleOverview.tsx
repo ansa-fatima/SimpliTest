@@ -8,7 +8,8 @@ import { UpdateQuickLogModal } from './QuickLogModal';
 import { cn, initials, localDateStr, relativeTime } from '@/lib/utils';
 import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 import { SIco } from '@/components/layout/sts-icons';
-import { avatarGradient, caseCode } from './tc-helpers';
+import { caseCode } from './tc-helpers';
+import { PersonAvatar, useUserAvatars } from './PersonAvatar';
 import './sts-v3.css';
 
 interface CycleOverviewProps {
@@ -39,6 +40,7 @@ export function CycleOverview({
   onUpdate,
   onDelete,
 }: CycleOverviewProps) {
+  const avatars = useUserAvatars();
   const [editing, setEditing] = useState<TestCycle | null>(null);
   const [editLoading, setEditLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -288,12 +290,7 @@ export function CycleOverview({
                   <td>
                     {data.tester ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div
-                          className="avatar sm"
-                          style={{ background: avatarGradient(data.tester) }}
-                        >
-                          {initials(data.tester)}
-                        </div>
+                        <PersonAvatar name={data.tester} avatars={avatars} />
                         {data.tester.split(/\s+/)[0]}
                       </div>
                     ) : (

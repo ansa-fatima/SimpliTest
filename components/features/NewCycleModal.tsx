@@ -123,7 +123,7 @@ export function NewCycleModal({
 
   // ── Manual-mode fields ──────────────────────────────────────
   const [completedOn, setCompletedOn] = useState(() => {
-    if (initial?.completedAt) return initial.completedAt.slice(0, 10);
+    if (initial?.completedAt) return localDateStr(new Date(initial.completedAt));
     // Default to today's date for new quick-logs — user can back-date if needed.
     return localDateStr();
   });
@@ -430,7 +430,7 @@ export function NewCycleModal({
       payload.completedAt =
         chosenDate === localDateStr()
           ? new Date().toISOString()
-          : new Date(`${chosenDate}T00:00:00`).toISOString();
+          : new Date(`${chosenDate}T12:00:00`).toISOString();
       // Structured location, shared with Detailed mode's cascading picker —
       // this is what lets the Stability report join a quick log to a real
       // module/feature instead of matching on free text.
@@ -924,7 +924,7 @@ export function NewCycleModal({
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Start Date">
                     <div className="input flex items-center bg-surface-2">
-                      {initial ? initial.createdAt.slice(0, 10) : localDateStr()}
+                      {initial ? localDateStr(new Date(initial.createdAt)) : localDateStr()}
                     </div>
                   </Field>
                   <Field label="End Date">

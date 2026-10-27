@@ -114,7 +114,11 @@ model Project {
   // local state. Jira is real -- see JiraConnection below. Null means
   // nothing has been toggled yet (all off).
   integrations       Json?
+  // Workspace settings for "Generate with AI" (duplicate check mode, AI tiebreak).
+  // Null = defaults; see lib/aiSettings.ts.
+  aiSettings         Json?
   jiraConnection     JiraConnection?
+  aiConnection       AiConnection?
   jiraSubIssues      JiraSubIssue[]
   // Settings > Modules & Features -- the three-level Portal > Module >
   // Feature taxonomy that powers the Stability page's grouping and the
@@ -242,6 +246,26 @@ model JiraConnection {
   lastSyncCount           Int?
 
   @@map("jira_connections")
+}
+
+// A workspace's connection to an AI provider for "Generate with AI" on the test
+// cases page (Settings > Integrations). Like JiraConnection, the secret is
+// write-only: the API never sends apiKey back, only a masked hint. It is
+// encrypted at rest when the server has APP_ENCRYPTION_KEY set (lib/secretBox.ts).
+model AiConnection {
+  id            String   @id @default(cuid())
+  projectId     String   @unique
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  provider      String   @default("anthropic")
+  apiKey        String
+  // Null = use the app default (lib/aiConfig.ts).
+  model         String?
+  tiebreakModel String?
+  connectedAt   DateTime @default(now())
+  connectedById String?
+  updatedAt     DateTime @updatedAt
+
+  @@map("ai_connections")
 }
 
 // A snapshot of one Jira sub-issue as of a cycle's last "Sync from Jira" --
