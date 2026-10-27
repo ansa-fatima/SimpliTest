@@ -42,6 +42,22 @@ export function deriveOutcome(c: {
   return !issuesOpen && !hasCaseFailure ? 'Pass' : 'Fail';
 }
 
+// What a quick log's stored outcome should become after a "Sync from Jira".
+// The outcome is a stored value that always wins in deriveOutcome(), so
+// without this a sync refreshed the counts but left Pass/Open as they were:
+//   - still-open tickets  -> Open (e.g. a "Pass" whose tickets were reopened)
+//   - everything resolved -> Pass
+// An explicit Fail / Blocked is a QA judgement call and is never overwritten.
+// Returns null when the outcome should be left alone.
+export function outcomeAfterSync(
+  current: string | null | undefined,
+  counts: { issueCount: number; remainingCount: number },
+): CycleOutcome | null {
+  if (isOutcome(current) && current !== 'Open' && current !== 'Pass') return null;
+  if (counts.issueCount <= 0) return null;
+  return counts.remainingCount > 0 ? 'Open' : 'Pass';
+}
+
 // Normalizes free-typed outcome text from an imported sheet ("pass", "FAILED",
 // "open", "in progress") to a canonical value, or null when it's blank/
 // unrecognized (so the row falls back to count-derived display).

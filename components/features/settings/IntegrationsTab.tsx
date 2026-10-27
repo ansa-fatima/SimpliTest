@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
 import { cn } from '@/lib/utils';
+import { AiIntegrationCard } from './AiIntegrationCard';
 import '../sts-v3.css';
 
 interface LocalIntegrations {
@@ -158,6 +159,8 @@ export function IntegrationsTab({
         loading={jiraLoading}
         onChange={loadJira}
       />
+
+      <AiIntegrationCard workspaceId={workspaceId} canEdit={canEdit} />
 
       <div className="card card-pad">
         <p className="mb-3 text-[11px] text-text-3">

@@ -182,6 +182,7 @@ export async function GET(_req: Request, { params }: Ctx) {
       completedAt: cycle.completedAt,
       ticketLink: cycle.ticketLink,
       jiraStatus: cycle.jiraStatus,
+      outcome: cycle.outcome,
       jiraSyncedAt: cycle.jiraSyncedAt,
       jiraSiteUrl: cycle.jiraSiteUrl,
       issueCount: cycle.issueCount,

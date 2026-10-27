@@ -3,11 +3,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CycleScopeType, TestCycle } from '@/types';
 import { api } from '@/lib/client';
-import { cn } from '@/lib/utils';
+import { cn, localDateStr } from '@/lib/utils';
 import { CycleFormPayload } from './NewCycleModal';
 import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 import type { JiraSubIssueInfo } from '@/lib/jira';
-import { CYCLE_OUTCOMES, deriveOutcome } from '@/lib/cycleOutcome';
+import { CYCLE_OUTCOMES, deriveOutcome, outcomeAfterSync } from '@/lib/cycleOutcome';
 import './sts-v3.css';
 
 interface ApiModule {
@@ -93,7 +93,7 @@ export function CycleFormPanel({
     ).padStart(2, '0')}`;
   };
   const initialDate = initial?.completedAt ?? initial?.createdAt;
-  const [date, setDate] = useState(initialDate ? initialDate.slice(0, 10) : todayStr());
+  const [date, setDate] = useState(initialDate ? localDateStr(new Date(initialDate)) : todayStr());
   // Portal / Module / Feature are picked from the workspace's configured
   // taxonomy and stored by name; all three are optional. A legacy cycle whose
   // names are no longer in the taxonomy still shows them (see withCurrent).
@@ -232,12 +232,10 @@ export function CycleFormPanel({
       setReopenedCount(result.reopenedCount);
       setJiraSubIssues(result.subIssues);
       setSynced(true);
-      // A ticket with open children is clearly still in progress; one fully
-      // done reads as a pass. Only nudge the outcome when it's still the
-      // default "Open" so an explicit choice is never overwritten.
-      if (outcome === 'Open' && result.issueCount > 0) {
-        setOutcome(result.remainingCount > 0 ? 'Open' : 'Pass');
-      }
+      // Keep the outcome in step with the tickets: open children -> Open,
+      // all resolved -> Pass. An explicit Fail / Blocked is left alone.
+      const nextOutcome = outcomeAfterSync(outcome, result);
+      if (nextOutcome) setOutcome(nextOutcome);
     } catch (e) {
       setSyncError((e as Error).message);
     } finally {
@@ -255,7 +253,15 @@ export function CycleFormPanel({
     const issueCount = total;
     const remaining = Math.min(openIssues, issueCount);
     const done = Math.max(0, issueCount - remaining);
-    const completedAt = new Date(`${date}T00:00:00`).toISOString();
+    // The picked day is a calendar date, so anchor it at local NOON: midnight
+    // would land on the previous day in UTC for anyone ahead of UTC (23 -> 22).
+    // An unchanged date keeps the original instant; today uses the real time.
+    const completedAt =
+      initial && initialDate && date === localDateStr(new Date(initialDate))
+        ? new Date(initialDate).toISOString()
+        : date === todayStr()
+          ? new Date().toISOString()
+          : new Date(`${date}T12:00:00`).toISOString();
     const finalName =
       name.trim() ||
       [moduleName, featureName].filter(Boolean).join(' → ') ||

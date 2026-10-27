@@ -39,6 +39,9 @@ async function jiraFetch(
   try {
     res = await fetch(url, {
       method: init?.method ?? 'GET',
+      // Never serve a cached answer: Next.js caches GET fetches by default, which
+      // made a re-sync return a ticket's OLD status instead of its current one.
+      cache: 'no-store',
       headers: {
         Authorization: authHeader(creds),
         Accept: 'application/json',
@@ -458,4 +461,80 @@ export async function fetchParentStatuses(
       }
     }),
   );
+}
+
+// ─── Ticket text (used as the requirement for AI test generation) ───────────
+
+interface AdfNode {
+  type?: string;
+  text?: string;
+  content?: AdfNode[];
+  attrs?: Record<string, unknown>;
+}
+
+// Jira Cloud returns rich text as Atlassian Document Format (a JSON tree). This
+// flattens it to readable plain text: paragraphs/headings on their own lines,
+// list items as "- ", line breaks kept, everything else just its text.
+export function adfToText(node: AdfNode | null | undefined): string {
+  if (!node) return '';
+  const kids = (n: AdfNode) => (n.content ?? []).map(adfToText).join('');
+  switch (node.type) {
+    case 'text':
+      return node.text ?? '';
+    case 'hardBreak':
+      return '\n';
+    case 'paragraph':
+    case 'heading':
+      return kids(node) + '\n';
+    case 'codeBlock':
+      return kids(node) + '\n';
+    case 'listItem':
+      return '- ' + kids(node).replace(/\n+$/, '').replace(/\n/g, '\n  ') + '\n';
+    case 'tableCell':
+    case 'tableHeader':
+      return kids(node).replace(/\n+$/, '') + ' | ';
+    case 'tableRow':
+      return kids(node).replace(/ \| $/, '') + '\n';
+    case 'mention':
+      return String(node.attrs?.text ?? '');
+    case 'inlineCard':
+      return String(node.attrs?.url ?? '');
+    default:
+      return kids(node);
+  }
+}
+
+export interface JiraIssueText {
+  key: string;
+  title: string;
+  /** Title + description, ready to drop into a requirement box. */
+  text: string;
+  issueType: string | null;
+  priority: string | null;
+}
+
+/** Fetches one ticket's title and description as plain text. */
+export async function fetchIssueText(creds: JiraCreds, key: string): Promise<JiraIssueText> {
+  const issue = (await jiraFetch(
+    creds,
+    `/rest/api/3/issue/${encodeURIComponent(key)}?fields=summary,description,issuetype,priority`,
+  )) as {
+    key: string;
+    fields: {
+      summary?: string;
+      description?: AdfNode | string | null;
+      issuetype?: { name?: string };
+      priority?: { name?: string };
+    };
+  };
+  const title = issue.fields.summary ?? key;
+  const d = issue.fields.description;
+  const body = (typeof d === 'string' ? d : adfToText(d)).replace(/\n{3,}/g, '\n\n').trim();
+  return {
+    key: issue.key ?? key,
+    title,
+    text: body ? `${title}\n\n${body}` : title,
+    issueType: issue.fields.issuetype?.name ?? null,
+    priority: issue.fields.priority?.name ?? null,
+  };
 }

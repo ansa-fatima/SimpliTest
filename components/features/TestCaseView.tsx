@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { TestCase, RunResult } from '@/types';
 import { api } from '@/lib/client';
 import { Badge } from '@/components/ui/Badge';
+import { AiImprovePanel } from '@/components/features/AiImprovePanel';
 import { RichText } from '@/components/ui/RichText';
 import {
   cn,
@@ -26,6 +27,8 @@ interface TestCaseViewProps {
   onDelete: () => void;
   onDuplicate: (targetSuiteId?: string) => void;
   onView: (id: string) => void;
+  /** Re-reads this case from the server (after an AI change or undo). */
+  onRefresh: () => void;
 }
 
 interface RunHistoryItem {
@@ -45,6 +48,7 @@ export function TestCaseView({
   onDelete,
   onDuplicate,
   onView,
+  onRefresh,
 }: TestCaseViewProps) {
   const currentIndex = cases.findIndex(c => c.id === tc.id);
   const total = cases.length;
@@ -96,6 +100,7 @@ export function TestCaseView({
   }, [tc.apiId]);
 
   const [showCopyTo, setShowCopyTo] = useState(false);
+  const [showAi, setShowAi] = useState(false);
   const [copying, setCopying] = useState(false);
 
   return (
@@ -156,7 +161,7 @@ export function TestCaseView({
       <div className="flex-1 overflow-y-auto px-6 py-5">
         <div className="mx-auto max-w-[1120px]">
           {/* Header */}
-          <div className="mb-4 flex flex-nowrap items-start justify-between gap-4">
+          <div className="mb-4 flex flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
             <div className="min-w-0">
               <p className="font-mono text-[12px] text-text-3">
                 {tc.caseNum ? caseCode(tc.caseNum) : tc.id}
@@ -169,7 +174,7 @@ export function TestCaseView({
               </p>
             </div>
 
-            <div className="flex flex-shrink-0 items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0 sm:flex-nowrap">
               <button
                 type="button"
                 onClick={() => setShowCopyTo(true)}
@@ -178,6 +183,27 @@ export function TestCaseView({
                 <i className="ti ti-copy text-[15px]" />
                 Copy
               </button>
+              {tc.apiId && (
+                <button
+                  type="button"
+                  onClick={() => setShowAi(true)}
+                  aria-label="Improve with AI"
+                  className="inline-flex items-center gap-1.5 rounded-[7px] border border-primary/30 bg-primary-light px-3 py-[7px] text-[13px] font-medium text-primary-text transition-colors hover:opacity-90"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="14"
+                    height="14"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 2L14.5 9.5 22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z" />
+                  </svg>
+                  Improve<span className="hidden sm:inline"> with AI</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onEdit}
@@ -342,6 +368,16 @@ export function TestCaseView({
           </div>
         </div>
       </div>
+
+      {showAi && tc.apiId && (
+        <AiImprovePanel
+          caseId={tc.apiId}
+          code={tc.caseNum ? caseCode(tc.caseNum) : tc.id}
+          title={tc.title}
+          onClose={() => setShowAi(false)}
+          onChanged={onRefresh}
+        />
+      )}
 
       {showCopyTo && (
         <CopyToModal

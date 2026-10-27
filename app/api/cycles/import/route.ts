@@ -95,7 +95,8 @@ export async function POST(req: Request) {
       const issueCount = row.critical + row.major + row.minor;
       const remaining = Math.min(row.openIssues, issueCount);
       const done = Math.max(0, issueCount - remaining);
-      const date = new Date(`${row.date}T00:00:00`);
+      // Noon UTC: reads as the same calendar day in every timezone.
+      const date = new Date(`${row.date}T12:00:00Z`);
       const name =
         row.name ||
         [row.module, row.feature].filter(Boolean).join(' → ') ||
