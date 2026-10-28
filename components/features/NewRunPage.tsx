@@ -5,7 +5,8 @@ import { ApiTestCase, CycleScopeType } from '@/types';
 import { api } from '@/lib/client';
 import { cn, priorityDisplay } from '@/lib/utils';
 import { SIco } from '@/components/layout/sts-icons';
-import { caseCode, priorityPillClass } from './tc-helpers';
+import { caseCode, optionPillClass, priorityPillClass } from './tc-helpers';
+import { useCaseOptions } from './CaseClassification';
 import type { CycleFormPayload } from './NewCycleModal';
 import './sts-v3.css';
 
@@ -135,6 +136,7 @@ export function NewRunPage({
   const environments = useOptions(projectId, 'Environment');
   const platforms = useOptions(projectId, 'Platform');
   const priorities = useOptions(projectId, 'Priority');
+  const priorityColours = useCaseOptions(projectId ?? '').priority;
   const severities = useOptions(projectId, 'Severity');
   const types = useOptions(projectId, 'TestType');
   const [sections, setSections] = useState<Opt[]>([]);
@@ -693,7 +695,14 @@ export function NewRunPage({
                             {c.title}
                           </span>
                           <span
-                            className={cn('pill', priorityPillClass(priorityDisplay(c).label))}
+                            className={cn(
+                              'pill',
+                              optionPillClass(
+                                priorityColours,
+                                priorityDisplay(c).label,
+                                priorityPillClass(priorityDisplay(c).label),
+                              ),
+                            )}
                             style={{ padding: '1px 6px', fontSize: 10 }}
                           >
                             {priorityDisplay(c).label}
@@ -953,7 +962,14 @@ export function NewRunPage({
                         {caseCode(c.caseNum)}
                       </span>
                       <span
-                        className={cn('pill', priorityPillClass(priorityDisplay(c).label))}
+                        className={cn(
+                          'pill',
+                          optionPillClass(
+                            priorityColours,
+                            priorityDisplay(c).label,
+                            priorityPillClass(priorityDisplay(c).label),
+                          ),
+                        )}
                         style={{ padding: '1px 6px', fontSize: 10 }}
                       >
                         {priorityDisplay(c).label}

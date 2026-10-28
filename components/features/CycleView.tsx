@@ -8,7 +8,8 @@ import { CycleReportModal } from './CycleReportModal';
 import { UpdateQuickLogModal } from './QuickLogModal';
 import { cn, priorityDisplay, relativeTime, resultTone, typeDisplay } from '@/lib/utils';
 import { SIco } from '@/components/layout/sts-icons';
-import { caseCode, priorityPillClass } from './tc-helpers';
+import { caseCode, optionPillClass, priorityPillClass, typePillClass } from './tc-helpers';
+import { useCaseOptions } from './CaseClassification';
 import './sts-v3.css';
 import { JiraTicketLink, useJiraSiteUrl } from '@/lib/jiraLink';
 import type { JiraSubIssueInfo } from '@/lib/jira';
@@ -688,6 +689,7 @@ function ExecPane({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  const caseOptions = useCaseOptions(projectId ?? '');
   const pri = priorityDisplay(tc);
   const typ = typeDisplay(tc);
   const sbtnFor = (o: RunResultOption) => {
@@ -726,12 +728,21 @@ function ExecPane({
             <SIco name="clock" size={12} /> {elapsed} elapsed
           </span>
           <span
-            className={cn('pill', priorityPillClass(pri.label))}
+            className={cn(
+              'pill',
+              optionPillClass(caseOptions.priority, pri.label, priorityPillClass(pri.label)),
+            )}
             style={{ padding: '1px 8px', fontSize: 11 }}
           >
             {pri.label}
           </span>
-          <span className="pill pill-neutral" style={{ padding: '1px 8px', fontSize: 11 }}>
+          <span
+            className={cn(
+              'pill',
+              optionPillClass(caseOptions.type, typ.label, typePillClass(typ.label)),
+            )}
+            style={{ padding: '1px 8px', fontSize: 11 }}
+          >
             {typ.label}
           </span>
           {tc.owner && (

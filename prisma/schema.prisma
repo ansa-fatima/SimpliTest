@@ -261,6 +261,9 @@ model AiConnection {
   // Null = use the app default (lib/aiConfig.ts).
   model         String?
   tiebreakModel String?
+  // Where the provider's API lives -- needed for Ollama (the machine running it)
+  // and OpenAI-compatible servers. Null = the provider's usual address.
+  baseUrl       String?
   connectedAt   DateTime @default(now())
   connectedById String?
   updatedAt     DateTime @updatedAt

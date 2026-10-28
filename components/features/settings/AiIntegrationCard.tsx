@@ -5,7 +5,7 @@ import { api } from '@/lib/client';
 import { cn } from '@/lib/utils';
 
 // Settings > Integrations > "AI Test Generation".
-// Connects the workspace to Claude or Gemini (API key + models) and holds the options for
+// Connects the workspace to Claude, Gemini, OpenAI or a local Ollama (API key or server address + models) and holds the options for
 // the duplicate check used by "Generate with AI". Same pattern as the Jira card:
 // the key is write-only (only a masked hint comes back) and is checked against
 // the AI service before it is saved.
@@ -18,17 +18,33 @@ interface ModelOption {
   hint: string;
 }
 
-type ProviderId = 'anthropic' | 'gemini';
+type ProviderId =
+  | 'anthropic'
+  | 'gemini'
+  | 'openai'
+  | 'openrouter'
+  | 'groq'
+  | 'xai'
+  | 'mistral'
+  | 'deepseek'
+  | 'ollama'
+  | 'custom';
 
 interface ProviderInfo {
   id: ProviderId;
   label: string;
+  note: string;
   models: ModelOption[];
   defaultModel: string;
   defaultTiebreakModel: string;
+  needsKey: boolean;
+  keyOptional?: boolean;
   keyPlaceholder: string;
   keyUrl: string;
   keyUrlLabel: string;
+  baseUrl: 'none' | 'optional' | 'required';
+  defaultBaseUrl: string;
+  modelPlaceholder: string;
 }
 
 interface AiStatus {
@@ -37,6 +53,8 @@ interface AiStatus {
   /** Which provider answers right now (null when nothing is connected). */
   provider: ProviderId | null;
   keyHint: string | null;
+  /** The server address in use (the provider's usual one unless changed). */
+  baseUrl: string | null;
   model: string | null;
   tiebreakModel: string | null;
   providers: ProviderInfo[];
@@ -77,6 +95,7 @@ export function AiIntegrationCard({
   const [replacing, setReplacing] = useState(false); // replace the stored key
   const [apiKey, setApiKey] = useState('');
   const [provider, setProvider] = useState<ProviderId>('anthropic');
+  const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -84,7 +103,11 @@ export function AiIntegrationCard({
     try {
       const s = await api.get<AiStatus>(`/api/projects/${workspaceId}/integrations/ai`);
       setStatus(s);
-      setProvider(s.provider ?? 'anthropic');
+      const p = s.provider ?? 'anthropic';
+      setProvider(p);
+      // Only a non-standard address is worth pre-filling; empty means "the usual one".
+      const usual = s.providers.find(x => x.id === p)?.defaultBaseUrl;
+      setBaseUrl(s.baseUrl && s.baseUrl !== usual ? s.baseUrl : '');
       setModel(s.model ?? '');
       setError(null);
     } catch (e) {
@@ -108,6 +131,7 @@ export function AiIntegrationCard({
     body: {
       provider?: ProviderId;
       apiKey?: string;
+      baseUrl?: string | null;
       model?: string | null;
       tiebreakModel?: string | null;
     },
@@ -121,7 +145,9 @@ export function AiIntegrationCard({
       setEditing(false);
       setReplacing(false);
       await load();
-      flash(body.apiKey ? 'Connected — the key was checked and saved.' : 'Saved.');
+      flash(
+        body.apiKey || body.baseUrl !== undefined ? 'Connected — checked and saved.' : 'Saved.',
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -169,8 +195,18 @@ export function AiIntegrationCard({
   const changeProvider = (p: ProviderId) => {
     setProvider(p);
     setModel(''); // model names belong to one provider
+    setBaseUrl('');
     setError(null);
   };
+  // What a connect / replace submit sends for the provider being set up.
+  const formInfo = status?.providers.find(p => p.id === provider);
+  const connectBody = () => ({
+    provider,
+    ...((formInfo?.needsKey || formInfo?.keyOptional) && (formInfo.needsKey || apiKey.trim())
+      ? { apiKey }
+      : {}),
+    ...(formInfo && formInfo.baseUrl !== 'none' ? { baseUrl: baseUrl.trim() || null } : {}),
+  });
 
   const connectedHere = status?.connected && status.source === 'workspace';
   const usingServerKey = status?.connected && status.source === 'server';
@@ -182,7 +218,10 @@ export function AiIntegrationCard({
           <h3 className="text-[14px] font-semibold text-text">AI Test Generation</h3>
           <p className="mt-0.5 text-[11.5px] text-text-3">
             Lets “Generate with AI” and “Improve with AI” write and revise test cases, using{' '}
-            {status?.connected && active ? active.label : 'Claude or Gemini'}.
+            {status?.connected && active
+              ? active.label
+              : 'Claude, Gemini, OpenAI, OpenRouter, Groq, Grok, Mistral, DeepSeek, a local Ollama or any OpenAI-compatible server'}
+            .
           </p>
         </div>
         <div className="flex flex-shrink-0 items-center gap-2">
@@ -230,11 +269,16 @@ export function AiIntegrationCard({
             setApiKey(v);
             setError(null);
           }}
+          baseUrl={baseUrl}
+          setBaseUrl={v => {
+            setBaseUrl(v);
+            setError(null);
+          }}
           model={model}
           setModel={setModel}
           busy={busy === 'connect'}
           submitLabel="Connect"
-          onSubmit={() => save({ provider, apiKey, model: model || null }, 'connect')}
+          onSubmit={() => save({ ...connectBody(), model: model || null }, 'connect')}
           onCancel={() => {
             setEditing(false);
             setApiKey('');
@@ -248,7 +292,7 @@ export function AiIntegrationCard({
         <p className="px-5 py-4 text-[12px] text-text-3">
           Not connected.{' '}
           {canEdit
-            ? 'Click Connect, choose Claude or Gemini and paste an API key.'
+            ? 'Click Connect, choose a provider, then paste its API key (or, for Ollama or a custom server, its address).'
             : 'Ask a workspace admin to connect it.'}
         </p>
       )}
@@ -277,7 +321,7 @@ export function AiIntegrationCard({
             <div className="flex flex-col gap-1">
               {!replacing && (
                 <label className="text-[12.5px] font-semibold text-text">
-                  {active?.label} API key
+                  {active?.needsKey ? `${active.label} API key` : 'Server address'}
                 </label>
               )}
               {replacing ? (
@@ -292,11 +336,16 @@ export function AiIntegrationCard({
                     setApiKey(v);
                     setError(null);
                   }}
+                  baseUrl={baseUrl}
+                  setBaseUrl={v => {
+                    setBaseUrl(v);
+                    setError(null);
+                  }}
                   model={model}
                   setModel={setModel}
                   busy={busy === 'replace'}
-                  submitLabel="Save key"
-                  onSubmit={() => save({ provider, apiKey }, 'replace')}
+                  submitLabel={formInfo?.needsKey ? 'Save key' : 'Save'}
+                  onSubmit={() => save(connectBody(), 'replace')}
                   onCancel={() => {
                     setReplacing(false);
                     setApiKey('');
@@ -307,7 +356,7 @@ export function AiIntegrationCard({
               ) : (
                 <div className="flex items-center gap-2">
                   <code className="flex-1 rounded-[7px] border border-border bg-surface-2 px-3 py-2 text-[12.5px] text-text-2">
-                    {status.keyHint}
+                    {active?.needsKey ? status.keyHint : status.baseUrl}
                   </code>
                   <button
                     type="button"
@@ -315,15 +364,17 @@ export function AiIntegrationCard({
                     onClick={() => setReplacing(true)}
                     className="rounded-[7px] border border-border bg-surface px-3 py-2 text-[12px] font-medium text-text hover:bg-surface-2 disabled:opacity-50"
                   >
-                    Replace key
+                    {active?.needsKey ? 'Replace key' : 'Change'}
                   </button>
                 </div>
               )}
               <p className="text-[11px] text-text-3">
-                The key is never shown again after saving.
-                {!status.encrypted &&
-                  canEdit &&
-                  ' It is stored like the Jira token; set APP_ENCRYPTION_KEY on the server to encrypt it at rest.'}
+                {active?.needsKey
+                  ? 'The key is never shown again after saving.' +
+                    (!status.encrypted && canEdit
+                      ? ' It is stored like the Jira token; set APP_ENCRYPTION_KEY on the server to encrypt it at rest.'
+                      : '')
+                  : 'Requests go from the SimpliTest server to this address.'}
               </p>
             </div>
           )}
@@ -339,9 +390,13 @@ export function AiIntegrationCard({
               label="Model for writing test cases"
               help={active?.models.find(m => m.id === (status.model ?? active.defaultModel))?.hint}
               value={status.model ?? ''}
-              defaultLabel={`Default — ${modelLabel(null, active?.defaultModel ?? '')}`}
+              defaultLabel={
+                active?.defaultModel
+                  ? `Default — ${modelLabel(null, active.defaultModel)}`
+                  : 'Not set'
+              }
               models={active?.models ?? []}
-              placeholder={active?.id === 'gemini' ? 'gemini-…' : 'claude-…'}
+              placeholder={active?.modelPlaceholder}
               disabled={!canEdit || !connectedHere || busy !== null}
               onChange={v => save({ model: v || null }, 'model')}
             />
@@ -349,9 +404,13 @@ export function AiIntegrationCard({
               label="Model for the duplicate double-check"
               help="A small, fast model is enough for this."
               value={status.tiebreakModel ?? ''}
-              defaultLabel={`Default — ${modelLabel(null, active?.defaultTiebreakModel ?? '')}`}
+              defaultLabel={
+                active?.defaultTiebreakModel
+                  ? `Default — ${modelLabel(null, active.defaultTiebreakModel)}`
+                  : 'Same as the writing model'
+              }
               models={active?.models ?? []}
-              placeholder={active?.id === 'gemini' ? 'gemini-…' : 'claude-…'}
+              placeholder={active?.modelPlaceholder}
               disabled={!canEdit || !connectedHere || busy !== null}
               onChange={v => save({ tiebreakModel: v || null }, 'tiebreak')}
             />
@@ -434,6 +493,8 @@ function KeyForm({
   switching,
   apiKey,
   setApiKey,
+  baseUrl,
+  setBaseUrl,
   model,
   setModel,
   busy,
@@ -449,6 +510,8 @@ function KeyForm({
   switching?: boolean;
   apiKey: string;
   setApiKey: (v: string) => void;
+  baseUrl: string;
+  setBaseUrl: (v: string) => void;
   model: string;
   setModel: (v: string) => void;
   busy: boolean;
@@ -458,11 +521,18 @@ function KeyForm({
   compact?: boolean;
 }) {
   const info = status.providers.find(p => p.id === provider) ?? status.providers[0];
+  const needsAddress = info.baseUrl === 'required' && !info.defaultBaseUrl;
+  const needsModel = !info.defaultModel;
+  const ready =
+    (!info.needsKey || !!apiKey.trim()) &&
+    (!needsAddress || !!baseUrl.trim()) &&
+    (!needsModel || compact || !!model.trim()) &&
+    !busy;
   return (
     <div className={cn('flex flex-col gap-3', !compact && 'px-5 py-4')}>
       <div className="flex flex-col gap-1">
         <span className="text-[12.5px] font-semibold text-text">AI provider</span>
-        <div className="inline-flex w-full max-w-[360px] rounded-[7px] border border-border bg-surface-2 p-0.5">
+        <div className="grid w-full max-w-[560px] grid-cols-2 gap-0.5 rounded-[7px] border border-border bg-surface-2 p-0.5 sm:grid-cols-5">
           {status.providers.map(p => (
             <button
               key={p.id}
@@ -470,67 +540,128 @@ function KeyForm({
               disabled={busy}
               onClick={() => setProvider(p.id)}
               aria-pressed={provider === p.id}
+              title={p.label}
               className={cn(
-                'flex-1 rounded-[6px] px-3 py-1.5 text-[12px] font-medium transition-colors',
+                'rounded-[6px] px-3 py-1.5 text-[12px] font-medium transition-colors',
                 provider === p.id
                   ? 'bg-surface text-text shadow-sm'
                   : 'text-text-3 hover:text-text',
               )}
             >
-              {p.label}
+              {p.id === 'custom' ? 'Custom' : p.label.split(' (')[0]}
             </button>
           ))}
         </div>
+        <p className="text-[11px] text-text-3">{info.note}</p>
         {switching && (
           <p className="text-[11px] text-text-3">
-            Switching to {info.label} replaces the current key and puts the models back to its
-            defaults.
+            Switching to {info.label} replaces the current connection and puts the models back to
+            its defaults.
           </p>
         )}
       </div>
-      <div className="flex flex-col gap-1">
-        {!compact && (
-          <label className="text-[12.5px] font-semibold text-text">{info.label} API key</label>
-        )}
-        <input
-          type="password"
-          autoComplete="off"
-          value={apiKey}
-          onChange={e => setApiKey(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && apiKey.trim()) onSubmit();
-          }}
-          placeholder={info.keyPlaceholder}
-          className={inputCls}
-        />
-        <p className="text-[11px] text-text-3">
-          Create one at{' '}
-          <a
-            href={info.keyUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="text-primary hover:underline"
-          >
-            {info.keyUrlLabel}
-          </a>
-          . It is checked with the AI service when you save.
-        </p>
-      </div>
+      {(info.needsKey || info.keyOptional) && (
+        <div className="flex flex-col gap-1">
+          {!compact && (
+            <label className="text-[12.5px] font-semibold text-text">
+              {info.label} API key{info.needsKey ? '' : ' (optional)'}
+            </label>
+          )}
+          <input
+            type="password"
+            autoComplete="off"
+            value={apiKey}
+            onChange={e => setApiKey(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && ready) onSubmit();
+            }}
+            placeholder={info.keyPlaceholder}
+            className={inputCls}
+          />
+          <p className="text-[11px] text-text-3">
+            {info.needsKey ? (
+              <>
+                Create one at{' '}
+                <a
+                  href={info.keyUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="text-primary hover:underline"
+                >
+                  {info.keyUrlLabel}
+                </a>
+                . It is checked with the AI service when you save.
+              </>
+            ) : (
+              'Leave empty if your server does not ask for a key.'
+            )}
+          </p>
+        </div>
+      )}
+      {info.baseUrl !== 'none' && (
+        <div className="flex flex-col gap-1">
+          <label className="text-[12.5px] font-semibold text-text">
+            Server address{info.baseUrl === 'optional' ? ' (optional)' : ''}
+          </label>
+          <input
+            type="url"
+            autoComplete="off"
+            value={baseUrl}
+            onChange={e => setBaseUrl(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && ready) onSubmit();
+            }}
+            placeholder={info.defaultBaseUrl}
+            className={inputCls}
+          />
+          <p className="text-[11px] text-text-3">
+            {info.id === 'ollama' ? (
+              <>
+                Where Ollama is running, as seen from the SimpliTest server. Leave empty for{' '}
+                {info.defaultBaseUrl}. Install it from{' '}
+                <a
+                  href={info.keyUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="text-primary hover:underline"
+                >
+                  {info.keyUrlLabel}
+                </a>
+                , then pull a model (e.g. <code>ollama pull llama3.1</code>).
+              </>
+            ) : info.id === 'custom' ? (
+              <>
+                The address of the server, as seen from the SimpliTest server, e.g.
+                http://localhost:1234 for LM Studio. The app adds /v1 itself.
+              </>
+            ) : (
+              <>
+                Leave empty for OpenAI itself. Enter another address to use an OpenAI-compatible
+                service instead.
+              </>
+            )}
+          </p>
+        </div>
+      )}
       {!compact && (
         <ModelSelect
           label="Model for writing test cases"
           help={info.models.find(m => m.id === (model || info.defaultModel))?.hint}
           value={model}
-          defaultLabel={`Default — ${info.models.find(m => m.id === info.defaultModel)?.label ?? info.defaultModel}`}
+          defaultLabel={
+            info.defaultModel
+              ? `Default — ${info.models.find(m => m.id === info.defaultModel)?.label ?? info.defaultModel}`
+              : 'Choose a model…'
+          }
           models={info.models}
-          placeholder={info.id === 'gemini' ? 'gemini-…' : 'claude-…'}
+          placeholder={info.modelPlaceholder}
           onChange={setModel}
         />
       )}
       <div className="flex gap-2">
         <button
           type="button"
-          disabled={busy || !apiKey.trim()}
+          disabled={!ready}
           onClick={onSubmit}
           className="btn btn-primary btn-sm"
         >

@@ -390,6 +390,44 @@
   border-color: var(--ux-bdr);
 }
 
+/* Pills coloured from Settings > Test Configuration (palette names, see
+   lib/colors.ts). One hue per pill; tint, text and border are derived from it
+   so the same rule reads well in both themes. */
+.stv3 .pill-c {
+  background: color-mix(in srgb, var(--pc) 12%, transparent);
+  color: color-mix(in srgb, var(--pc) 82%, #000);
+  border-color: color-mix(in srgb, var(--pc) 30%, transparent);
+}
+[data-theme='dark'] .stv3 .pill-c {
+  background: color-mix(in srgb, var(--pc) 20%, transparent);
+  color: color-mix(in srgb, var(--pc) 55%, #fff);
+  border-color: color-mix(in srgb, var(--pc) 38%, transparent);
+}
+.stv3 .pill-c-red {
+  --pc: #dc2626;
+}
+.stv3 .pill-c-indigo {
+  --pc: #4f46e5;
+}
+.stv3 .pill-c-emerald {
+  --pc: #059669;
+}
+.stv3 .pill-c-amber {
+  --pc: #d97706;
+}
+.stv3 .pill-c-slate {
+  --pc: #64748b;
+}
+.stv3 .pill-c-blue {
+  --pc: #2563eb;
+}
+.stv3 .pill-c-pink {
+  --pc: #db2777;
+}
+.stv3 .pill-c-teal {
+  --pc: #0d9488;
+}
+
 /* ── Avatar ───────────────────────────────────────────────── */
 .stv3 .avatar {
   width: 28px;

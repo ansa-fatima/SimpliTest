@@ -12,6 +12,7 @@ import { Ico } from '@/components/features/tc-icons';
 import {
   avatarGradient,
   caseCode,
+  optionPillClass,
   priorityPillClass,
   resultPillClass,
   statusPillClass,
@@ -1702,10 +1703,30 @@ export function TestCaseList({
                               <span className={cn('pill', statusPillClass(tc.status))}>
                                 {tc.status !== 'Archived' && <span className="dot" />} {tc.status}
                               </span>
-                              <span className={cn('pill', priorityPillClass(pr.label))}>
+                              <span
+                                className={cn(
+                                  'pill',
+                                  optionPillClass(
+                                    caseOptions.priority,
+                                    pr.label,
+                                    priorityPillClass(pr.label),
+                                    tc.customPriority?.color,
+                                  ),
+                                )}
+                              >
                                 {pr.label}
                               </span>
-                              <span className={cn('pill', typePillClass(ty.label))}>
+                              <span
+                                className={cn(
+                                  'pill',
+                                  optionPillClass(
+                                    caseOptions.type,
+                                    ty.label,
+                                    typePillClass(ty.label),
+                                    tc.customType?.color,
+                                  ),
+                                )}
+                              >
                                 {ty.label}
                               </span>
                               <OwnerAvatar user={tc.owner} />
@@ -2309,9 +2330,21 @@ function OwnerAvatar({ user }: { user: UserSummary | null | undefined }) {
     <div
       className="avatar sm"
       title={`${label} (${user.email})`}
-      style={{ background: avatarGradient(user.id) }}
+      style={{
+        background: user.avatarUrl ? 'transparent' : avatarGradient(user.id),
+        overflow: 'hidden',
+      }}
     >
-      {initials(label)}
+      {user.avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={user.avatarUrl}
+          alt={label}
+          style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+        />
+      ) : (
+        initials(label)
+      )}
     </div>
   );
 }

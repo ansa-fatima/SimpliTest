@@ -5,6 +5,8 @@ import { useEffect, useState } from 'react';
 import { TestCase, RunResult } from '@/types';
 import { api } from '@/lib/client';
 import { Badge } from '@/components/ui/Badge';
+import { useCaseOptions, CaseOption } from '@/components/features/CaseClassification';
+import { colorClassesOf } from '@/lib/colors';
 import { AiImprovePanel } from '@/components/features/AiImprovePanel';
 import { RichText } from '@/components/ui/RichText';
 import {
@@ -50,6 +52,12 @@ export function TestCaseView({
   onView,
   onRefresh,
 }: TestCaseViewProps) {
+  const caseOptions = useCaseOptions(projectId ?? '');
+  // Colour as set in Settings > Test Configuration; the built-in tones until loaded.
+  const tone = (list: CaseOption[], name: string, fallback: string) => {
+    const o = list.find(x => x.name === name);
+    return o ? colorClassesOf(o.color).pill : fallback;
+  };
   const currentIndex = cases.findIndex(c => c.id === tc.id);
   const total = cases.length;
   const hasPrev = currentIndex > 0;
@@ -338,13 +346,31 @@ export function TestCaseView({
               <Card title="Details">
                 <div className="flex flex-col gap-2.5">
                   <DetailRow label="Priority">
-                    <Badge className={priorityBadge(tc.priority)}>{tc.priority}</Badge>
+                    <Badge
+                      className={tone(
+                        caseOptions.priority,
+                        tc.priority,
+                        priorityBadge(tc.priority),
+                      )}
+                    >
+                      {tc.priority}
+                    </Badge>
                   </DetailRow>
                   <DetailRow label="Severity">
-                    <Badge className={severityBadge(tc.severity)}>{tc.severity}</Badge>
+                    <Badge
+                      className={tone(
+                        caseOptions.severity,
+                        tc.severity,
+                        severityBadge(tc.severity),
+                      )}
+                    >
+                      {tc.severity}
+                    </Badge>
                   </DetailRow>
                   <DetailRow label="Type">
-                    <Badge className={typeBadge(tc.type)}>{tc.type}</Badge>
+                    <Badge className={tone(caseOptions.type, tc.type, typeBadge(tc.type))}>
+                      {tc.type}
+                    </Badge>
                   </DetailRow>
                   <DetailRow label="Portal">
                     <span className="truncate text-[12.5px] text-text">{tc.portal || '—'}</span>

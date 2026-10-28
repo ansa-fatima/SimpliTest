@@ -1,12 +1,14 @@
 // AI test-case generation -- the only file that talks to a model provider, so
 // swapping provider/model touches nothing else. Server-side only: the API key
-// never reaches the browser. Two providers are supported (see lib/aiConfig.ts):
-// Claude (Messages API, forced tool call) and Gemini (generateContent, JSON that
-// matches the same schema). Everything above the "Provider calls" section works
+// never reaches the browser. Four providers are supported (see lib/aiConfig.ts):
+// Claude (Messages API, forced tool call), Gemini (generateContent), and everything
+// that speaks the OpenAI chat-completions API (OpenAI, OpenRouter, Groq, Grok, Mistral,
+// DeepSeek, Ollama, custom servers) -- all but Claude return JSON
+// that matches the same schema. Everything above the "Provider calls" section works
 // on one neutral request and does not care which one answers.
 
 import { CaseStreamParser } from '@/lib/aiStream';
-import type { AiConfig } from '@/lib/aiConfig';
+import type { AiConfig, AiProvider } from '@/lib/aiConfig';
 
 export class AiError extends Error {
   status: number;
@@ -327,8 +329,28 @@ function geminiBody(opts: ToolCallOpts) {
 
 const KEY_REJECTED = /API key not valid|API_KEY_INVALID|API key expired|API key was reported/i;
 
+/** Google's own explanation from an error body ("message [REASON]"), for the settings screen. */
+function googleReason(body: string): string {
+  try {
+    const e = (
+      JSON.parse(body) as { error?: { message?: string; details?: { reason?: string }[] } }
+    ).error;
+    const msg = (e?.message ?? '').replace(/\s+/g, ' ').trim().slice(0, 420);
+    const reason = e?.details?.find(d => d.reason)?.reason;
+    return [msg, reason && `[${reason}]`].filter(Boolean).join(' ');
+  } catch {
+    return '';
+  }
+}
+
+// The key is fine but the Google project behind it cannot use the API yet.
+const PROJECT_BLOCKED =
+  /billing|free tier|quota.*not available|not available for this project|has not been used|is disabled|enable the .*api|permission_denied|service_disabled/i;
+
 async function geminiHttpError(res: Response): Promise<AiError> {
   const text = await res.text().catch(() => '');
+  const blocked = !KEY_REJECTED.test(text) && PROJECT_BLOCKED.test(googleReason(text));
+  if (blocked) return new AiError(`The AI service refused the request: ${googleReason(text)}`, 502);
   if (res.status === 401 || res.status === 403 || (res.status === 400 && KEY_REJECTED.test(text)))
     return new AiError('The AI service rejected the API key configured on the server.', 502);
   if (res.status === 404)
@@ -458,12 +480,249 @@ async function streamGemini(
   });
 }
 
+// OpenAI, Ollama and every "OpenAI-compatible" server (OpenRouter, Groq, LM Studio,
+// vLLM, ...) speak the same chat-completions API, so they share one code path. Like
+// Gemini, they are asked for a JSON object that matches the schema; the text they
+// return is the same document a Claude tool call would carry.
+
+// Reasoning models (GPT-5, o-series) spend part of the token budget on thinking.
+const OPENAI_THINKING_HEADROOM = 8192;
+
+// Everything except Claude and Gemini (OpenAI, OpenRouter, Groq, Grok, Mistral, DeepSeek,
+// Ollama, a custom server) is reached this way.
+const isOpenAiStyle = (p: AiProvider) => p !== 'anthropic' && p !== 'gemini';
+// Providers that run without an API key.
+const keyless = (p: AiProvider) => p === 'ollama' || p === 'custom';
+
+/** The neutral content (text, or Claude-style blocks) as chat-completions content parts. */
+function openaiContent(user: string | unknown[], provider: AiProvider): string | unknown[] {
+  if (typeof user === 'string') return user;
+  return user.map(b => {
+    const blk = b as {
+      type?: string;
+      text?: string;
+      source?: { media_type?: string; data?: string };
+    };
+    if (blk.type === 'text') return { type: 'text', text: blk.text ?? '' };
+    const mime = blk.source?.media_type ?? '';
+    const url = `data:${mime};base64,${blk.source?.data ?? ''}`;
+    if (mime === 'application/pdf') {
+      // Only OpenAI itself accepts a PDF in a chat message.
+      if (provider !== 'openai')
+        throw new AiError(
+          'This AI provider cannot read PDF files. Paste the text of the document, or attach an image.',
+          422,
+        );
+      return { type: 'file', file: { filename: 'document.pdf', file_data: url } };
+    }
+    return { type: 'image_url', image_url: { url } };
+  });
+}
+
+function openaiBody(opts: ToolCallOpts, stream: boolean, schemaMode: 'schema' | 'object') {
+  const provider = opts.cfg.provider;
+  const reasoning = provider === 'openai';
+  const budget = Math.min(32000, opts.maxTokens + (reasoning ? OPENAI_THINKING_HEADROOM : 0));
+  return {
+    model: opts.model,
+    messages: [
+      {
+        role: 'system',
+        content:
+          opts.system +
+          '\n\nNo tools are available. Reply with ONE JSON object and nothing else (no prose, no code fences) that matches this JSON schema:\n' +
+          JSON.stringify(opts.schema),
+      },
+      { role: 'user', content: openaiContent(opts.user, provider) },
+    ],
+    response_format:
+      schemaMode === 'schema'
+        ? { type: 'json_schema', json_schema: { name: opts.toolName, schema: opts.schema } }
+        : { type: 'json_object' },
+    // OpenAI's newer models want max_completion_tokens; other servers know max_tokens.
+    ...(reasoning ? { max_completion_tokens: budget } : { max_tokens: budget }),
+    ...(stream ? { stream: true } : {}),
+  };
+}
+
+/** Where an OpenAI-style API lives: the configured address plus /v1. */
+const openaiUrl = (cfg: AiConfig, path: string) => `${cfg.baseUrl}/v1${path}`;
+
+function openaiHeaders(cfg: AiConfig): Record<string, string> {
+  return {
+    'content-type': 'application/json',
+    ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}),
+  };
+}
+
+/** The service's own explanation from an OpenAI-style error body. */
+function openaiReason(body: string): string {
+  try {
+    const e = (JSON.parse(body) as { error?: { message?: string } | string }).error;
+    const msg = typeof e === 'string' ? e : (e?.message ?? '');
+    return msg.replace(/\s+/g, ' ').trim().slice(0, 300);
+  } catch {
+    return '';
+  }
+}
+
+const OUT_OF_CREDIT = /insufficient_quota|exceeded your current quota|billing|credit/i;
+
+function unreachable(cfg: AiConfig): AiError {
+  return cfg.provider === 'ollama'
+    ? new AiError(
+        `Could not reach Ollama at ${cfg.baseUrl}. Check that it is running (ollama serve) and that this server can reach that address.`,
+        502,
+      )
+    : new AiError(`Could not reach the AI service at ${cfg.baseUrl}. Try again in a moment.`, 502);
+}
+
+async function openaiHttpError(res: Response, cfg: AiConfig, text: string): Promise<AiError> {
+  const why = openaiReason(text);
+  if (res.status === 401 || res.status === 403)
+    return new AiError('The AI service rejected the API key configured on the server.', 502);
+  if (res.status === 404)
+    return new AiError(
+      cfg.provider === 'ollama'
+        ? `Ollama does not have the model "${cfg.model}". Install it first: ollama pull ${cfg.model}`
+        : 'The selected AI model is not available to this API key.',
+      502,
+    );
+  if (res.status === 429)
+    return OUT_OF_CREDIT.test(text)
+      ? new AiError(
+          `The AI account has no credit or quota left.${why ? ` The service said: ${why}` : ''}`,
+          502,
+        )
+      : new AiError('The AI service is busy (rate limited). Try again in a moment.', 429);
+  return new AiError(
+    `The AI service returned an error (${res.status}).${why ? ` ${why}` : ''}`,
+    502,
+  );
+}
+
+async function openOpenAi(
+  opts: ToolCallOpts,
+  stream: boolean,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const cfg = opts.cfg;
+  if (!keyless(cfg.provider) && !cfg.apiKey)
+    throw new AiError(
+      'AI generation is not set up -- add an API key under Settings > Integrations.',
+      503,
+    );
+  const send = (mode: 'schema' | 'object') =>
+    fetch(openaiUrl(cfg, '/chat/completions'), {
+      method: 'POST',
+      cache: 'no-store',
+      signal,
+      headers: openaiHeaders(cfg),
+      body: JSON.stringify(openaiBody(opts, stream, mode)),
+    });
+  let res: Response;
+  try {
+    res = await send('schema');
+    // Some compatible servers do not know json_schema: retry with plain JSON mode
+    // (the schema is also spelled out in the prompt).
+    if (res.status === 400) {
+      const text = await res.clone().text();
+      if (/response_format|json_schema/i.test(text)) res = await send('object');
+    }
+  } catch (e) {
+    if (e instanceof AiError) throw e;
+    throw unreachable(cfg);
+  }
+  if (!res.ok) throw await openaiHttpError(res, cfg, await res.text().catch(() => ''));
+  return res;
+}
+
+interface OpenAiChunk {
+  choices?: {
+    message?: { content?: string | null; refusal?: string | null };
+    delta?: { content?: string | null; refusal?: string | null };
+    finish_reason?: string | null;
+  }[];
+  error?: { message?: string } | string;
+}
+
+function openaiRefusal(chunk: OpenAiChunk): AiError | null {
+  if (chunk.error) {
+    const msg = typeof chunk.error === 'string' ? chunk.error : chunk.error.message;
+    return new AiError(msg || 'The AI service reported an error.', 502);
+  }
+  const c = chunk.choices?.[0];
+  if (c?.message?.refusal || c?.delta?.refusal || c?.finish_reason === 'content_filter')
+    return new AiError('The AI service declined this request. Try rewording the requirement.', 422);
+  return null;
+}
+
+/** Reasoning models may put their thinking inside <think> tags; it is not part of the answer. */
+const stripThinking = (s: string) => s.replace(/<think>[\s\S]*?<\/think>/g, '');
+
+async function callOpenAi<T>(opts: ToolCallOpts): Promise<T> {
+  const res = await openOpenAi(opts, false);
+  const data = (await res.json().catch(() => null)) as OpenAiChunk | null;
+  if (!data) throw new AiError('The AI service returned an unexpected answer.', 502);
+  const refusal = openaiRefusal(data);
+  if (refusal) throw refusal;
+  const text = stripThinking(data.choices?.[0]?.message?.content ?? '')
+    .trim()
+    .replace(/^```(?:json)?\s*|\s*```$/g, '');
+  const candidates = [text];
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first > 0 && last > first) candidates.push(text.slice(first, last + 1));
+  for (const c of candidates) {
+    try {
+      const parsed = JSON.parse(c) as unknown;
+      if (parsed && typeof parsed === 'object') return parsed as T;
+    } catch {
+      /* try the next shape */
+    }
+  }
+  if (data.choices?.[0]?.finish_reason === 'length')
+    throw new AiError('The AI answer was cut off. Ask for fewer cases and try again.', 502);
+  throw new AiError('The AI service returned an unexpected answer.', 502);
+}
+
+async function streamOpenAi(
+  opts: ToolCallOpts,
+  onCase: (raw: RawGeneratedCase) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await openOpenAi(opts, true, signal);
+  const parser = new CaseStreamParser();
+  let cutOff = false;
+  await readEvents(res, eventText => {
+    for (const line of eventText.split('\n')) {
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      let chunk: OpenAiChunk;
+      try {
+        chunk = JSON.parse(payload) as OpenAiChunk;
+      } catch {
+        continue;
+      }
+      const refusal = openaiRefusal(chunk);
+      if (refusal) throw refusal;
+      if (chunk.choices?.[0]?.finish_reason === 'length') cutOff = true;
+      for (const raw of parser.push(chunk.choices?.[0]?.delta?.content ?? ''))
+        onCase(raw as RawGeneratedCase);
+    }
+  });
+  if (cutOff)
+    throw new AiError('The AI answer was cut off. Ask for fewer cases and try again.', 502);
+}
+
 /**
  * One forced tool call: the model must answer by calling `toolName` with input
  * matching `schema`, which is returned already parsed.
  */
 async function callTool<T>(opts: ToolCallOpts): Promise<T> {
   if (opts.cfg.provider === 'gemini') return callGemini<T>(opts);
+  if (isOpenAiStyle(opts.cfg.provider)) return callOpenAi<T>(opts);
   const res = await openMessages(opts, false);
   const data = (await res.json().catch(() => null)) as {
     content?: { type: string; input?: unknown }[];
@@ -517,6 +776,7 @@ export async function streamRawCases(
     maxTokens: Math.min(16000, 800 + req.count * 600),
   };
   if (cfg.provider === 'gemini') return streamGemini(callOpts, onCase, signal);
+  if (isOpenAiStyle(cfg.provider)) return streamOpenAi(callOpts, onCase, signal);
   const res = await openMessages(callOpts, true, signal);
   if (!res.body) throw new AiError('The AI service returned an unexpected answer.', 502);
 
@@ -739,6 +999,7 @@ export async function reviseCase(req: ReviseRequest, cfg: AiConfig): Promise<unk
  */
 export async function verifyAiKey(cfg: AiConfig): Promise<void> {
   if (cfg.provider === 'gemini') return verifyGeminiKey(cfg);
+  if (isOpenAiStyle(cfg.provider)) return verifyOpenAiKey(cfg);
   let res: Response;
   try {
     res = await fetch(`${cfg.baseUrl}/v1/messages`, {
@@ -766,6 +1027,8 @@ export async function verifyAiKey(cfg: AiConfig): Promise<void> {
   throw new AiError(`The AI service returned an error (${res.status}).`, 502);
 }
 
+const VERIFY_TIMEOUT_MS = 20_000;
+
 async function verifyGeminiKey(cfg: AiConfig): Promise<void> {
   let res: Response;
   try {
@@ -774,6 +1037,8 @@ async function verifyGeminiKey(cfg: AiConfig): Promise<void> {
       {
         method: 'POST',
         cache: 'no-store',
+        // Never leave the settings screen spinning if the AI service stalls.
+        signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
         headers: { 'content-type': 'application/json', 'x-goog-api-key': cfg.apiKey },
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
@@ -781,16 +1046,156 @@ async function verifyGeminiKey(cfg: AiConfig): Promise<void> {
         }),
       },
     );
-  } catch {
+  } catch (e) {
+    if (e instanceof Error && e.name === 'TimeoutError')
+      throw new AiError(
+        `The AI service did not answer within ${VERIFY_TIMEOUT_MS / 1000} seconds. Check the key and model (try another model), then try again.`,
+        504,
+      );
     throw new AiError("Could not reach the AI service. Check the server's internet access.", 502);
   }
   if (res.status === 429 || res.ok) return;
   const text = await res.text().catch(() => '');
-  if (res.status === 401 || res.status === 403 || (res.status === 400 && KEY_REJECTED.test(text)))
-    throw new AiError('That API key was rejected by the AI service. Check it and try again.', 400);
-  if (res.status === 404)
-    throw new AiError(`The model "${cfg.model}" is not available to this key.`, 400);
+  const why = googleReason(text);
+  if (!KEY_REJECTED.test(text) && PROJECT_BLOCKED.test(why))
+    throw new AiError(
+      `Google accepted the key but will not let this project use the Gemini API yet. Google said: ${why}`,
+      400,
+    );
+  if (res.status === 401 || res.status === 403 || (res.status === 400 && KEY_REJECTED.test(text))) {
+    throw new AiError(
+      'That API key was rejected by the AI service. Check it and try again.' +
+        (why ? ` Google said: ${why}` : ''),
+      400,
+    );
+  }
+  if (res.status === 404) {
+    const usable = await listGeminiModels(cfg);
+    throw new AiError(
+      `The model "${cfg.model}" is not available to this key.` +
+        (usable.length ? ` Models this key can use: ${usable.join(', ')}.` : ''),
+      400,
+    );
+  }
   throw new AiError(`The AI service returned an error (${res.status}).`, 502);
+}
+
+/** Text-generation Gemini models this key can call (best effort, newest names first). */
+async function listGeminiModels(cfg: AiConfig): Promise<string[]> {
+  try {
+    const res = await fetch(`${cfg.baseUrl}/v1beta/models?pageSize=200`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(8_000),
+      headers: { 'x-goog-api-key': cfg.apiKey },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      models?: { name?: string; supportedGenerationMethods?: string[] }[];
+    };
+    const ids = (data.models ?? [])
+      .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
+      .map(m => (m.name ?? '').replace(/^models\//, ''))
+      .filter(
+        id => /^gemini-/.test(id) && !/embedding|tts|image|live|audio|robotics|computer/.test(id),
+      );
+    // "-latest" aliases and short names first; dated / numbered variants after.
+    ids.sort((a, b) => Number(/latest/.test(b)) - Number(/latest/.test(a)) || a.length - b.length);
+    return ids.slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
+/** Models the service says it has (best effort): Ollama's installed list, or /v1/models. */
+async function listOpenAiModels(cfg: AiConfig): Promise<string[]> {
+  try {
+    const signal = AbortSignal.timeout(8_000);
+    if (cfg.provider === 'ollama') {
+      const res = await fetch(`${cfg.baseUrl}/api/tags`, { cache: 'no-store', signal });
+      if (!res.ok) return [];
+      const data = (await res.json()) as { models?: { name?: string }[] };
+      return (data.models ?? [])
+        .map(m => m.name ?? '')
+        .filter(Boolean)
+        .slice(0, 10);
+    }
+    const res = await fetch(openaiUrl(cfg, '/models'), {
+      cache: 'no-store',
+      signal,
+      headers: openaiHeaders(cfg),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { data?: { id?: string }[] };
+    return (data.data ?? [])
+      .map(m => m.id ?? '')
+      .filter(
+        id =>
+          // OpenAI lists dozens of non-chat models; other services mostly list chat models.
+          (cfg.provider !== 'openai' || /^(gpt-|o\d|chatgpt)/.test(id)) &&
+          !/embed|tts|whisper|image|audio|realtime|moderation|transcribe|guard/.test(id),
+      )
+      .sort((a, b) => a.length - b.length)
+      .slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
+async function verifyOpenAiKey(cfg: AiConfig): Promise<void> {
+  // A local model may have to be loaded into memory first, which takes a while.
+  const limit = cfg.provider === 'ollama' ? 90_000 : VERIFY_TIMEOUT_MS;
+  let res: Response;
+  try {
+    res = await fetch(openaiUrl(cfg, '/chat/completions'), {
+      method: 'POST',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(limit),
+      headers: openaiHeaders(cfg),
+      body: JSON.stringify({
+        model: cfg.model,
+        messages: [{ role: 'user', content: 'ping' }],
+        ...(cfg.provider === 'openai' ? { max_completion_tokens: 16 } : { max_tokens: 16 }),
+      }),
+    });
+  } catch (e) {
+    if (e instanceof Error && e.name === 'TimeoutError')
+      throw new AiError(
+        `The AI service did not answer within ${limit / 1000} seconds. Check the address and model, then try again.`,
+        504,
+      );
+    throw unreachable(cfg);
+  }
+  if (res.ok) return;
+  const text = await res.text().catch(() => '');
+  const why = openaiReason(text);
+  if (res.status === 429 && !OUT_OF_CREDIT.test(text)) return; // busy, but the key is valid
+  if (res.status === 401 || res.status === 403)
+    throw new AiError(
+      `That API key was rejected by the AI service. Check it and try again.${why ? ` The service said: ${why}` : ''}`,
+      400,
+    );
+  if (res.status === 404 || (res.status === 400 && /model/i.test(why))) {
+    const have = await listOpenAiModels(cfg);
+    throw new AiError(
+      cfg.provider === 'ollama'
+        ? `Ollama does not have the model "${cfg.model}".` +
+            (have.length
+              ? ` Installed models: ${have.join(', ')}.`
+              : ` Install it first: ollama pull ${cfg.model}`)
+        : `The model "${cfg.model}" is not available to this key.` +
+            (have.length ? ` Models this key can use: ${have.join(', ')}.` : ''),
+      400,
+    );
+  }
+  if (res.status === 429)
+    throw new AiError(
+      `The AI account has no credit or quota left.${why ? ` The service said: ${why}` : ''}`,
+      400,
+    );
+  throw new AiError(
+    `The AI service returned an error (${res.status}).${why ? ` ${why}` : ''}`,
+    502,
+  );
 }
 
 // ─── Validation ────────────────────────────────────────────────────────────

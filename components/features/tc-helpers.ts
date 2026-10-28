@@ -2,6 +2,8 @@
 // no React — so the repository list, the case detail view and the edit form
 // all render the same ID format, pill colours and avatar gradients.
 
+import { isPaletteColor } from '@/lib/colors';
+
 /** "C-0742" — the mockup's case ID format (the DB caseNum, zero-padded to 4). */
 export function caseCode(caseNum: number | null | undefined): string {
   if (caseNum == null) return 'C-????';
@@ -32,6 +34,21 @@ export function typePillClass(label: string): string {
   if (l.includes('security')) return 'pill-sec';
   if (l === 'ui' || l.startsWith('ui/') || l.includes('ux')) return 'pill-ux';
   return 'pill-neutral';
+}
+
+/**
+ * Pill class for a Priority/Severity/Type value, coloured the way the workspace
+ * set it in Settings > Test Configuration. Falls back to `fallback` (the old
+ * mockup colours) until the workspace's options have loaded.
+ */
+export function optionPillClass(
+  options: { name: string; color: string }[],
+  label: string,
+  fallback: string,
+  ownColor?: string | null,
+): string {
+  const color = ownColor ?? options.find(o => o.name === label)?.color;
+  return color ? `pill-c pill-c-${isPaletteColor(color) ? color : 'slate'}` : fallback;
 }
 
 export function resultPillClass(result: string): string {
