@@ -8,6 +8,8 @@ import {
   configFromKey,
   isProvider,
   isValidModelId,
+  normalizeBaseUrl,
+  usesKey,
   resolveAiConfig,
   type AiProvider,
 } from '@/lib/aiConfig';
@@ -41,7 +43,7 @@ export async function GET(_req: Request, { params }: Ctx) {
 
     const cfg = await resolveAiConfig(params.id).catch(() => null);
     let keyHint: string | null = null;
-    if (conn) {
+    if (conn?.apiKey) {
       try {
         keyHint = maskSecret(openSecret(conn.apiKey));
       } catch {
@@ -55,9 +57,11 @@ export async function GET(_req: Request, { params }: Ctx) {
       // Which provider answers right now (null when nothing is connected).
       provider: cfg?.provider ?? null,
       keyHint,
+      // The address in use (a provider's usual one unless the admin set another).
+      baseUrl: cfg?.baseUrl ?? null,
       model: conn?.model ?? null,
       tiebreakModel: conn?.tiebreakModel ?? null,
-      // Everything the screen needs to offer either provider.
+      // Everything the screen needs to offer each provider.
       providers: Object.values(PROVIDERS),
       encrypted: encryptionEnabled(),
       settings: normalizeAiSettings(project.aiSettings),
@@ -67,10 +71,12 @@ export async function GET(_req: Request, { params }: Ctx) {
   }
 }
 
-// POST /api/projects/:id/integrations/ai  { provider?, apiKey?, model?, tiebreakModel? }
-// Connects (or updates) the workspace's AI provider, key and models. A new key --
-// or a new model -- is checked against the AI service first, so a typo is caught
-// here. Switching provider needs a key for the new provider.
+// POST /api/projects/:id/integrations/ai
+//   { provider?, apiKey?, baseUrl?, model?, tiebreakModel? }
+// Connects (or updates) the workspace's AI provider, key, server address and
+// models. A new key, address or model is checked against the AI service first, so
+// a typo is caught here. Switching provider needs a key for the new provider (a
+// local Ollama needs none, only its address).
 export async function POST(req: Request, { params }: Ctx) {
   const guard = await requireWorkspacePermission(params.id, 'settings');
   if (guard instanceof NextResponse) return guard;
@@ -78,6 +84,7 @@ export async function POST(req: Request, { params }: Ctx) {
     const body = await parseJson<{
       provider?: string;
       apiKey?: string;
+      baseUrl?: string | null;
       model?: string | null;
       tiebreakModel?: string | null;
     }>(req);
@@ -92,9 +99,22 @@ export async function POST(req: Request, { params }: Ctx) {
     if (body.provider !== undefined && !isProvider(body.provider))
       return bad('That AI provider is not supported.');
     const provider: AiProvider = body.provider ?? existingProvider;
+    const info = PROVIDERS[provider];
     const switched = !!existing && provider !== existingProvider;
-    if (switched && !apiKey)
-      return bad(`Enter a ${PROVIDERS[provider].label} API key to switch to it.`);
+    if (switched && info.needsKey && !apiKey)
+      return bad(`Enter a ${info.label} API key to switch to it.`);
+
+    // Server address: undefined keeps what is saved, ""/null go back to the usual one.
+    let baseUrl: string | null | undefined;
+    if (info.baseUrl === 'none' || body.baseUrl === undefined) {
+      baseUrl = info.baseUrl === 'none' ? null : undefined;
+    } else if (body.baseUrl === null || !body.baseUrl.trim()) {
+      baseUrl = null;
+    } else {
+      const n = normalizeBaseUrl(body.baseUrl);
+      if ('error' in n) return bad(n.error);
+      baseUrl = n.url;
+    }
 
     // "" / null mean "go back to the default"; anything else must look like a model id.
     const norm = (v: string | null | undefined): string | null | undefined => {
@@ -106,13 +126,12 @@ export async function POST(req: Request, { params }: Ctx) {
     const tiebreakModel = norm(body.tiebreakModel);
     for (const m of [model, tiebreakModel])
       if (m && !isValidModelId(provider, m))
-        return bad(
-          `That is not a valid ${provider === 'gemini' ? 'Gemini' : 'Claude'} model name.`,
-        );
+        return bad(`That is not a valid ${info.label.split(' (')[0]} model name.`);
 
-    if (!existing && !apiKey) return bad('Enter an API key to connect.');
-    if (apiKey && (apiKey.length < 20 || apiKey.length > 400 || /\s/.test(apiKey)))
+    if (!existing && info.needsKey && !apiKey) return bad('Enter an API key to connect.');
+    if (apiKey && (apiKey.length < 8 || apiKey.length > 400 || /\s/.test(apiKey)))
       return bad('That does not look like an API key. Paste it exactly as shown, with no spaces.');
+    if (!usesKey(info) && apiKey) return bad(`${info.label} does not use an API key.`);
 
     // Model names belong to one provider, so switching starts from its defaults.
     const keep = !switched;
@@ -124,24 +143,46 @@ export async function POST(req: Request, { params }: Ctx) {
           : null
         : tiebreakModel;
 
-    // Verify whatever changed: a new key, or a different writing model, against the real service.
-    const keyToCheck = apiKey || (existing ? openSecret(existing.apiKey) : '');
-    if (apiKey || nextModel !== (existing?.model ?? null))
-      await verifyAiKey(configFromKey(provider, keyToCheck, nextModel));
+    const nextBaseUrl =
+      baseUrl === undefined ? (keep ? (existing?.baseUrl ?? null) : null) : baseUrl;
+
+    // Providers that have no built-in address or model (a custom server) need both spelled out.
+    if (info.baseUrl === 'required' && !info.defaultBaseUrl && !nextBaseUrl)
+      return bad('Enter the address of the server.');
+    if (!info.defaultModel && !nextModel) return bad('Enter the name of the model to use.');
+
+    // Verify whatever changed: a new key, address or writing model, against the real service.
+    const keyToCheck = usesKey(info)
+      ? apiKey || (existing && !switched && existing.apiKey ? openSecret(existing.apiKey) : '')
+      : '';
+    if (
+      apiKey ||
+      !existing ||
+      switched ||
+      nextModel !== (existing.model ?? null) ||
+      nextBaseUrl !== (existing.baseUrl ?? null)
+    )
+      await verifyAiKey(configFromKey(provider, keyToCheck, nextModel, nextBaseUrl));
     if (nextTiebreak && (switched || nextTiebreak !== (existing?.tiebreakModel ?? null)))
-      await verifyAiKey(configFromKey(provider, keyToCheck, nextTiebreak));
+      await verifyAiKey(configFromKey(provider, keyToCheck, nextTiebreak, nextBaseUrl));
 
     const data = {
       provider,
       model: nextModel,
       tiebreakModel: nextTiebreak,
-      ...(apiKey ? { apiKey: sealSecret(apiKey) } : {}),
+      baseUrl: nextBaseUrl,
+      // No key entered: keep the saved one, unless the provider takes none or the provider changed.
+      ...(apiKey
+        ? { apiKey: sealSecret(apiKey) }
+        : switched || !usesKey(info)
+          ? { apiKey: '' }
+          : {}),
     };
     await prisma.aiConnection.upsert({
       where: { projectId: params.id },
       create: {
         projectId: params.id,
-        apiKey: sealSecret(apiKey),
+        apiKey: apiKey ? sealSecret(apiKey) : '',
         connectedById: guard.id,
         ...data,
       },
