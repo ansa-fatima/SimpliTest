@@ -4239,3 +4239,258 @@ select.sts-select {
     justify-content: flex-end;
   }
 }
+
+/* ═════════════════════════════════════════════════════════════════
+   Test plans — plan cards on the Test runs board (screen 06), the plan
+   page (screen 08) and the New / Edit plan form
+   ═════════════════════════════════════════════════════════════════ */
+.stv3 .plan-card {
+  overflow: hidden;
+}
+.stv3 .plan-head {
+  padding: 14px 18px;
+  background: linear-gradient(90deg, var(--brand-50), var(--c-surface));
+  border-bottom: 1px solid var(--bdr);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.stv3 .plan-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r);
+  background: var(--brand-100);
+  color: var(--brand-700);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.stv3 .plan-head-main {
+  flex: 1;
+  min-width: 0;
+}
+.stv3 .plan-head-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 3px;
+}
+.stv3 .plan-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--t-1);
+  margin: 0;
+  cursor: pointer;
+}
+.stv3 .plan-name:hover {
+  color: var(--brand-700);
+}
+.stv3 .plan-meta {
+  font-size: 12px;
+  color: var(--t-3);
+}
+.stv3 .plan-meta b {
+  color: var(--t-2);
+  font-weight: 600;
+}
+.stv3 .plan-head-side {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.stv3 .plan-progress {
+  text-align: right;
+}
+.stv3 .plan-progress-label {
+  font-size: 11px;
+  color: var(--t-4);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+.stv3 .plan-progress-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+}
+.stv3 .plan-progress-pct {
+  font-size: 12px;
+  color: var(--t-2);
+  font-weight: 600;
+}
+.stv3 .plan-empty {
+  padding: 22px 18px;
+}
+.stv3 .plan-runs-table th.plan-run-th,
+.stv3 .plan-runs-table td.plan-run-title {
+  padding-left: 54px;
+}
+.stv3 .plan-run-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stv3 .plan-detail-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.stv3 .plan-detail-dates {
+  font-size: 12px;
+  color: var(--t-3);
+}
+.stv3 .plan-defect {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--bdr);
+}
+.stv3 .plan-defect:last-child {
+  border-bottom: none;
+}
+.stv3 .plan-defect-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.stv3 .plan-defect-key {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--err);
+  font-weight: 600;
+}
+.stv3 .plan-defect-sev {
+  font-size: 11px;
+  color: var(--t-3);
+  white-space: nowrap;
+}
+.stv3 .plan-defect-title {
+  font-size: 12.5px;
+  color: var(--t-1);
+  font-weight: 500;
+}
+.stv3 .plan-defect-from {
+  font-size: 11px;
+  color: var(--t-3);
+  margin-top: 2px;
+}
+.stv3 .plan-defect-from span {
+  font-family: var(--f-mono);
+  color: var(--t-2);
+}
+.stv3 .plan-info {
+  background: linear-gradient(135deg, var(--brand-50), var(--brand-100));
+  border-color: var(--brand-bdr);
+}
+.stv3 .plan-info-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r);
+  background: var(--c-surface);
+  border: 1px solid var(--brand-bdr);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.stv3 .plan-legend {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+}
+.stv3 .plan-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--t-2);
+}
+.stv3 .plan-legend i {
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+}
+
+/* New / Edit plan: the runs picker */
+.stv3 .plan-run-pick {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 16px;
+  cursor: pointer;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--bdr);
+}
+.stv3 .plan-run-pick:last-child {
+  border-bottom: none;
+}
+.stv3 .plan-run-pick:hover {
+  background: var(--c-bg);
+}
+.stv3 .plan-run-pick .cb {
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+  .stv3 .plan-head {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .stv3 .plan-head-main {
+    flex-basis: calc(100% - 52px);
+  }
+  .stv3 .plan-head-side {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .stv3 .plan-progress {
+    text-align: left;
+  }
+  .stv3 table.plan-runs-table .rt-title {
+    padding-left: 0 !important;
+  }
+  .stv3 table.plan-runs-table .rt-started {
+    grid-area: milestone;
+  }
+}
+
+/* Test runs board: the "Filter" bar */
+.stv3 .run-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.stv3 .run-filters .input {
+  flex: 1 1 220px;
+  max-width: 320px;
+}
+.stv3 .run-filters .select {
+  flex: 0 1 180px;
+}
+.stv3 .btn.on {
+  border-color: var(--brand-700);
+  color: var(--brand-700);
+  background: var(--brand-50);
+}
+
+/* Plan page: with five tiles in two columns, let the last one span the row. */
+@media (max-width: 720px) {
+  .stv3 .plan-detail .stat-grid-5 .stat:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Plan page: Delete reads as a destructive action without shouting. */
+.stv3 .btn.btn-danger-text {
+  color: var(--err);
+}
+.stv3 .btn.btn-danger-text:hover:not(:disabled) {
+  background: var(--err-bg);
+  border-color: var(--err-bdr);
+}

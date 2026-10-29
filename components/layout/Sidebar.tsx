@@ -15,6 +15,7 @@ interface SidebarProps {
   onShowTodo: () => void;
   onShowTestCases: () => void;
   onShowTestRunsBoard: () => void;
+  onShowTestPlans: () => void;
   onShowQuickLogs: () => void;
   onShowReports: () => void;
 
@@ -26,8 +27,18 @@ interface SidebarProps {
 // Page-buckets used to decide which top-level nav item is "active".
 const TESTCASE_PAGES: Page[] = ['list', 'view', 'edit'];
 // The Execution screen ('cycle') and Cycle Overview always read as Test
-// Runs in the sidebar, regardless of which cycle was opened.
-const TESTRUNS_BOARD_PAGES: Page[] = ['testRuns', 'newRun', 'cycle', 'cycleOverview'];
+// Runs in the sidebar, regardless of which cycle was opened. So does a single
+// plan (and its New / Edit form): the mockup keeps Test runs lit there, and only
+// the plan list itself lights the Test plans button.
+const TESTRUNS_BOARD_PAGES: Page[] = [
+  'testRuns',
+  'newRun',
+  'cycle',
+  'cycleOverview',
+  'plan',
+  'newPlan',
+  'editPlan',
+];
 
 // Icon-only rail from the SimpliEd mockup — "which page"; workspace identity,
 // search and the account live in the Topbar.
@@ -38,6 +49,7 @@ export function Sidebar({
   onShowTodo,
   onShowTestCases,
   onShowTestRunsBoard,
+  onShowTestPlans,
   onShowQuickLogs,
   onShowReports,
   onShowMembers,
@@ -70,6 +82,12 @@ export function Sidebar({
           onClick={onShowTestRunsBoard}
           icon="play"
           label="Test runs"
+        />
+        <SideBtn
+          active={page === 'testPlans'}
+          onClick={onShowTestPlans}
+          icon="flag"
+          label="Test plans"
         />
         <SideBtn
           active={page === 'quickLogs'}

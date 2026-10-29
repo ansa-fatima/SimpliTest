@@ -11,6 +11,9 @@ import { TestCaseView } from '@/components/features/TestCaseView';
 import { TestCaseEdit } from '@/components/features/TestCaseEdit';
 import { TestRunsBoard } from '@/components/features/TestRunsBoard';
 import { NewRunPage } from '@/components/features/NewRunPage';
+import { NewPlanPage } from '@/components/features/NewPlanPage';
+import { TestPlanView } from '@/components/features/TestPlanView';
+import { TestPlansPage } from '@/components/features/TestPlansPage';
 import { CycleOverview } from '@/components/features/CycleOverview';
 import { CycleView } from '@/components/features/CycleView';
 import { Dashboard } from '@/components/features/Dashboard';
@@ -54,8 +57,21 @@ export default function Home() {
     openProject,
     showTestCases,
     showTestRunsBoard,
+    showTestPlans,
+    openPlan,
+    showNewPlan,
+    showEditPlan,
+    editPlanFromList,
+    leaveEditPlan,
+    backFromPlan,
+    createPlan,
+    updatePlan,
+    addRunsToPlan,
+    removeRunFromPlan,
+    deletePlan,
     showQuickLogs,
     showNewRun,
+    showNewRunForPlan,
     openCycleOverview,
     openCycle,
     closeQuickLogCycle,
@@ -104,6 +120,12 @@ export default function Home() {
     summary,
     cyclesLoading,
     runsLoading,
+    plans,
+    plansLoading,
+    currentPlanId,
+    newRunPlanId,
+    planDetail,
+    planDetailLoading,
     cycleOverview,
     cycleOverviewLoading,
     quickLogCycle,
@@ -137,6 +159,17 @@ export default function Home() {
     }
     window.history.pushState({ page }, '');
   }, [page]);
+
+  // Deleting a plan keeps its runs -- say so, with how many are affected.
+  const confirmDeletePlan = (p: { id: string; name: string }) => {
+    const n = cycles.filter(c => c.planId === p.id).length;
+    const runs =
+      n === 0 ? '' : ` Its ${n} ${n === 1 ? 'run is' : 'runs are'} kept as standalone runs.`;
+    if (confirm(`Delete the plan "${p.name}"?${runs} This cannot be undone.`))
+      void deletePlan(p.id);
+  };
+
+  const newRunPlan = newRunPlanId ? (plans.find(p => p.id === newRunPlanId) ?? null) : null;
 
   // Show a tiny loading state while we check the session on mount.
   if (!authChecked) {
@@ -191,6 +224,7 @@ export default function Home() {
             onShowTodo={showTodo}
             onShowTestCases={showTestCases}
             onShowTestRunsBoard={showTestRunsBoard}
+            onShowTestPlans={showTestPlans}
             onShowQuickLogs={showQuickLogs}
             onShowReports={() => showReports()}
             onShowMembers={showMembers}
@@ -330,10 +364,99 @@ export default function Home() {
               onOpenRun={openCycle}
               onOpenOverview={openCycleOverview}
               onNewRun={showNewRun}
+              plans={plans}
+              onOpenPlan={openPlan}
+              onEditPlan={editPlanFromList}
+              onDeletePlan={confirmDeletePlan}
+              onNewPlan={showNewPlan}
               onCreate={createCycle}
               onUpdate={updateCycle}
               onDelete={deleteCycle}
               onReload={loadCycles}
+            />
+          )}
+
+          {page === 'testPlans' && (
+            <TestPlansPage
+              plans={plans}
+              cycles={cycles}
+              loading={plansLoading || cyclesLoading}
+              projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
+              onOpenPlan={openPlan}
+              onEditPlan={editPlanFromList}
+              onDeletePlan={confirmDeletePlan}
+              onNewPlan={showNewPlan}
+              onOpenRun={openCycle}
+              onOpenOverview={openCycleOverview}
+            />
+          )}
+
+          {page === 'plan' && currentPlanId && (
+            <TestPlanView
+              planId={currentPlanId}
+              plans={plans}
+              cycles={cycles}
+              detail={planDetail}
+              loading={planDetailLoading || cyclesLoading}
+              projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
+              onBack={backFromPlan}
+              onShowPlans={showTestPlans}
+              onEdit={showEditPlan}
+              onDelete={() => {
+                const p = plans.find(x => x.id === currentPlanId);
+                if (p) confirmDeletePlan(p);
+              }}
+              onOpenRun={openCycle}
+              onOpenOverview={openCycleOverview}
+              onNewRun={() => showNewRunForPlan(currentPlanId)}
+              onAddRuns={ids => addRunsToPlan(currentPlanId, ids)}
+              onRemoveRun={id => removeRunFromPlan(currentPlanId, id)}
+            />
+          )}
+
+          {page === 'newPlan' && (
+            <NewPlanPage
+              key="new"
+              projectId={currentProjectId}
+              projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
+              cycles={cycles}
+              plans={plans}
+              onCancel={backFromPlan}
+              onSave={async (input, opts) => {
+                const plan = await createPlan(input);
+                if (plan) {
+                  if (opts?.newRun) showNewRunForPlan(plan.id);
+                  else openPlan(plan.id);
+                }
+                return !!plan;
+              }}
+            />
+          )}
+
+          {page === 'editPlan' && currentPlanId && (
+            <NewPlanPage
+              key={currentPlanId}
+              projectId={currentProjectId}
+              projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
+              plan={plans.find(p => p.id === currentPlanId) ?? null}
+              cycles={cycles}
+              plans={plans}
+              onCancel={leaveEditPlan}
+              onSave={async input => {
+                const ok = await updatePlan(currentPlanId, input);
+                if (ok) leaveEditPlan();
+                return ok;
+              }}
+              onDelete={() => {
+                const p = plans.find(x => x.id === currentPlanId);
+                if (
+                  p &&
+                  confirm(
+                    `Delete the plan "${p.name}"? Its runs and results are kept as standalone runs.`,
+                  )
+                )
+                  void deletePlan(p.id);
+              }}
             />
           )}
 
@@ -349,6 +472,11 @@ export default function Home() {
               onOpenRun={openCycle}
               onOpenOverview={openCycleOverview}
               onNewRun={showNewRun}
+              plans={plans}
+              onOpenPlan={openPlan}
+              onEditPlan={editPlanFromList}
+              onDeletePlan={confirmDeletePlan}
+              onNewPlan={showNewPlan}
               onCreate={createCycle}
               onUpdate={updateCycle}
               onDelete={deleteCycle}
@@ -360,10 +488,11 @@ export default function Home() {
             <NewRunPage
               projectId={currentProjectId}
               projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
-              onCancel={showTestRunsBoard}
+              plan={newRunPlan ? { id: newRunPlan.id, name: newRunPlan.name } : null}
+              onCancel={() => (newRunPlan ? openPlan(newRunPlan.id) : showTestRunsBoard())}
               onCreate={async input => (await createCycle(input)) ?? null}
               onStart={openCycle}
-              onDone={showTestRunsBoard}
+              onDone={() => (newRunPlan ? openPlan(newRunPlan.id) : showTestRunsBoard())}
             />
           )}
 

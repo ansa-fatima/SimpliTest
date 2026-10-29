@@ -20,6 +20,8 @@ interface NewRunPageProps {
   onStart: (id: string) => void;
   /** Called after a plain "Create run" (no start) so the caller can go back to the board. */
   onDone: () => void;
+  /** Set when the run is being created from a test plan: it joins that plan. */
+  plan?: { id: string; name: string } | null;
 }
 
 type InclusionMode = 'all' | 'specific' | 'rules';
@@ -87,7 +89,11 @@ function flattenSections(tree: TreePortal[]): Opt[] {
   return out;
 }
 
-function useOptions(projectId: string | null, category: string, fallback: Opt[] = []): Opt[] {
+export function useOptions(
+  projectId: string | null,
+  category: string,
+  fallback: Opt[] = [],
+): Opt[] {
   const [opts, setOpts] = useState<Opt[]>(fallback);
   useEffect(() => {
     if (!projectId) return;
@@ -116,6 +122,7 @@ export function NewRunPage({
   onCreate,
   onStart,
   onDone,
+  plan,
 }: NewRunPageProps) {
   const [name, setName] = useState('');
   const [version, setVersion] = useState('');
@@ -279,6 +286,7 @@ export function NewRunPage({
       name: name.trim(),
       description: description.trim() || undefined,
       mode: 'CaseBased',
+      ...(plan ? { planId: plan.id } : {}),
       targetDate: targetDate || null,
       assigneeId: assigneeId || null,
       startDate: startDate || null,
@@ -372,6 +380,11 @@ export function NewRunPage({
           <div className="page-sub">
             Configure scope and details · the case list is fixed when you create the run
           </div>
+          {plan && (
+            <div className="page-sub" style={{ marginTop: 6 }}>
+              <span className="pill pill-brand">Adding to plan · {plan.name}</span>
+            </div>
+          )}
         </div>
         <div className="page-actions">
           <button type="button" className="btn btn-ghost" onClick={onCancel}>

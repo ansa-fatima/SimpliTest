@@ -139,7 +139,7 @@ const P: Record<SIconName, ReactNode> = {
     </>
   ),
   play: <polygon points="5 3 19 12 5 21 5 3" />,
-  flag: <path d="M5 21V5a3 3 0 013-3h11l-3 6 3 6H8M5 21H3M5 14H3M5 7H3" />,
+  flag: <path d="M5 21V5a3 3 0 013-3h11l-3 6 3 6H8M5 21H3" />,
   chart: <path d="M3 3v18h18M9 17V9M14 17v-5M19 17v-9" />,
   'calendar-check': (
     <path d="M8 2v4M16 2v4M3 10h18M5 6h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2zM10 14l2 2 4-4" />

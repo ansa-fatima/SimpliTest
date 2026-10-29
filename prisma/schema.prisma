@@ -45,6 +45,7 @@ model User {
   sessions            Session[]
   ownedCases          TestCase[]               @relation("OwnedTestCases")
   assignedCycles      TestCycle[]              @relation("AssignedCycles")
+  createdPlans        TestPlan[]               @relation("CreatedTestPlans")
   memberships         Membership[]
   sentInvites         Invite[]                 @relation("SentInvites")
   createdProjects     Project[]                @relation("CreatedProjects")
@@ -120,6 +121,7 @@ model Project {
   jiraConnection     JiraConnection?
   aiConnection       AiConnection?
   jiraSubIssues      JiraSubIssue[]
+  plans              TestPlan[]
   // Settings > Modules & Features -- the three-level Portal > Module >
   // Feature taxonomy that powers the Stability page's grouping and the
   // New-cycle form's cascading dropdowns. DELIBERATELY NOT the Portal >
@@ -655,6 +657,39 @@ enum CycleMode {
   Manual
 }
 
+enum PlanStatus {
+  Active
+  Completed
+  Archived
+}
+
+// A test plan groups several test runs under one release / sprint: its progress,
+// pass rate and burn-down are rolled up from the runs linked to it (TestCycle.planId).
+// Deleting a plan never deletes its runs -- they go back to being standalone.
+model TestPlan {
+  id          String      @id @default(cuid())
+  name        String
+  description String      @default("")
+  status      PlanStatus  @default(Active)
+  // Release / sprint the plan belongs to (e.g. "v2.4.0"). Runs added to the plan
+  // that have no version of their own inherit it.
+  milestone   String?
+  startDate   DateTime?
+  dueDate     DateTime?
+  completedAt DateTime?
+  projectId   String
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy   User?       @relation("CreatedTestPlans", fields: [createdById], references: [id], onDelete: SetNull)
+  createdById String?
+  cycles      TestCycle[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([projectId])
+  @@index([status])
+  @@map("test_plans")
+}
+
 model TestCycle {
   id            String         @id @default(cuid())
   name          String
@@ -678,6 +713,9 @@ model TestCycle {
   project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   runs          TestRun[]
   jiraSubIssues JiraSubIssue[]
+  // The test plan this run belongs to (null = a standalone run).
+  plan          TestPlan?      @relation(fields: [planId], references: [id], onDelete: SetNull)
+  planId        String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -745,6 +783,7 @@ model TestCycle {
   @@index([projectId])
   @@index([mode])
   @@index([assigneeId])
+  @@index([planId])
   @@map("test_cycles")
 }
 
