@@ -35,6 +35,7 @@ export async function GET(req: Request) {
             customResultId: true,
             wasEverIssue: true,
             executedBy: true,
+            executedAt: true,
             testCase: { select: { severity: true, customSeverityId: true } },
           },
         },
@@ -101,7 +102,10 @@ export async function GET(req: Request) {
       // meant to be exact for a heavily multi-tester cycle, just a
       // reasonable "who mostly ran this" for the list view.
       const executorCounts = new Map<string, number>();
+      let lastExecutedAt: Date | null = null;
       for (const r of c.runs) {
+        if (r.executedAt && (!lastExecutedAt || r.executedAt > lastExecutedAt))
+          lastExecutedAt = r.executedAt;
         counts[r.result]++;
         if (r.wasEverIssue) {
           issuesFound++;
@@ -176,6 +180,7 @@ export async function GET(req: Request) {
         featureName,
         scopeName,
         tester,
+        lastExecutedAt,
         summary: { total, done, percent, counts, severity, issuesFound, issuesResolved },
       };
     });
@@ -206,6 +211,7 @@ export async function POST(req: Request) {
       completedAt?: string | null;
       assigneeId?: string | null;
       startDate?: string | null;
+      planId?: string | null;
 
       // Manual-mode fields
       portalName?: string;
@@ -373,12 +379,24 @@ export async function POST(req: Request) {
       caseIds = body.testCaseIds;
     }
 
+    // A run created from a plan joins it, and inherits the plan's milestone when it has
+    // no version of its own.
+    let plan: { id: string; milestone: string | null } | null = null;
+    if (body.planId) {
+      plan = await prisma.testPlan.findFirst({
+        where: { id: body.planId, projectId: body.projectId },
+        select: { id: true, milestone: true },
+      });
+      if (!plan) return bad('That test plan does not exist in this workspace.', 404);
+    }
+
     const cycle = await prisma.testCycle.create({
       data: {
         name,
         description: body.description ?? '',
         projectId: body.projectId,
         mode: 'CaseBased',
+        planId: plan?.id ?? null,
         scopeType: body.scopeType,
         scopeId: body.scopeId ?? null,
         targetDate: body.targetDate ? new Date(body.targetDate) : null,
@@ -387,7 +405,7 @@ export async function POST(req: Request) {
         // Optional run-context fields — useful even with case-by-case execution.
         environment: body.environment?.trim() || null,
         platform: body.platform?.trim() || null,
-        version: body.version?.trim() || null,
+        version: body.version?.trim() || plan?.milestone || null,
         cycleCategory: body.cycleCategory?.trim() || null,
         ticketLink: body.ticketLink?.trim() || null,
         jiraSiteUrl: body.ticketLink ? deriveSiteUrlFromTicketLink(body.ticketLink.trim()) : null,

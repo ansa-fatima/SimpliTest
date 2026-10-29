@@ -14,6 +14,8 @@ import {
   RunResult,
   Project,
   Portal,
+  TestPlan,
+  PlanDetail,
 } from '@/types';
 import { SEED_DATA } from '@/data/testCases';
 import { formatCaseId, relativeTime } from '@/lib/utils';
@@ -137,6 +139,20 @@ export interface AppState {
   // has nothing to show for a quick log (no per-case TestRun rows).
   quickLogCycle: TestCycle | null;
 
+  // ─── Test plans (API-backed) ────────────────────────────────
+  // A plan groups runs; the runs themselves stay in `cycles` (each carries planId).
+  plans: TestPlan[];
+  plansLoading: boolean;
+  currentPlanId: string | null;
+  // The plan form was opened from a list's card menu (not from the plan page), so
+  // Save / Cancel return to that list.
+  editFromList: boolean;
+  // Set when New test run was opened from a plan, so the run joins that plan.
+  newRunPlanId: string | null;
+  // Burn-down + latest failures for the plan page (the part only the server computes).
+  planDetail: PlanDetail | null;
+  planDetailLoading: boolean;
+
   // Which report tile Reports should open on when it mounts — set by
   // showReports(tab). null means land on the tile picker, same as today.
   reportsInitialTab: 'stability' | 'cycleHistory' | null;
@@ -174,6 +190,13 @@ export function useStore() {
     cycleOverview: null,
     cycleOverviewLoading: false,
     quickLogCycle: null,
+    plans: [],
+    plansLoading: false,
+    currentPlanId: null,
+    editFromList: false,
+    newRunPlanId: null,
+    planDetail: null,
+    planDetailLoading: false,
     reportsInitialTab: null,
     dataVersion: 0,
   });
@@ -888,10 +911,31 @@ export function useStore() {
     }
   }, [showToast, state.currentProjectId]);
 
+  const loadPlans = useCallback(async () => {
+    const projectId = state.currentProjectId;
+    if (!projectId) return;
+    setState(s => ({ ...s, plansLoading: true }));
+    try {
+      const plans = await api.get<TestPlan[]>(`/api/plans?projectId=${projectId}`);
+      setState(s => ({ ...s, plans, plansLoading: false }));
+    } catch (e) {
+      setState(s => ({ ...s, plansLoading: false }));
+      showToast(`Failed to load test plans: ${(e as Error).message}`, 'error');
+    }
+  }, [showToast, state.currentProjectId]);
+
   const showTestRunsBoard = useCallback(() => {
     update({ page: 'testRuns' });
     loadCycles();
-  }, [loadCycles, update]);
+    loadPlans();
+  }, [loadCycles, loadPlans, update]);
+
+  // The Test plans page -- the same plan cards the Test runs board shows, on their own.
+  const showTestPlans = useCallback(() => {
+    update({ page: 'testPlans' });
+    loadCycles();
+    loadPlans();
+  }, [loadCycles, loadPlans, update]);
 
   // Quick logs and test runs are separate flows with their own pages -- same
   // cycles list underneath, split by mode in the board.
@@ -899,7 +943,19 @@ export function useStore() {
     update({ page: 'quickLogs' });
     loadCycles();
   }, [loadCycles, update]);
-  const showNewRun = useCallback(() => update({ page: 'newRun' }), [update]);
+  const showNewRun = useCallback(() => update({ page: 'newRun', newRunPlanId: null }), [update]);
+  // Opened from a plan (or its form): the plan's own previousPage is kept, so Back from
+  // the plan afterwards still returns to the list the user started from.
+  const showNewRunForPlan = useCallback(
+    (planId: string) =>
+      setState(s => ({
+        ...s,
+        page: 'newRun',
+        newRunPlanId: planId,
+        previousPage: ['plan', 'newPlan'].includes(s.page) ? s.previousPage : s.page,
+      })),
+    [],
+  );
 
   const openCycle = useCallback(
     async (cycleId: string) => {
@@ -980,6 +1036,184 @@ export function useStore() {
       }
     },
     [showToast, state.cycles],
+  );
+
+  // ─── Test plans ────────────────────────────────────────────
+
+  const fetchPlanDetail = useCallback(
+    async (planId: string) => {
+      try {
+        const detail = await api.get<PlanDetail>(`/api/plans/${planId}`);
+        setState(s =>
+          s.currentPlanId === planId ? { ...s, planDetail: detail, planDetailLoading: false } : s,
+        );
+      } catch (e) {
+        setState(s => ({ ...s, planDetailLoading: false }));
+        showToast(`Failed to open test plan: ${(e as Error).message}`, 'error');
+      }
+    },
+    [showToast],
+  );
+
+  const openPlan = useCallback(
+    (planId: string) => {
+      setState(s => ({
+        ...s,
+        page: 'plan',
+        // Coming from the plan's own form (after Create / Save) must not make the
+        // form the "previous page" -- Back still returns to the list the user came from.
+        previousPage:
+          ['plan', 'newPlan', 'editPlan'].includes(s.page) ||
+          (s.page === 'newRun' && s.newRunPlanId)
+            ? s.previousPage
+            : s.page,
+        currentPlanId: planId,
+        planDetail: null,
+        planDetailLoading: true,
+      }));
+      // Runs (and, after a hard reload, the plan list) come from the shared lists.
+      loadCycles();
+      loadPlans();
+      fetchPlanDetail(planId);
+    },
+    [fetchPlanDetail, loadCycles, loadPlans],
+  );
+
+  const showNewPlan = useCallback(() => update({ page: 'newPlan' }), [update]);
+  // Edit is a step inside the plan, so it keeps the plan's own previousPage.
+  const showEditPlan = useCallback(
+    () => setState(s => ({ ...s, page: 'editPlan', editFromList: false })),
+    [],
+  );
+  const editPlanFromList = useCallback(
+    (planId: string) =>
+      setState(s => ({
+        ...s,
+        page: 'editPlan',
+        previousPage: s.page,
+        currentPlanId: planId,
+        planDetail: null,
+        editFromList: true,
+      })),
+    [],
+  );
+  const leaveEditPlan = useCallback(() => {
+    setState(s =>
+      s.editFromList
+        ? {
+            ...s,
+            page: s.previousPage ?? 'testRuns',
+            previousPage: null,
+            currentPlanId: null,
+            editFromList: false,
+          }
+        : { ...s, page: 'plan' },
+    );
+  }, []);
+
+  const backFromPlan = useCallback(() => {
+    goBack('testRuns');
+    setState(s => ({ ...s, currentPlanId: null, planDetail: null }));
+    loadCycles();
+    loadPlans();
+  }, [goBack, loadCycles, loadPlans]);
+
+  const createPlan = useCallback(
+    async (input: {
+      name: string;
+      description?: string;
+      milestone?: string | null;
+      startDate?: string | null;
+      dueDate?: string | null;
+      cycleIds?: string[];
+    }) => {
+      const projectId = state.currentProjectId;
+      if (!projectId) return null;
+      try {
+        const plan = await api.post<TestPlan>('/api/plans', { ...input, projectId });
+        showToast('Test plan created ✓', 'success');
+        await Promise.all([loadPlans(), loadCycles()]);
+        return plan;
+      } catch (e) {
+        showToast(`Failed to create test plan: ${(e as Error).message}`, 'error');
+        return null;
+      }
+    },
+    [loadCycles, loadPlans, showToast, state.currentProjectId],
+  );
+
+  const updatePlan = useCallback(
+    async (planId: string, patch: object) => {
+      try {
+        await api.patch<TestPlan>(`/api/plans/${planId}`, patch);
+        showToast('Test plan updated ✓', 'success');
+        await Promise.all([loadPlans(), loadCycles()]);
+        setState(s => {
+          if (s.currentPlanId === planId) fetchPlanDetail(planId);
+          return s;
+        });
+        return true;
+      } catch (e) {
+        showToast(`Update failed: ${(e as Error).message}`, 'error');
+        return false;
+      }
+    },
+    [fetchPlanDetail, loadCycles, loadPlans, showToast],
+  );
+
+  const addRunsToPlan = useCallback(
+    async (planId: string, cycleIds: string[]) => {
+      try {
+        const res = await api.post<{ added: number }>(`/api/plans/${planId}/runs`, { cycleIds });
+        showToast(
+          res.added === 1 ? 'Run added to the plan ✓' : `${res.added} runs added to the plan ✓`,
+          'success',
+        );
+        await Promise.all([loadPlans(), loadCycles()]);
+        fetchPlanDetail(planId);
+      } catch (e) {
+        showToast(`Could not add runs: ${(e as Error).message}`, 'error');
+      }
+    },
+    [fetchPlanDetail, loadCycles, loadPlans, showToast],
+  );
+
+  const removeRunFromPlan = useCallback(
+    async (planId: string, cycleId: string) => {
+      try {
+        await api.del(`/api/plans/${planId}/runs`, { cycleIds: [cycleId] });
+        showToast('Run removed from the plan');
+        await Promise.all([loadPlans(), loadCycles()]);
+        fetchPlanDetail(planId);
+      } catch (e) {
+        showToast(`Could not remove the run: ${(e as Error).message}`, 'error');
+      }
+    },
+    [fetchPlanDetail, loadCycles, loadPlans, showToast],
+  );
+
+  const deletePlan = useCallback(
+    async (planId: string) => {
+      try {
+        await api.del(`/api/plans/${planId}`);
+        showToast('Test plan deleted — its runs are kept');
+        setState(s =>
+          s.currentPlanId === planId
+            ? {
+                ...s,
+                page: s.previousPage && s.previousPage !== 'plan' ? s.previousPage : 'testRuns',
+                previousPage: null,
+                currentPlanId: null,
+                planDetail: null,
+              }
+            : s,
+        );
+        await Promise.all([loadPlans(), loadCycles()]);
+      } catch (e) {
+        showToast(`Delete failed: ${(e as Error).message}`, 'error');
+      }
+    },
+    [loadCycles, loadPlans, showToast],
   );
 
   const closeQuickLogCycle = useCallback(() => {
@@ -1251,9 +1485,23 @@ export function useStore() {
     openProject,
     showTestCases,
     showTestRunsBoard,
+    showTestPlans,
+    openPlan,
+    showNewPlan,
+    showEditPlan,
+    editPlanFromList,
+    leaveEditPlan,
+    backFromPlan,
+    createPlan,
+    updatePlan,
+    addRunsToPlan,
+    removeRunFromPlan,
+    deletePlan,
+    loadPlans,
     goBack,
     showQuickLogs,
     showNewRun,
+    showNewRunForPlan,
     openCycle,
     openCycleOverview,
     closeQuickLogCycle,

@@ -56,11 +56,15 @@ export function Topbar({
           ? 'Admin · Roles'
           : page === 'quickLogs'
             ? 'Quick logs'
-            : page === 'cycleOverview'
-              ? 'Test run'
-              : page === 'cycle'
-                ? 'Execution'
-                : 'Project';
+            : page === 'testPlans'
+              ? 'Test plans'
+              : page === 'plan' || page === 'newPlan' || page === 'editPlan'
+                ? 'Test plan'
+                : page === 'cycleOverview'
+                  ? 'Test run'
+                  : page === 'cycle'
+                    ? 'Execution'
+                    : 'Project';
   return (
     <div className="stv3 stv3-host">
       <header className="topbar">
@@ -74,20 +78,25 @@ export function Topbar({
           <SIco name="launcher" />
         </button>
         <div className="section-name">
-          <SIco
-            name={
-              onProjects || onTodo
-                ? 'todo'
-                : page === 'testRuns' ||
-                    page === 'newRun' ||
-                    page === 'cycle' ||
-                    page === 'cycleOverview'
-                  ? 'play'
-                  : page === 'quickLogs'
-                    ? 'zap'
-                    : 'briefcase'
-            }
-          />
+          {/* The single-plan screens carry no icon in the mockup (just "Test plan"). */}
+          {page !== 'plan' && page !== 'newPlan' && page !== 'editPlan' && (
+            <SIco
+              name={
+                onProjects || onTodo
+                  ? 'todo'
+                  : page === 'testRuns' ||
+                      page === 'newRun' ||
+                      page === 'cycle' ||
+                      page === 'cycleOverview'
+                    ? 'play'
+                    : page === 'testPlans'
+                      ? 'flag'
+                      : page === 'quickLogs'
+                        ? 'zap'
+                        : 'briefcase'
+              }
+            />
+          )}
           {sectionLabel}
         </div>
 

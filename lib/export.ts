@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { TestCase, TestCycle, ApiTestRun, ApiTestCase } from '@/types';
+import { TestCase, TestCycle, TestPlan, ApiTestRun, ApiTestCase } from '@/types';
 import { formatCaseId } from './utils';
 import { CYCLE_COLUMNS, deriveOutcome } from './cycleOutcome';
 
@@ -341,6 +341,62 @@ export function exportCycles(cycles: TestCycle[]) {
   XLSX.utils.book_append_sheet(wb, ws, 'Testing Cycles');
   const stamp = new Date().toISOString().slice(0, 10);
   XLSX.writeFile(wb, `SimpliTest_TestingCycles_${stamp}.xlsx`);
+}
+
+// One workbook per test plan: a "Plan" sheet with the rolled-up totals and a "Runs"
+// sheet with one row per linked run -- the same numbers the plan page shows.
+export function exportPlan(plan: TestPlan, runs: TestCycle[]) {
+  const sum = (pick: (c: TestCycle) => number) => runs.reduce((n, c) => n + pick(c), 0);
+  const total = sum(c => c.summary?.total ?? 0);
+  const done = sum(c => c.summary?.done ?? 0);
+  const passed = sum(c => c.summary?.counts.Passed ?? 0);
+  const rate = (p: number, d: number) => (d === 0 ? '' : `${((p / d) * 100).toFixed(1)}%`);
+
+  const planRows = [
+    { Field: 'Plan', Value: plan.name },
+    { Field: 'Status', Value: plan.status },
+    { Field: 'Milestone', Value: plan.milestone ?? '' },
+    { Field: 'Start date', Value: plan.startDate?.slice(0, 10) ?? '' },
+    { Field: 'Due date', Value: plan.dueDate?.slice(0, 10) ?? '' },
+    { Field: 'Created by', Value: plan.createdByName ?? '' },
+    { Field: 'Runs', Value: runs.length },
+    { Field: 'Total cases', Value: total },
+    { Field: 'Executed', Value: done },
+    { Field: 'Passed', Value: passed },
+    { Field: 'Failed', Value: sum(c => c.summary?.counts.Failed ?? 0) },
+    { Field: 'Blocked', Value: sum(c => c.summary?.counts.Blocked ?? 0) },
+    { Field: 'Skipped', Value: sum(c => c.summary?.counts.Skipped ?? 0) },
+    { Field: 'Not run', Value: sum(c => c.summary?.counts.NotRun ?? 0) },
+    { Field: 'Pass rate', Value: rate(passed, done) },
+  ];
+  const runRows = runs.map(c => {
+    const k = c.summary?.counts;
+    const d = c.summary?.done ?? 0;
+    return {
+      Run: c.name,
+      Status: c.status,
+      Milestone: c.version ?? '',
+      Owner: c.tester ?? '',
+      Cases: c.summary?.total ?? 0,
+      Executed: d,
+      Passed: k?.Passed ?? 0,
+      Failed: k?.Failed ?? 0,
+      Blocked: k?.Blocked ?? 0,
+      Skipped: k?.Skipped ?? 0,
+      'Not run': k?.NotRun ?? 0,
+      'Pass rate': rate(k?.Passed ?? 0, d),
+    };
+  });
+
+  const wsPlan = XLSX.utils.json_to_sheet(planRows);
+  wsPlan['!cols'] = [{ wch: 14 }, { wch: 44 }];
+  const wsRuns = XLSX.utils.json_to_sheet(runRows);
+  wsRuns['!cols'] = [{ wch: 40 }, ...Array(11).fill({ wch: 12 })];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsPlan, 'Plan');
+  XLSX.utils.book_append_sheet(wb, wsRuns, 'Runs');
+  const safe = plan.name.replace(/[^A-Za-z0-9.-]+/g, '_').slice(0, 40) || 'plan';
+  XLSX.writeFile(wb, `SimpliTest_Plan_${safe}.xlsx`);
 }
 
 // A ready-to-fill .xlsx: the header row, a one-line guidance row per column

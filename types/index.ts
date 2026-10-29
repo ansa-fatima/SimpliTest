@@ -11,6 +11,10 @@ export type Page =
   | 'view'
   | 'edit'
   | 'testRuns'
+  | 'testPlans'
+  | 'plan'
+  | 'newPlan'
+  | 'editPlan'
   | 'newRun'
   | 'quickLogs'
   | 'cycleOverview'
@@ -89,8 +93,14 @@ export interface TestCycle {
   scopeType: CycleScopeType;
   scopeId: string | null;
   scopeName?: string | null;
+  /** The test plan this run belongs to; null/absent for a standalone run. */
+  planId?: string | null;
+  /** When a case in this run last got a verdict (case-based only; server-computed). */
+  lastExecutedAt?: string | null;
   /** Most-frequent executor among this cycle's runs (case-based only; server-computed). */
   tester?: string | null;
+  /** Planned start of the run (case-based). */
+  startDate?: string | null;
   targetDate: string | null;
   completedAt?: string | null;
   createdAt: string;
@@ -130,6 +140,57 @@ export interface TestCycle {
   passedCount?: number;
   failedCount?: number;
   blockedCount?: number;
+}
+
+// ─── Test Plans ──────────────────────────────────────────────
+export type PlanStatus = 'Active' | 'Completed' | 'Archived';
+
+/** A plan as stored. Its progress is rolled up from the runs linked to it
+ *  (TestCycle.planId) -- see lib/plans.ts. */
+export interface TestPlan {
+  id: string;
+  name: string;
+  description: string;
+  status: PlanStatus;
+  /** Release / sprint label (e.g. "2.4.0"); runs added to the plan inherit it. */
+  milestone: string | null;
+  startDate: string | null;
+  dueDate: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdById: string | null;
+  createdByName: string | null;
+}
+
+export interface PlanBurndown {
+  total: number;
+  /** One point per day from the plan's start through today (or its due date). */
+  points: { date: string; remaining: number }[];
+  /** The day axis, start to end -- the end is the due date when set. */
+  start: string;
+  end: string;
+  /** True when the plan has a due date, so the ideal line has somewhere to land. */
+  hasDue: boolean;
+}
+
+export interface PlanDefect {
+  id: string;
+  caseNum: number;
+  title: string;
+  /** "Critical" | "Major" | "Minor" or a workspace's custom severity name. */
+  severity: string;
+  result: RunResult;
+  runName: string;
+  at: string | null;
+}
+
+export interface PlanDetail {
+  plan: TestPlan;
+  burndown: PlanBurndown;
+  defects: PlanDefect[];
+  /** Every case in the plan that has ever failed or been blocked. */
+  defectCount: number;
 }
 
 export interface CycleOverviewData {

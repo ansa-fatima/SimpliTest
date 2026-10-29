@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { TestCycle, Module } from '@/types';
+import { TestCycle, TestPlan, Module } from '@/types';
 import { avatarColour, cn, initials, localDateStr } from '@/lib/utils';
 import { deriveOutcome, outcomeAfterSync, CycleOutcome } from '@/lib/cycleOutcome';
 import { exportCycles } from '@/lib/export';
@@ -15,6 +15,8 @@ import { parseIssueKeys } from '@/lib/jira';
 import { api } from '@/lib/client';
 import { SIco } from '@/components/layout/sts-icons';
 import { PersonAvatar, useUserAvatars } from './PersonAvatar';
+import { isStarted, runStatus } from './run-helpers';
+import { PlanGroupCard } from './PlanGroupCard';
 import './sts-v3.css';
 
 interface TestRunsBoardProps {
@@ -34,18 +36,18 @@ interface TestRunsBoardProps {
   onOpenOverview: (id: string) => void;
   /** Opens the full-page New test run form. */
   onNewRun: () => void;
+  /** Test plans group runs; each plan renders as its own card above the standalone runs. */
+  plans: TestPlan[];
+  onOpenPlan: (id: string) => void;
+  onEditPlan: (id: string) => void;
+  onDeletePlan: (plan: TestPlan) => void;
+  /** Opens the full-page New test plan form. */
+  onNewPlan: () => void;
   onCreate: (input: CycleFormPayload) => Promise<unknown>;
   onUpdate: (id: string, patch: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   /** Refetch the cycles list (used after a bulk import). */
   onReload?: () => void;
-}
-
-// "Planned" isn't a real DB status -- it's an Active cycle nobody has
-// started executing yet (0 runs touched). Once at least one run has a
-// verdict, it reads as "In Progress" instead.
-function isStarted(c: TestCycle): boolean {
-  return (c.summary?.done ?? 0) > 0;
 }
 
 // The day-to-day working view -- resume an in-flight cycle or log a quick
@@ -63,14 +65,24 @@ export function TestRunsBoard({
   onOpenRun,
   onOpenOverview,
   onNewRun,
+  plans,
+  onOpenPlan,
+  onEditPlan,
+  onDeletePlan,
+  onNewPlan,
   onCreate,
   onUpdate,
   onDelete,
   onReload,
 }: TestRunsBoardProps) {
-  const [runsFilter, setRunsFilter] = useState<'all' | 'planned' | 'active' | 'closed' | 'mine'>(
-    'all',
-  );
+  const [runsFilter, setRunsFilter] = useState<
+    'all' | 'planned' | 'active' | 'closed' | 'mine' | 'runsOnly' | 'plansOnly'
+  >('all');
+  // The "Filter" button opens a small bar: text search, milestone and owner.
+  const [showFilters, setShowFilters] = useState(false);
+  const [runQuery, setRunQuery] = useState('');
+  const [runMilestone, setRunMilestone] = useState('');
+  const [runOwner, setRunOwner] = useState('');
   // The rich "Log a test cycle" slide-over (Quick Logs tab) — null when
   // closed, 'new' when creating, or the cycle being edited.
   const [cyclePanel, setCyclePanel] = useState<'new' | TestCycle | null>(null);
@@ -347,7 +359,7 @@ export function TestRunsBoard({
   const mine = caseBased.filter(
     c => !!currentUserName && !!c.tester && c.tester === currentUserName,
   );
-  const visibleRuns =
+  const statusRuns =
     runsFilter === 'planned'
       ? planned
       : runsFilter === 'active'
@@ -357,6 +369,47 @@ export function TestRunsBoard({
           : runsFilter === 'mine'
             ? mine
             : caseBased;
+  // Filter-bar narrowing, applied on top of the pill (a run must pass both).
+  const rq = runQuery.trim().toLowerCase();
+  const filtersOn = !!(rq || runMilestone || runOwner);
+  const visibleRuns = statusRuns.filter(
+    c =>
+      (!rq || c.name.toLowerCase().includes(rq)) &&
+      (!runMilestone || (c.version ?? '') === runMilestone) &&
+      (!runOwner || c.tester === runOwner),
+  );
+  const milestoneOptions = Array.from(
+    new Set(caseBased.map(c => c.version).filter((v): v is string => !!v)),
+  ).sort();
+  const ownerOptions = Array.from(
+    new Set(caseBased.map(c => c.tester).filter((v): v is string => !!v)),
+  ).sort();
+  // Plans keep their cards: each lists its (filtered) runs. A plan stays visible
+  // when it has any match, or when nothing is narrowing the list (an empty plan
+  // still deserves its card), or when its own name matches the search.
+  const planRuns = new Map<string, TestCycle[]>();
+  for (const p of plans) planRuns.set(p.id, []);
+  for (const c of visibleRuns)
+    if (c.planId && planRuns.has(c.planId)) planRuns.get(c.planId)!.push(c);
+  const narrowing = runsFilter !== 'all' && runsFilter !== 'plansOnly' && runsFilter !== 'runsOnly';
+  const visiblePlans = plans.filter(p => {
+    if (runsFilter === 'runsOnly') return false;
+    if (runsFilter === 'plansOnly') return !rq || p.name.toLowerCase().includes(rq);
+    const n = planRuns.get(p.id)?.length ?? 0;
+    return (
+      n > 0 ||
+      (!narrowing && !runMilestone && !runOwner && (!rq || p.name.toLowerCase().includes(rq)))
+    );
+  });
+  const knownPlanIds = new Set(plans.map(p => p.id));
+  // "Runs only" flattens everything into one table; otherwise plan runs live inside
+  // their plan card and only the standalone ones stay in this table.
+  const standaloneRuns =
+    runsFilter === 'plansOnly'
+      ? []
+      : runsFilter === 'runsOnly'
+        ? visibleRuns
+        : visibleRuns.filter(c => !c.planId || !knownPlanIds.has(c.planId));
 
   return (
     <div className="stv3 main-scroll">
@@ -380,16 +433,31 @@ export function TestRunsBoard({
           </h1>
           <div className="page-sub">
             {isRuns
-              ? `${activeRuns.length} active ${activeRuns.length === 1 ? 'run' : 'runs'} · ${pendingCases.toLocaleString()} cases pending execution`
+              ? `${activeRuns.length} active ${activeRuns.length === 1 ? 'run' : 'runs'} · ${plans.length} ${plans.length === 1 ? 'plan' : 'plans'} · ${pendingCases.toLocaleString()} cases pending execution`
               : `${quickLogs.length} ${quickLogs.length === 1 ? 'log' : 'logs'} · ${totalIssues.toLocaleString()} issues logged — a 30-second aggregate result, no per-case execution`}
           </div>
         </div>
         <div className="page-actions">
           {isRuns ? (
-            <button type="button" className="btn btn-primary" onClick={onNewRun}>
-              <SIco name="play" />
-              New test run
-            </button>
+            <>
+              <button
+                type="button"
+                className={cn('btn btn-secondary', showFilters && 'on')}
+                aria-expanded={showFilters}
+                onClick={() => setShowFilters(v => !v)}
+              >
+                <SIco name="filter" />
+                Filter
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={onNewPlan}>
+                <SIco name="plus" />
+                New test plan
+              </button>
+              <button type="button" className="btn btn-primary" onClick={onNewRun}>
+                <SIco name="play" />
+                New test run
+              </button>
+            </>
           ) : (
             <>
               <button
@@ -442,6 +510,57 @@ export function TestRunsBoard({
 
       {isRuns ? (
         <>
+          {showFilters && (
+            <div className="run-filters">
+              <input
+                className="input"
+                value={runQuery}
+                onChange={e => setRunQuery(e.target.value)}
+                placeholder="Search runs & plans…"
+                aria-label="Search runs and plans"
+              />
+              <select
+                className="select"
+                value={runMilestone}
+                onChange={e => setRunMilestone(e.target.value)}
+                aria-label="Milestone"
+              >
+                <option value="">All milestones</option>
+                {milestoneOptions.map(v => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="select"
+                value={runOwner}
+                onChange={e => setRunOwner(e.target.value)}
+                aria-label="Owner"
+              >
+                <option value="">All owners</option>
+                {ownerOptions.map(v => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+              {filtersOn && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    setRunQuery('');
+                    setRunMilestone('');
+                    setRunOwner('');
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
+
           <div className="filter-pills" style={{ marginBottom: 18 }}>
             {(
               [
@@ -461,45 +580,105 @@ export function TestRunsBoard({
                 {label} <span className="count">{count}</span>
               </button>
             ))}
+            <button
+              type="button"
+              className={cn('fpill', runsFilter === 'runsOnly' && 'active')}
+              onClick={() => setRunsFilter(runsFilter === 'runsOnly' ? 'all' : 'runsOnly')}
+            >
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+              >
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>{' '}
+              Runs only
+            </button>
+            <button
+              type="button"
+              className={cn('fpill', runsFilter === 'plansOnly' && 'active')}
+              onClick={() => setRunsFilter(runsFilter === 'plansOnly' ? 'all' : 'plansOnly')}
+            >
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+              >
+                <path d="M5 21V5a3 3 0 013-3h11l-3 6 3 6H8M5 21H3" />
+              </svg>{' '}
+              Plans only
+            </button>
           </div>
 
           {loading ? (
             <div className="card">
               <div className="empty-note">Loading…</div>
             </div>
-          ) : visibleRuns.length === 0 ? (
+          ) : visiblePlans.length === 0 && standaloneRuns.length === 0 ? (
             <div className="card">
               <div className="empty-note">
-                {caseBased.length === 0 ? (
+                {caseBased.length === 0 && plans.length === 0 ? (
                   <>
                     No test runs yet.{' '}
                     <button type="button" className="btn-link" onClick={onNewRun}>
                       Create the first one
                     </button>
                   </>
+                ) : runsFilter === 'plansOnly' && plans.length === 0 ? (
+                  <>
+                    No test plans yet.{' '}
+                    <button type="button" className="btn-link" onClick={onNewPlan}>
+                      Create the first one
+                    </button>
+                  </>
                 ) : (
-                  'No runs in this view.'
+                  'Nothing in this view.'
                 )}
               </div>
             </div>
           ) : (
-            <div className="card" style={{ marginBottom: 14 }}>
-              <div className="card-head" style={{ background: 'var(--c-bg)' }}>
-                <h3>
-                  <SIco name="play" /> Test runs
-                </h3>
-                <span className="meta">
-                  {visibleRuns.length} {visibleRuns.length === 1 ? 'run' : 'runs'}
-                </span>
-              </div>
-              <RunsTable
-                rows={visibleRuns}
-                onExecute={onOpenRun}
-                onDetails={onOpenOverview}
-                onEdit={setEditingCycle}
-                onDelete={handleDelete}
-              />
-            </div>
+            <>
+              {visiblePlans.map(p => (
+                <PlanGroupCard
+                  key={p.id}
+                  plan={p}
+                  runs={planRuns.get(p.id) ?? []}
+                  onOpenPlan={onOpenPlan}
+                  onEditPlan={onEditPlan}
+                  onDeletePlan={onDeletePlan}
+                  onExecute={onOpenRun}
+                  onDetails={onOpenOverview}
+                />
+              ))}
+              {standaloneRuns.length > 0 && (
+                <div className="card" style={{ marginBottom: 14 }}>
+                  <div className="card-head" style={{ background: 'var(--c-bg)' }}>
+                    <h3>
+                      <SIco name="play" />{' '}
+                      {plans.length > 0 && runsFilter !== 'runsOnly'
+                        ? 'Standalone runs'
+                        : 'Test runs'}
+                    </h3>
+                    <span className="meta">
+                      {standaloneRuns.length} {standaloneRuns.length === 1 ? 'run' : 'runs'}
+                    </span>
+                  </div>
+                  <RunsTable
+                    rows={standaloneRuns}
+                    onExecute={onOpenRun}
+                    onDetails={onOpenOverview}
+                    onEdit={setEditingCycle}
+                    onDelete={handleDelete}
+                  />
+                </div>
+              )}
+            </>
           )}
         </>
       ) : (
@@ -654,19 +833,6 @@ export function TestRunsBoard({
 }
 
 // ─── Test runs table (screen 06) ────────────────────────────
-
-function runStatus(c: TestCycle): { label: string; pill: string; dot: boolean } {
-  if (c.status === 'Completed') return { label: 'Closed', pill: 'pill-ok', dot: true };
-  if (c.status === 'Archived') return { label: 'Archived', pill: 'pill-neutral', dot: false };
-  if (!isStarted(c)) return { label: 'Planned', pill: 'pill-neutral', dot: true };
-  const counts = c.summary?.counts;
-  const done = c.summary?.done ?? 0;
-  if (counts && done > 0 && counts.Failed / done >= 0.25)
-    return { label: 'Failing', pill: 'pill-err', dot: true };
-  if (counts && counts.Blocked > 0 && counts.Blocked >= counts.Failed)
-    return { label: 'Blocked', pill: 'pill-warn', dot: true };
-  return { label: 'Running', pill: 'pill-info', dot: true };
-}
 
 function RunsTable({
   rows,

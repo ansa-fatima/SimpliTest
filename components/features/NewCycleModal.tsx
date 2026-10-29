@@ -30,6 +30,8 @@ export interface CycleFormPayload {
   assigneeId?: string | null;
   /** Planned start date of the run (YYYY-MM-DD). */
   startDate?: string | null;
+  /** Test plan the new run joins (case-based runs only). */
+  planId?: string | null;
   /** When the cycle was actually executed (Manual-mode back-dating). */
   completedAt?: string | null;
   // Manual-mode fields
