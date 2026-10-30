@@ -5,7 +5,8 @@ import { ok, bad, parseJson, serverError } from '@/lib/api';
 import { AiError, reviseCase } from '@/lib/ai';
 import { resolveAiConfig } from '@/lib/aiConfig';
 import { parseAttachments, resolveParent } from '@/lib/aiGenerate';
-import { MAX_REQUIREMENT_CHARS } from '@/lib/aiLimits';
+import { MAX_REFERENCE_CHARS, MAX_REFERENCE_PROMPT_CHARS } from '@/lib/aiLimits';
+import { pickExcerpts } from '@/lib/referenceExcerpt';
 import { caseWriteDenied } from '@/lib/caseAccess';
 import { normalizeRevision, RevisionError, type CaseSnapshot } from '@/lib/caseRevision';
 import { listWorkspaceOptions } from '@/lib/options';
@@ -18,6 +19,16 @@ interface Body {
   /** Optional reference document (requirement / spec) as text, and/or PDFs / images. */
   reference?: string;
   attachments?: { name?: string; mediaType?: string; data?: string }[];
+}
+
+// A long document is cut down to the passages that matter for THIS case.
+function referenceFor(reference: string, path: string, c: CaseSnapshot): string {
+  const query = [path, c.title, c.desc, c.preconditions, ...c.steps, c.expected].join(' ');
+  const { text, trimmed } = pickExcerpts(reference, query, MAX_REFERENCE_PROMPT_CHARS);
+  if (!trimmed) return text;
+  const note =
+    '[Excerpts of a longer document, chosen for this test case. Parts not shown may cover other features -- do not assume they are missing.]';
+  return `${note}\n\n${text}`;
 }
 
 // POST /api/test-cases/ai-update
@@ -33,9 +44,9 @@ export async function POST(req: Request) {
     const body = await parseJson<Body>(req);
     if (!body) return bad('Invalid request body');
     const reference = body.reference?.trim() ?? '';
-    if (reference.length > MAX_REQUIREMENT_CHARS)
+    if (reference.length > MAX_REFERENCE_CHARS)
       return bad(
-        `The reference document is too long (${MAX_REQUIREMENT_CHARS.toLocaleString('en-US')} characters max).`,
+        `The reference document is too long (${MAX_REFERENCE_CHARS.toLocaleString('en-US')} characters max).`,
       );
     const parsed = parseAttachments(body.attachments);
     if ('error' in parsed) return bad(parsed.error);
@@ -102,7 +113,7 @@ export async function POST(req: Request) {
         parentPath: parent.path,
         current,
         options,
-        ...(reference ? { reference } : {}),
+        ...(reference ? { reference: referenceFor(reference, parent.path, current) } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
       },
       cfg,

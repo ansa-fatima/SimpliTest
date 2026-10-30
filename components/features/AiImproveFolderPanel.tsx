@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/client';
 import { cn } from '@/lib/utils';
 import { caseCode } from '@/components/features/tc-helpers';
-import { MAX_REQUIREMENT_CHARS } from '@/lib/aiLimits';
+import { MAX_REFERENCE_CHARS } from '@/lib/aiLimits';
 import { joinReferenceText, readReferenceFile, type ReferenceFile } from '@/lib/referenceFile';
 import {
   FIELD_LABEL,
@@ -55,6 +55,8 @@ export interface AiImproveFolderPanelProps {
   projectId: string;
   parentType: 'portal' | 'module' | 'suite';
   parentId: string;
+  /** Improve exactly these cases (the list's selection) instead of the whole folder. */
+  cases?: { id: string; caseNum: number; title: string }[];
   /** "Portal › Module › Suite", for the heading. */
   parentPath: string;
   onClose: () => void;
@@ -66,6 +68,7 @@ type Stage = 'form' | 'running' | 'review' | 'applying' | 'done';
 export function AiImproveFolderPanel({
   parentType,
   parentId,
+  cases: given,
   parentPath,
   onClose,
   onChanged,
@@ -93,6 +96,21 @@ export function AiImproveFolderPanel({
 
   // Every case under this folder (sub-folders included), oldest first.
   useEffect(() => {
+    if (given) {
+      setTotalCases(given.length);
+      setItems(
+        given.slice(0, MAX_CASES).map(c => ({
+          id: c.id,
+          caseNum: c.caseNum,
+          title: c.title,
+          status: 'queued',
+          picked: [],
+          include: true,
+        })),
+      );
+      setLoadingCases(false);
+      return;
+    }
     let cancelled = false;
     const params = new URLSearchParams({
       page: '1',
@@ -127,6 +145,7 @@ export function AiImproveFolderPanel({
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parentType, parentId]);
 
   useEffect(() => {
@@ -147,7 +166,7 @@ export function AiImproveFolderPanel({
   const attachments = files.filter(
     (f): f is Extract<ReferenceFile, { kind: 'attach' }> => f.kind === 'attach',
   );
-  const tooLong = referenceText.length > MAX_REQUIREMENT_CHARS;
+  const tooLong = referenceText.length > MAX_REFERENCE_CHARS;
   const hasDoc = referenceText.length > 0 || attachments.length > 0;
 
   const addFiles = async (list: FileList | File[]) => {
@@ -191,7 +210,7 @@ export function AiImproveFolderPanel({
     }
     if (tooLong) {
       setError(
-        `The documents are over ${MAX_REQUIREMENT_CHARS.toLocaleString()} characters. Use a shorter document, or one section at a time.`,
+        `The documents are over ${MAX_REFERENCE_CHARS.toLocaleString()} characters. Use a shorter document, or one section at a time.`,
       );
       return;
     }
@@ -339,7 +358,9 @@ export function AiImproveFolderPanel({
             <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-light px-2.5 py-1 text-[11px] font-semibold text-primary-text">
               <SparkIcon /> AI
             </span>
-            <h2 className="mt-2 text-[17px] font-semibold text-text">Improve all test cases</h2>
+            <h2 className="mt-2 text-[17px] font-semibold text-text">
+              {given ? 'Improve selected test cases' : 'Improve all test cases'}
+            </h2>
             <p className="truncate text-[12.5px] text-text-2">
               <span className="font-medium text-text">{parentPath || 'Folder'}</span>
               {' · '}
@@ -489,9 +510,8 @@ export function AiImproveFolderPanel({
                 )}
                 {tooLong && (
                   <p className="mt-1.5 text-[12px] font-medium text-red-600">
-                    {referenceText.length.toLocaleString()} /{' '}
-                    {MAX_REQUIREMENT_CHARS.toLocaleString()} characters — too long. Remove a file or
-                    use a shorter document.
+                    {referenceText.length.toLocaleString()} / {MAX_REFERENCE_CHARS.toLocaleString()}{' '}
+                    characters — too long. Remove a file or use a shorter document.
                   </p>
                 )}
               </div>
