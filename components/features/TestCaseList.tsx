@@ -470,6 +470,10 @@ export function TestCaseList({
   const [showNewCase, setShowNewCase] = useState(false);
   const [showAi, setShowAi] = useState(false);
   const [showImproveAll, setShowImproveAll] = useState(false);
+  // Cases picked in the list, sent to Improve with AI (null = the whole folder).
+  const [improveCases, setImproveCases] = useState<
+    { id: string; caseNum: number; title: string }[] | null
+  >(null);
   const [exporting, setExporting] = useState(false);
 
   // ─── Actions ───────────────────────────────────────────────
@@ -1115,7 +1119,10 @@ export function TestCaseList({
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => setShowImproveAll(true)}
+                onClick={() => {
+                  setImproveCases(null);
+                  setShowImproveAll(true);
+                }}
                 disabled={!projectId || !activeNode || total === 0}
                 title={
                   activeNode
@@ -1188,6 +1195,22 @@ export function TestCaseList({
               </span>
             </div>
             <div className="tb-group">
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={selected.size === 0 || bulkBusy || !activeNode}
+                title="Improve the selected test cases with AI"
+                onClick={() => {
+                  setImproveCases(
+                    cases
+                      .filter(c => selected.has(c.id))
+                      .map(c => ({ id: c.id, caseNum: c.caseNum, title: c.title })),
+                  );
+                  setShowImproveAll(true);
+                }}
+              >
+                <Ico name="sparkle" /> Improve
+              </button>
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"
@@ -1845,6 +1868,7 @@ export function TestCaseList({
       {showImproveAll && activeNode && (
         <AiImproveFolderPanel
           projectId={projectId ?? ''}
+          cases={improveCases ?? undefined}
           parentType={activeNode.kind}
           parentId={
             activeNode.kind === 'suite'

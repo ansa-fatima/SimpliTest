@@ -945,6 +945,8 @@ export async function reviseCase(req: ReviseRequest, cfg: AiConfig): Promise<unk
     'You edit ONE manual test case in a test management tool.',
     "Apply ONLY the user's instruction, then return the COMPLETE case by calling the return_revision tool.",
     'Copy every field the instruction does not affect EXACTLY as given. Do not reword, reorder, shorten or "improve" anything you were not asked to change.',
+    'ONE EXCEPTION, always applied: if the description or the preconditions are empty, FILL THEM IN, whatever the instruction says. Derive them only from what the case already contains (title, steps, expected result, location) and any reference document. description: one or two sentences saying what is verified and why. preconditions: what must be true before step 1 (the user and role, data, state, where they start), as a short sentence or list. Never leave either empty if the case gives enough to write it; never invent product behaviour. A description or preconditions that already has text is left exactly as it is unless the instruction is about it.',
+    'When you filled in the description and/or preconditions, say so in the summary (e.g. "Added description and preconditions.").',
     'Keep the existing style: steps are short imperative actions; keep the same language and level of detail.',
     `priority must be one of: ${req.options.priority.join(', ')}. severity must be one of: ${req.options.severity.join(', ')}. type must be one of: ${req.options.type.join(', ')}. Keep the current value unless the instruction is about it.`,
     'summary: one short sentence saying what you changed. If the instruction does not apply to this case, return the case unchanged and set summary to "No change needed" plus a few words on why.',
