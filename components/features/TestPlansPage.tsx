@@ -1,5 +1,7 @@
 'use client';
 
+import { Gate } from '@/components/ui/Gate';
+import { useMyPermissions } from '@/hooks/useMyPermissions';
 import { useMemo, useState } from 'react';
 import { TestCycle, TestPlan } from '@/types';
 import { cn } from '@/lib/utils';
@@ -12,6 +14,7 @@ interface TestPlansPageProps {
   plans: TestPlan[];
   cycles: TestCycle[];
   loading: boolean;
+  projectId?: string | null;
   projectName: string;
   onOpenPlan: (id: string) => void;
   onEditPlan: (id: string) => void;
@@ -29,6 +32,7 @@ export function TestPlansPage({
   plans,
   cycles,
   loading,
+  projectId,
   projectName,
   onOpenPlan,
   onEditPlan,
@@ -38,6 +42,7 @@ export function TestPlansPage({
   onOpenOverview,
 }: TestPlansPageProps) {
   const [view, setView] = useState<View>('all');
+  const canCreate = useMyPermissions(projectId).can('createCycles');
 
   const rows = useMemo(
     () =>
@@ -71,10 +76,12 @@ export function TestPlansPage({
           </div>
         </div>
         <div className="page-actions">
-          <button type="button" className="btn btn-primary" onClick={onNewPlan}>
-            <SIco name="plus" />
-            New test plan
-          </button>
+          <Gate allowed={canCreate}>
+            <button type="button" className="btn btn-primary" onClick={onNewPlan}>
+              <SIco name="plus" />
+              New test plan
+            </button>
+          </Gate>
         </div>
       </div>
 

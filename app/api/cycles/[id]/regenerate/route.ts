@@ -1,3 +1,4 @@
+import { guardWrite, projectOfCycle } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, notFound, serverError } from '@/lib/api';
 
@@ -13,6 +14,8 @@ interface Ctx {
 // new test cases were added after the cycle was created and you want to include them).
 export async function POST(_req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('createCycles', () => projectOfCycle(params.id));
+    if (denied) return denied;
     const cycle = await prisma.testCycle.findUnique({
       where: { id: params.id },
       select: {

@@ -1,3 +1,4 @@
+import { bodyOf, guardWrite, projectOfPortal, str } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 
@@ -6,6 +7,10 @@ import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 // module ids in that portal. Sets each module's `order` to its index.
 export async function PATCH(req: Request) {
   try {
+    const denied = await guardWrite('manageTestCases', async () =>
+      projectOfPortal(str((await bodyOf(req))?.portalId)),
+    );
+    if (denied) return denied;
     const body = await parseJson<{ portalId?: string; ids?: string[] }>(req);
     const portalId = body?.portalId?.trim();
     const ids = body?.ids;

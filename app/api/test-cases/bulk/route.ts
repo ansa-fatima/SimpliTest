@@ -1,3 +1,4 @@
+import { bodyOf, guardWrite, projectOfCase, str } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { Prisma, Priority, Severity, TestType } from '@prisma/client';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
@@ -23,6 +24,11 @@ type BulkBody =
 //                                        all ids must share the same parent
 export async function POST(req: Request) {
   try {
+    const denied = await guardWrite('manageTestCases', async () => {
+      const ids = (await bodyOf(req))?.ids;
+      return projectOfCase(Array.isArray(ids) ? str(ids[0]) : undefined);
+    });
+    if (denied) return denied;
     const body = await parseJson<BulkBody>(req);
     if (!body || !('action' in body)) return bad('action is required');
     if (!Array.isArray(body.ids) || body.ids.length === 0)

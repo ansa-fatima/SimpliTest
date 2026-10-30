@@ -1,3 +1,4 @@
+import { guardWrite, projectOfRun } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { RunResult } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
@@ -40,6 +41,8 @@ export async function GET(_req: Request, { params }: Ctx) {
 // updates executedAt (or clears it for true "Not run") and wasEverIssue.
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('executeTests', () => projectOfRun(params.id));
+    if (denied) return denied;
     const body = await parseJson<{ result?: string; notes?: string; executedBy?: string }>(req);
     if (!body) return bad('invalid JSON body');
 

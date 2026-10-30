@@ -1,5 +1,7 @@
 'use client';
 
+import { Gate } from '@/components/ui/Gate';
+import { useMyPermissions } from '@/hooks/useMyPermissions';
 import { useEffect, useMemo, useState } from 'react';
 import { TestCycle, TestPlan, Module } from '@/types';
 import { avatarColour, cn, initials, localDateStr } from '@/lib/utils';
@@ -75,6 +77,9 @@ export function TestRunsBoard({
   onDelete,
   onReload,
 }: TestRunsBoardProps) {
+  const { can } = useMyPermissions(projectId);
+  const canCreateRuns = can('createCycles');
+  const canLog = can('executeTests');
   const [runsFilter, setRunsFilter] = useState<
     'all' | 'planned' | 'active' | 'closed' | 'mine' | 'runsOnly' | 'plansOnly'
   >('all');
@@ -449,14 +454,18 @@ export function TestRunsBoard({
                 <SIco name="filter" />
                 Filter
               </button>
-              <button type="button" className="btn btn-secondary" onClick={onNewPlan}>
-                <SIco name="plus" />
-                New test plan
-              </button>
-              <button type="button" className="btn btn-primary" onClick={onNewRun}>
-                <SIco name="play" />
-                New test run
-              </button>
+              <Gate allowed={canCreateRuns}>
+                <button type="button" className="btn btn-secondary" onClick={onNewPlan}>
+                  <SIco name="plus" />
+                  New test plan
+                </button>
+              </Gate>
+              <Gate allowed={canCreateRuns}>
+                <button type="button" className="btn btn-primary" onClick={onNewRun}>
+                  <SIco name="play" />
+                  New test run
+                </button>
+              </Gate>
             </>
           ) : (
             <>
@@ -477,15 +486,17 @@ export function TestRunsBoard({
                     }`
                   : 'Sync all'}
               </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => projectId && setShowImport(true)}
-                disabled={!projectId}
-              >
-                <SIco name="upload" />
-                Import
-              </button>
+              <Gate allowed={canLog}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => projectId && setShowImport(true)}
+                  disabled={!projectId}
+                >
+                  <SIco name="upload" />
+                  Import
+                </button>
+              </Gate>
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -495,14 +506,16 @@ export function TestRunsBoard({
                 <SIco name="download" />
                 Export
               </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => setCyclePanel('new')}
-              >
-                <SIco name="plus" />
-                New quick log
-              </button>
+              <Gate allowed={canLog}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => setCyclePanel('new')}
+                >
+                  <SIco name="plus" />
+                  New quick log
+                </button>
+              </Gate>
             </>
           )}
         </div>

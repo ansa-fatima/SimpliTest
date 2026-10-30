@@ -1,3 +1,4 @@
+import { bodyOf, guardWrite, str } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 
@@ -8,6 +9,10 @@ import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 // list in a half-reordered state.
 export async function PATCH(req: Request) {
   try {
+    const denied = await guardWrite('manageTestCases', async () =>
+      str((await bodyOf(req))?.projectId),
+    );
+    if (denied) return denied;
     const body = await parseJson<{ projectId?: string; ids?: string[] }>(req);
     const projectId = body?.projectId?.trim();
     const ids = body?.ids;

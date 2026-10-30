@@ -1,3 +1,4 @@
+import { bodyOf, guardWrite, str } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { Prisma, Priority, Severity, TestType, CaseStatus, OptionCategory } from '@prisma/client';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
@@ -210,6 +211,15 @@ export async function GET(req: Request) {
 // POST /api/test-cases — create
 export async function POST(req: Request) {
   try {
+    const denied = await guardWrite('manageTestCases', async () => {
+      const b = await bodyOf(req);
+      return projectIdForCaseParent({
+        portalId: str(b?.portalId) ?? null,
+        moduleId: str(b?.moduleId) ?? null,
+        suiteId: str(b?.suiteId) ?? str(b?.featureId) ?? null,
+      });
+    });
+    if (denied) return denied;
     const body = await parseJson<{
       title?: string;
       sub?: string;

@@ -1,3 +1,4 @@
+import { bodyOf, guardWrite, str } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { CycleScopeType, Prisma } from '@prisma/client';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
@@ -32,6 +33,10 @@ export async function POST(req: Request) {
   if (userOrRes instanceof NextResponse) return userOrRes;
 
   try {
+    const denied = await guardWrite('executeTests', async () =>
+      str((await bodyOf(req))?.projectId),
+    );
+    if (denied) return denied;
     const body = await parseJson<ImportBody>(req);
     if (!body?.projectId) return bad('projectId is required');
     if (!Array.isArray(body.rows) || body.rows.length === 0) return bad('rows is required');

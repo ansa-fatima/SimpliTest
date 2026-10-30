@@ -1,3 +1,4 @@
+import { guardWrite, projectOfPortal } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
@@ -27,6 +28,8 @@ export async function GET(_req: Request, { params }: Ctx) {
 // PATCH /api/portals/:id — rename or update icon
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('manageTestCases', () => projectOfPortal(params.id));
+    if (denied) return denied;
     const body = await parseJson<{ name?: string; icon?: string | null; slug?: string }>(req);
     const data: { name?: string; icon?: string | null; slug?: string } = {};
     if (typeof body?.name === 'string') {
@@ -51,6 +54,8 @@ export async function PATCH(req: Request, { params }: Ctx) {
 // DELETE /api/portals/:id — cascades to modules, suites, test cases
 export async function DELETE(_req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('manageTestCases', () => projectOfPortal(params.id));
+    if (denied) return denied;
     await prisma.portal.delete({ where: { id: params.id } });
     return ok({ deleted: true });
   } catch (e) {

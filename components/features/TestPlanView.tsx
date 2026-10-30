@@ -1,5 +1,7 @@
 'use client';
 
+import { Gate } from '@/components/ui/Gate';
+import { useMyPermissions } from '@/hooks/useMyPermissions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PlanBurndown, PlanDefect, PlanDetail, TestCycle, TestPlan } from '@/types';
 import { cn } from '@/lib/utils';
@@ -29,6 +31,7 @@ interface TestPlanViewProps {
   /** Burn-down and latest failures (server-computed); null while loading. */
   detail: PlanDetail | null;
   loading: boolean;
+  projectId?: string | null;
   projectName: string;
   onBack: () => void;
   onShowPlans: () => void;
@@ -61,6 +64,7 @@ export function TestPlanView({
   cycles,
   detail,
   loading,
+  projectId,
   projectName,
   onBack,
   onShowPlans,
@@ -73,6 +77,7 @@ export function TestPlanView({
   onRemoveRun,
 }: TestPlanViewProps) {
   const [adding, setAdding] = useState(false);
+  const canManage = useMyPermissions(projectId).can('createCycles');
   const [allDefects, setAllDefects] = useState(false);
 
   const plan = detail?.plan ?? plans.find(p => p.id === planId) ?? null;
@@ -178,18 +183,24 @@ export function TestPlanView({
             <SIco name="upload" />
             Export
           </button>
-          <button type="button" className="btn btn-secondary" onClick={onEdit}>
-            <SIco name="edit" />
-            Edit
-          </button>
-          <button type="button" className="btn btn-secondary btn-danger-text" onClick={onDelete}>
-            <SIco name="trash" />
-            Delete
-          </button>
-          <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
-            <SIco name="plus" />
-            Add run
-          </button>
+          <Gate allowed={canManage}>
+            <button type="button" className="btn btn-secondary" onClick={onEdit}>
+              <SIco name="edit" />
+              Edit
+            </button>
+          </Gate>
+          <Gate allowed={canManage}>
+            <button type="button" className="btn btn-secondary btn-danger-text" onClick={onDelete}>
+              <SIco name="trash" />
+              Delete
+            </button>
+          </Gate>
+          <Gate allowed={canManage}>
+            <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
+              <SIco name="plus" />
+              Add run
+            </button>
+          </Gate>
         </div>
       </div>
 

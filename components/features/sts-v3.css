@@ -4494,3 +4494,71 @@ select.sts-select {
   background: var(--err-bg);
   border-color: var(--err-bdr);
 }
+
+/* ── Icon rail: hover (or focus) slides it open over the page, with labels ── */
+.stv3 .side-label {
+  display: none;
+}
+@media (min-width: 721px) {
+  .stv3 .sidebar {
+    position: relative;
+    display: block;
+    padding: 0;
+  }
+  .stv3 .sidebar-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 72px;
+    background: var(--c-surface);
+    border-right: 1px solid var(--bdr);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px;
+    overflow: hidden;
+    z-index: 40;
+    transition:
+      width 0.18s ease,
+      box-shadow 0.18s ease;
+  }
+  .stv3 .sidebar-panel:hover,
+  .stv3 .sidebar-panel:focus-within {
+    width: 236px;
+    box-shadow: 10px 0 28px -14px rgba(15, 17, 42, 0.3);
+  }
+  .stv3 .sidebar-panel .side-btn {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+    width: 100%;
+    padding: 0 13px;
+    white-space: nowrap;
+  }
+  .stv3 .sidebar-panel .side-btn svg {
+    flex-shrink: 0;
+  }
+  .stv3 .side-label {
+    display: inline;
+    font-size: 13px;
+    font-weight: 500;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .stv3 .sidebar-panel:hover .side-label,
+  .stv3 .sidebar-panel:focus-within .side-label {
+    opacity: 1;
+    transition-delay: 0.08s;
+  }
+  .stv3 .sidebar-panel .side-divider {
+    width: 100%;
+  }
+}
+@media (max-width: 720px) {
+  /* The bottom tab bar keeps icons only. */
+  .stv3 .sidebar-panel {
+    display: contents;
+  }
+}

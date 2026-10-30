@@ -29,8 +29,7 @@ import { ManualCycleSummaryModal } from '@/components/features/ManualCycleSummar
 import { UpdateQuickLogModal } from '@/components/features/QuickLogModal';
 import { Toast } from '@/components/ui/Toast';
 import { api } from '@/lib/client';
-import { parseCaseRef, parseFolderRef } from '@/lib/caseLink';
-import { parseNavParams, queryForPage, type NavParams } from '@/lib/navLink';
+import { parseTarget, pathForPage, workspacePath, type Target } from '@/lib/urls';
 
 export default function Home() {
   // The summary modal's own "Edit" button opens this in place, instead of
@@ -138,78 +137,32 @@ export default function Home() {
     previousPage,
   } = state;
 
-  // A shared link (/?case=10504) names a case. Read it once on load, before anything
-  // rewrites the address bar; it is opened as soon as the user is signed in.
-  const pendingCase = useRef<string | null>(
+  // ── Addresses ─────────────────────────────────────────────────────────────
+  // Every screen has a readable path (see lib/urls.ts). What the address named when the
+  // page loaded is read once, and opened as soon as the user is signed in -- switching
+  // workspace first when the link points into another one.
+  const pendingTarget = useRef<Target | null>(
     typeof window === 'undefined'
       ? null
-      : parseCaseRef(new URLSearchParams(window.location.search).get('case')),
+      : parseTarget(window.location.pathname, window.location.search),
   );
-  useEffect(() => {
-    const ref = pendingCase.current;
-    if (!ref || !user || !authChecked || projects.length === 0) return;
-    pendingCase.current = null;
-    void (async () => {
-      try {
-        const c = await api.get<
-          ApiTestCase & {
-            portal?: { projectId: string } | null;
-            module?: { portal: { projectId: string } } | null;
-            suite?: { module: { portal: { projectId: string } } } | null;
-          }
-        >(`/api/test-cases/${ref}`);
-        const pid =
-          c.suite?.module.portal.projectId ?? c.module?.portal.projectId ?? c.portal?.projectId;
-        if (pid && pid !== currentProjectId) await switchProject(pid);
-        viewApiCase(c, [c]);
-      } catch {
-        showToast(`Test case ${ref} was not found, or you do not have access to it.`, 'error');
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, authChecked, projects.length]);
+  // An address that has to wait until its workspace is the current one.
+  const afterSwitch = useRef<{ projectId: string; target: Target } | null>(null);
+  const workspaceSlug = projects.find(p => p.id === currentProjectId)?.slug ?? null;
 
-  // A shared folder link (/?folder=s:<id>): switch to its workspace if needed, then show
-  // the repository -- which reads the folder from the address bar and selects it.
-  const pendingFolder = useRef<string | null>(
-    typeof window === 'undefined'
-      ? null
-      : (new URLSearchParams(window.location.search).get('folder') ?? null),
-  );
-  useEffect(() => {
-    const raw = pendingFolder.current;
-    if (!raw || !user || !authChecked || projects.length === 0) return;
-    pendingFolder.current = null;
-    if (!parseFolderRef(raw)) {
-      showToast('That folder link is not valid.', 'error');
+  // Shows what `t` names (the workspace is already current).
+  const showTarget = async (t: Target) => {
+    if (t.caseNum) {
+      const c = await api.get<ApiTestCase>(`/api/test-cases/${t.caseNum}`);
+      viewApiCase(c, [c]);
       return;
     }
-    void (async () => {
-      try {
-        const { projectId } = await api.get<{ projectId: string }>(
-          `/api/folder-link?ref=${encodeURIComponent(raw)}`,
-        );
-        if (projectId !== currentProjectId) await switchProject(projectId);
-        showTestCases();
-      } catch (e) {
-        showToast((e as Error).message, 'error');
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, authChecked, projects.length]);
-
-  // Any other screen link (/?view=runs, /?plan=<id>, /?cycle=<id>, ...). Read once on load.
-  const pendingNav = useRef<NavParams | null>(
-    typeof window === 'undefined' ? null : parseNavParams(window.location.search),
-  );
-  // An action that has to wait until the workspace it belongs to is the current one.
-  const afterSwitch = useRef<{ projectId: string; nav: NavParams } | null>(null);
-
-  const runNav = (n: NavParams) => {
-    if (n.cycle) return openCycle(n.cycle);
-    if (n.overview) return openCycleOverview(n.overview);
-    if (n.plan) return openPlan(n.plan);
-    switch (n.view) {
+    if (t.cycle) return openCycle(t.cycle);
+    if (t.overview) return openCycleOverview(t.overview);
+    if (t.plan) return openPlan(t.plan);
+    switch (t.view) {
+      case 'dashboard':
+        return showDashboard();
       case 'cases':
         return showTestCases();
       case 'runs':
@@ -219,7 +172,7 @@ export default function Home() {
       case 'plans':
         return showTestPlans();
       case 'reports':
-        return showReports(n.tab);
+        return showReports(t.tab);
       case 'team':
         return showMembers();
       case 'roles':
@@ -233,27 +186,54 @@ export default function Home() {
       case 'projects':
         return showProjects();
     }
+    // An older ?folder=s:<id> link, or a folder named by path: the repository selects it.
+    if (t.folder || t.folderRef) return showTestCases();
+  };
+
+  // The workspace an address belongs to: named in the path, or found from the record.
+  const workspaceOf = async (t: Target): Promise<string | undefined> => {
+    if (t.workspace) {
+      const p = projects.find(x => x.slug === t.workspace);
+      if (!p) throw new Error('That workspace was not found, or you are not a member of it.');
+      return p.id;
+    }
+    type Scoped = {
+      projectId?: string;
+      portal?: { projectId: string } | null;
+      module?: { portal: { projectId: string } } | null;
+      suite?: { module: { portal: { projectId: string } } } | null;
+    };
+    if (t.cycle || t.overview)
+      return (await api.get<Scoped>(`/api/cycles/${t.cycle ?? t.overview}`)).projectId;
+    if (t.plan)
+      return (await api.get<{ plan: { projectId?: string } }>(`/api/plans/${t.plan}`)).plan
+        .projectId;
+    if (t.caseNum) {
+      const c = await api.get<Scoped>(`/api/test-cases/${t.caseNum}`);
+      return c.suite?.module.portal.projectId ?? c.module?.portal.projectId ?? c.portal?.projectId;
+    }
+    if (t.folderRef)
+      return (
+        await api.get<{ projectId: string }>(
+          `/api/folder-link?ref=${encodeURIComponent(t.folderRef)}`,
+        )
+      ).projectId;
+    return undefined;
   };
 
   useEffect(() => {
-    const n = pendingNav.current;
-    if (!n || !user || !authChecked || projects.length === 0) return;
-    pendingNav.current = null;
+    const t = pendingTarget.current;
+    if (!t || !user || !authChecked || projects.length === 0) return;
+    pendingTarget.current = null;
     void (async () => {
       try {
-        // Runs and plans belong to one workspace: find it, switch if it is not the current one.
-        let projectId: string | undefined;
-        const id = n.cycle ?? n.overview;
-        if (id) projectId = (await api.get<{ projectId?: string }>(`/api/cycles/${id}`)).projectId;
-        else if (n.plan)
-          projectId = (await api.get<{ plan: { projectId?: string } }>(`/api/plans/${n.plan}`)).plan
-            .projectId;
+        const projectId = await workspaceOf(t);
         if (projectId && projectId !== currentProjectId) {
-          afterSwitch.current = { projectId, nav: n };
+          afterSwitch.current = { projectId, target: t };
           await switchProject(projectId);
           return;
         }
-        runNav(n);
+        await showTarget(t);
       } catch (e) {
         showToast((e as Error).message, 'error');
       }
@@ -265,7 +245,7 @@ export default function Home() {
     const a = afterSwitch.current;
     if (!a || a.projectId !== currentProjectId) return;
     afterSwitch.current = null;
-    runNav(a.nav);
+    void showTarget(a.target).catch(e => showToast((e as Error).message, 'error'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProjectId]);
 
@@ -307,30 +287,38 @@ export default function Home() {
   const newRunPlan = newRunPlanId ? (plans.find(p => p.id === newRunPlanId) ?? null) : null;
 
   // The address bar always names the open screen, so its URL can be copied, bookmarked or
-  // sent. The repository adds its own folder to the address (see TestCaseList).
-  const openCaseNum = page === 'view' ? currentTC?.caseNum : undefined;
-  const openCycleId = currentCycle?.id;
-  const openOverviewId = cycleOverview?.cycle.id;
+  // sent. The repository adds the folder to the address itself (see TestCaseList).
+  const planForUrl = planDetail?.plan ?? plans.find(p => p.id === currentPlanId) ?? null;
   useEffect(() => {
     if (typeof window === 'undefined' || page === 'login') return;
-    const sp = new URLSearchParams(window.location.search);
-    // The deep link is still being opened: leave the address alone until it has been.
-    if (pendingCase.current || pendingFolder.current || pendingNav.current || afterSwitch.current)
+    if (pendingTarget.current || afterSwitch.current) return;
+    // The record's name is not known until it has loaded; keep the address meanwhile.
+    if (
+      (page === 'cycle' && !currentCycle) ||
+      (page === 'cycleOverview' && !cycleOverview) ||
+      ((page === 'plan' || page === 'editPlan') && !planForUrl)
+    )
       return;
-    // A run's id is not known until it has loaded; keep the address as it is meanwhile.
-    if ((page === 'cycleOverview' && !openOverviewId) || (page === 'cycle' && !openCycleId)) return;
-    // The repository owns `folder`; only fall back to ?view=cases when none is selected.
-    if (page === 'list' && sp.has('folder')) return;
-    const query = queryForPage(page, {
-      caseNum: openCaseNum,
-      cycleId: openCycleId,
-      overviewId: openOverviewId,
-      planId: currentPlanId ?? undefined,
+    if (
+      page === 'list' &&
+      workspaceSlug &&
+      window.location.pathname.startsWith(`${workspacePath(workspaceSlug)}/test-cases/`)
+    )
+      return;
+    const path = pathForPage(page, {
+      workspace: workspaceSlug,
+      caseNum: page === 'view' ? currentTC?.caseNum : undefined,
+      caseTitle: currentTC?.title,
+      cycle: currentCycle ? { id: currentCycle.id, name: currentCycle.name } : null,
+      overview: cycleOverview
+        ? { id: cycleOverview.cycle.id, name: cycleOverview.cycle.name }
+        : null,
+      plan: planForUrl ? { id: planForUrl.id, name: planForUrl.name } : null,
       reportsTab: reportsInitialTab,
     });
-    if (window.location.search !== query)
-      window.history.replaceState(window.history.state, '', window.location.pathname + query);
-  }, [page, openCaseNum, openCycleId, openOverviewId, currentPlanId, reportsInitialTab]);
+    if (window.location.pathname + window.location.search !== path)
+      window.history.replaceState(window.history.state, '', path);
+  }, [page, workspaceSlug, currentTC, currentCycle, cycleOverview, planForUrl, reportsInitialTab]);
 
   // Show a tiny loading state while we check the session on mount.
   if (!authChecked) {
@@ -465,6 +453,7 @@ export default function Home() {
           {page === 'list' && (
             <TestCaseList
               projectId={currentProjectId}
+              projectSlug={workspaceSlug}
               projectName={projects.find(p => p.id === currentProjectId)?.name ?? ''}
               currentKey={currentKey}
               onNavigate={navFeature}
@@ -539,6 +528,7 @@ export default function Home() {
 
           {page === 'testPlans' && (
             <TestPlansPage
+              projectId={currentProjectId}
               plans={plans}
               cycles={cycles}
               loading={plansLoading || cyclesLoading}
@@ -554,6 +544,7 @@ export default function Home() {
 
           {page === 'plan' && currentPlanId && (
             <TestPlanView
+              projectId={currentProjectId}
               planId={currentPlanId}
               plans={plans}
               cycles={cycles}

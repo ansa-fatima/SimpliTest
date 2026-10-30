@@ -1,3 +1,4 @@
+import { guardWrite, projectOfCase } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { Prisma, Priority, Severity, TestType, CaseStatus } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
@@ -85,6 +86,8 @@ export async function GET(_req: Request, { params }: Ctx) {
 // PATCH /api/test-cases/:id — partial update
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('manageTestCases', () => projectOfCase(params.id));
+    if (denied) return denied;
     const body = await parseJson<Record<string, unknown>>(req);
     if (!body) return bad('invalid JSON body');
 
@@ -213,6 +216,8 @@ export async function PATCH(req: Request, { params }: Ctx) {
 // DELETE /api/test-cases/:id
 export async function DELETE(_req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('manageTestCases', () => projectOfCase(params.id));
+    if (denied) return denied;
     await prisma.testCase.delete({ where: { id: params.id } });
     return ok({ deleted: true });
   } catch (e) {

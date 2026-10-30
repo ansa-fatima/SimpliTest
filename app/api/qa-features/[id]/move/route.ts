@@ -1,3 +1,4 @@
+import { guardWrite, projectOfQaFeature } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
@@ -9,6 +10,8 @@ interface Ctx {
 // Swaps a feature chip's `order` with its neighbor in the same module.
 export async function POST(req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('settings', () => projectOfQaFeature(params.id));
+    if (denied) return denied;
     const body = await parseJson<{ direction?: 'up' | 'down' }>(req);
     const direction = body?.direction;
     if (direction !== 'up' && direction !== 'down') {

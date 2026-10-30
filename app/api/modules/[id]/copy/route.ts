@@ -1,3 +1,4 @@
+import { guardWrite, projectOfModule } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { Prisma } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
@@ -13,6 +14,8 @@ interface Ctx {
 // into the destination portal. Resolves name conflicts by appending " (copy)" etc.
 export async function POST(req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('manageTestCases', () => projectOfModule(params.id));
+    if (denied) return denied;
     const body = await parseJson<{
       portalId?: string;
       name?: string;

@@ -1,3 +1,4 @@
+import { bodyOf, guardWrite, projectOfModule, str } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 
@@ -10,6 +11,10 @@ import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 // separate action (the existing bulk-move flow), not this endpoint.
 export async function PATCH(req: Request) {
   try {
+    const denied = await guardWrite('manageTestCases', async () =>
+      projectOfModule(str((await bodyOf(req))?.moduleId)),
+    );
+    if (denied) return denied;
     const body = await parseJson<{
       moduleId?: string;
       parentId?: string | null;
