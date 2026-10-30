@@ -25,7 +25,7 @@ export interface OptionNames {
   type: string[];
 }
 
-export type Depth = 'happy' | 'edge' | 'negative';
+export type Depth = 'happy' | 'edge' | 'negative' | 'all';
 export type StepStyle = 'actions' | 'gwt';
 
 /** A test case exactly as the model returns it, before validation. */
@@ -77,6 +77,7 @@ export interface GenerateRequest {
   requirement: string;
   /** "LMS › Admin › Login" -- gives the model context about where the cases will live. */
   parentPath: string;
+  /** Number of cases to write; 0 = as many as the requirement needs. */
   count: number;
   depth: Depth;
   style: StepStyle;
@@ -91,6 +92,7 @@ const DEPTH_TEXT: Record<Depth, string> = {
   edge: 'Cover the main success paths AND boundary / edge conditions (limits, empty values, repeated actions).',
   negative:
     'Cover success paths, edge conditions AND negative cases (invalid input, missing permission, failure handling).',
+  all: 'Cover EVERY kind of test the requirement allows: success paths, edge and boundary conditions, negative cases (invalid input, failure handling), permission / role checks, UI and layout checks, security checks (injection, session expiry, access control), accessibility (keyboard, labels, contrast) and performance / load where relevant. Spread the cases across these kinds instead of repeating one kind, and set the type of each case to the closest allowed value. Only test what the requirement implies -- skip a kind that does not apply.',
 };
 
 const STYLE_TEXT: Record<StepStyle, string> = {
@@ -123,7 +125,9 @@ function systemPrompt(req: GenerateRequest): string {
 function userPrompt(req: GenerateRequest): string {
   const lines = [
     `Location in the product: ${req.parentPath || '(not specified)'}`,
-    `Write exactly ${req.count} test cases for this requirement:`,
+    req.count > 0
+      ? `Write exactly ${req.count} test cases for this requirement:`
+      : 'Write as many test cases as this requirement needs. First identify every separate testable rule or behaviour in it, then write at least two cases for each rule (more for risky ones), up to 30 cases in total. Never pad the list with near-duplicates; a short requirement may need only a handful. The requirement:',
     '',
     '"""',
     req.requirement.trim(),
@@ -746,7 +750,7 @@ export async function generateRawCases(
     toolName: 'return_cases',
     description: 'Return the generated test cases.',
     schema: toolSchema(req),
-    maxTokens: Math.min(16000, 800 + req.count * 600),
+    maxTokens: Math.min(16000, 800 + (req.count || 30) * 600),
   });
   if (!Array.isArray(out.cases))
     throw new AiError('The AI service returned an unexpected answer.', 502);
@@ -773,7 +777,7 @@ export async function streamRawCases(
     toolName: 'return_cases',
     description: 'Return the generated test cases.',
     schema: toolSchema(req),
-    maxTokens: Math.min(16000, 800 + req.count * 600),
+    maxTokens: Math.min(16000, 800 + (req.count || 30) * 600),
   };
   if (cfg.provider === 'gemini') return streamGemini(callOpts, onCase, signal);
   if (isOpenAiStyle(cfg.provider)) return streamOpenAi(callOpts, onCase, signal);

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/client';
 import { cn } from '@/lib/utils';
+import { MAX_REQUIREMENT_CHARS } from '@/lib/aiLimits';
 import { useJiraSiteUrl } from '@/lib/jiraLink';
 
 // "Generate with AI": requirement in -> proposed test cases out -> the user
@@ -11,7 +12,7 @@ import { useJiraSiteUrl } from '@/lib/jiraLink';
 // confirms, and the whole batch can be undone afterwards.
 
 type ParentType = 'portal' | 'module' | 'suite';
-type Depth = 'happy' | 'edge' | 'negative';
+type Depth = 'happy' | 'edge' | 'negative' | 'all';
 type StepStyle = 'actions' | 'gwt';
 type Action = 'create' | 'skip' | 'update' | 'replace';
 type Field =
@@ -98,8 +99,10 @@ const DEPTHS: { v: Depth; label: string }[] = [
   { v: 'happy', label: 'Happy path only' },
   { v: 'edge', label: 'Plus edge cases' },
   { v: 'negative', label: 'Plus negative & permission cases' },
+  { v: 'all', label: 'All types (+ UI, security, accessibility, performance)' },
 ];
-const COUNTS = [3, 5, 8, 10, 15, 20, 25];
+// 0 = as needed: the AI sizes the list from the rules in the requirement.
+const COUNTS = [0, 3, 5, 8, 10, 15, 20, 25];
 const ATTACH_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
 const MAX_FILES = 4;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -121,7 +124,7 @@ export function AiGeneratePanel({
 }: AiGeneratePanelProps) {
   const [stage, setStage] = useState<'form' | 'loading' | 'preview' | 'saving' | 'done'>('form');
   const [requirement, setRequirement] = useState('');
-  const [count, setCount] = useState(8);
+  const [count, setCount] = useState(0);
   const [depth, setDepth] = useState<Depth>('edge');
   const [style, setStyle] = useState<StepStyle>('actions');
   const [error, setError] = useState('');
@@ -183,6 +186,12 @@ export function AiGeneratePanel({
     if (requirement.trim().length < 15 && files.length === 0) {
       setError(
         'Describe the requirement in a bit more detail (at least a sentence), or attach a file.',
+      );
+      return;
+    }
+    if (requirement.trim().length > MAX_REQUIREMENT_CHARS) {
+      setError(
+        `The requirement is over ${MAX_REQUIREMENT_CHARS.toLocaleString()} characters. Generate one section or feature at a time.`,
       );
       return;
     }
@@ -522,8 +531,18 @@ export function AiGeneratePanel({
                   }
                   className={cn(inputCls, 'resize-y leading-relaxed')}
                 />
-                <p className="mt-1 text-[11px] text-text-3">
-                  {requirement.trim().length.toLocaleString()} / 8,000 characters
+                <p
+                  className={cn(
+                    'mt-1 text-[11px]',
+                    requirement.trim().length > MAX_REQUIREMENT_CHARS
+                      ? 'font-medium text-danger'
+                      : 'text-text-3',
+                  )}
+                >
+                  {requirement.trim().length.toLocaleString()} /{' '}
+                  {MAX_REQUIREMENT_CHARS.toLocaleString()} characters
+                  {requirement.trim().length > MAX_REQUIREMENT_CHARS &&
+                    ' — too long for one generation. Paste one section or feature at a time.'}
                 </p>
               </div>
               <div>
@@ -604,7 +623,7 @@ export function AiGeneratePanel({
                   >
                     {COUNTS.map(n => (
                       <option key={n} value={n}>
-                        {n} test cases
+                        {n === 0 ? 'As needed (based on requirement)' : `${n} test cases`}
                       </option>
                     ))}
                   </select>

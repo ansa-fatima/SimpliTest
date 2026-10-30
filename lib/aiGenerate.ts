@@ -3,6 +3,7 @@
 // settings, finding the existing cases to compare with, and turning a generated
 // case into a proposal with a duplicate verdict.
 
+import { MAX_REQUIREMENT_CHARS } from '@/lib/aiLimits';
 import { prisma } from '@/lib/db';
 import { caseWriteDenied } from '@/lib/caseAccess';
 import { listWorkspaceOptions } from '@/lib/options';
@@ -199,7 +200,10 @@ export async function prepareGeneration(
 
   if (requirement.length < 15 && attachments.length === 0)
     return fail('Describe the requirement in a bit more detail.');
-  if (requirement.length > 8000) return fail('The requirement is too long (8,000 characters max).');
+  if (requirement.length > MAX_REQUIREMENT_CHARS)
+    return fail(
+      `The requirement is too long (${MAX_REQUIREMENT_CHARS.toLocaleString('en-US')} characters max). Generate one section at a time.`,
+    );
   if (
     !body.parentType ||
     !['portal', 'module', 'suite'].includes(body.parentType) ||
@@ -220,9 +224,10 @@ export async function prepareGeneration(
       503,
     );
 
-  const count = Math.min(25, Math.max(1, Math.floor(body.count ?? 8)));
+  // 0 = "as needed": the model sizes the list from the requirement's own rules.
+  const count = body.count === 0 ? 0 : Math.min(25, Math.max(1, Math.floor(body.count ?? 0)));
   const depth: Depth =
-    body.depth && ['happy', 'edge', 'negative'].includes(body.depth) ? body.depth : 'edge';
+    body.depth && ['happy', 'edge', 'negative', 'all'].includes(body.depth) ? body.depth : 'edge';
   const style: StepStyle = body.style === 'gwt' ? 'gwt' : 'actions';
 
   const [priority, severity, type, projectRow] = await Promise.all([
