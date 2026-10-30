@@ -147,6 +147,8 @@ export function NewRunPage({
   const severities = useOptions(projectId, 'Severity');
   const types = useOptions(projectId, 'TestType');
   const [sections, setSections] = useState<Opt[]>([]);
+  // The portal > module > section tree, for the "Specific selection" folder pickers.
+  const [tree, setTree] = useState<TreePortal[]>([]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -162,8 +164,14 @@ export function NewRunPage({
     if (!projectId) return;
     api
       .get<TreePortal[]>(`/api/portals?projectId=${projectId}`)
-      .then(t => setSections(flattenSections(t)))
-      .catch(() => setSections([]));
+      .then(t => {
+        setSections(flattenSections(t));
+        setTree(t);
+      })
+      .catch(() => {
+        setSections([]);
+        setTree([]);
+      });
   }, [projectId]);
 
   // ── all ──
@@ -179,24 +187,45 @@ export function NewRunPage({
   // ── specific ──
   const [pickQuery, setPickQuery] = useState('');
   const [pickList, setPickList] = useState<ApiTestCase[]>([]);
+  const [pickTotal, setPickTotal] = useState(0);
+  // Narrow the list to one portal, module or section (any level can be left empty).
+  const [pickPortal, setPickPortal] = useState('');
+  const [pickModule, setPickModule] = useState('');
+  const [pickSuite, setPickSuite] = useState('');
+  const pickPortalNode = tree.find(p => p.id === pickPortal) ?? null;
+  const pickModuleNode = pickPortalNode?.modules.find(m => m.id === pickModule) ?? null;
+  const pickSuites: Opt[] = [];
+  const walkSuites = (ss: TreeSuite[], prefix: string) => {
+    for (const x of ss) {
+      pickSuites.push({ key: x.id, name: prefix ? `${prefix} › ${x.name}` : x.name });
+      walkSuites(x.children ?? [], prefix ? `${prefix} › ${x.name}` : x.name);
+    }
+  };
+  if (pickModuleNode) walkSuites(pickModuleNode.suites, '');
   const [picked, setPicked] = useState<Map<string, ApiTestCase>>(new Map());
   useEffect(() => {
     if (mode !== 'specific' || !projectId) return;
     const t = setTimeout(() => {
-      const p = new URLSearchParams({
-        projectId,
-        pageSize: '100',
-        sort: 'caseNum',
-        order: 'asc',
-      });
+      const p = new URLSearchParams({ pageSize: '1000', sort: 'caseNum', order: 'asc' });
+      // The deepest folder chosen wins; the API includes everything underneath it.
+      if (pickSuite) p.set('suiteId', pickSuite);
+      else if (pickModule) p.set('moduleId', pickModule);
+      else if (pickPortal) p.set('portalId', pickPortal);
+      else p.set('projectId', projectId);
       if (pickQuery.trim()) p.set('search', pickQuery.trim());
       api
-        .get<{ items: ApiTestCase[] }>(`/api/test-cases?${p.toString()}`)
-        .then(d => setPickList(d.items))
-        .catch(() => setPickList([]));
+        .get<{ items: ApiTestCase[]; total: number }>(`/api/test-cases?${p.toString()}`)
+        .then(d => {
+          setPickList(d.items);
+          setPickTotal(d.total);
+        })
+        .catch(() => {
+          setPickList([]);
+          setPickTotal(0);
+        });
     }, 200);
     return () => clearTimeout(t);
-  }, [mode, projectId, pickQuery]);
+  }, [mode, projectId, pickQuery, pickPortal, pickModule, pickSuite]);
 
   // ── rules ──
   const [rules, setRules] = useState<Rule[]>([{ id: 1, field: 'priority', values: [] }]);
@@ -644,13 +673,82 @@ export function NewRunPage({
                     </button>
                   </div>
                 </div>
-                <div style={{ padding: '12px 16px 0' }}>
+                <div
+                  style={{
+                    padding: '12px 16px 0',
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+                    gap: 8,
+                  }}
+                >
+                  <select
+                    className="select"
+                    aria-label="Portal"
+                    value={pickPortal}
+                    onChange={e => {
+                      setPickPortal(e.target.value);
+                      setPickModule('');
+                      setPickSuite('');
+                    }}
+                  >
+                    <option value="">All portals</option>
+                    {tree.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="select"
+                    aria-label="Module"
+                    value={pickModule}
+                    disabled={!pickPortalNode}
+                    onChange={e => {
+                      setPickModule(e.target.value);
+                      setPickSuite('');
+                    }}
+                  >
+                    <option value="">
+                      {pickPortalNode ? 'All modules' : 'Pick a portal first'}
+                    </option>
+                    {pickPortalNode?.modules.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="select"
+                    aria-label="Feature"
+                    value={pickSuite}
+                    disabled={!pickModuleNode}
+                    onChange={e => setPickSuite(e.target.value)}
+                  >
+                    <option value="">
+                      {pickModuleNode ? 'All features' : 'Pick a module first'}
+                    </option>
+                    {pickSuites.map(x => (
+                      <option key={x.key} value={x.key}>
+                        {x.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ padding: '10px 16px 0' }}>
                   <input
                     className="input"
                     value={pickQuery}
                     onChange={e => setPickQuery(e.target.value)}
                     placeholder="Search cases by title…"
                   />
+                </div>
+                <div style={{ padding: '8px 16px 0', fontSize: 11.5, color: 'var(--t-3)' }}>
+                  {pickTotal > pickList.length
+                    ? `Showing the first ${pickList.length.toLocaleString()} of ${pickTotal.toLocaleString()} cases — narrow by folder or search to see the rest.`
+                    : `${pickTotal.toLocaleString()} ${pickTotal === 1 ? 'case' : 'cases'} here`}
+                  {pickPortal || pickModule || pickSuite
+                    ? ' · Select shown picks all of them.'
+                    : ''}
                 </div>
                 <div style={{ maxHeight: 280, overflow: 'auto', padding: '8px 0' }}>
                   {pickList.length === 0 ? (
