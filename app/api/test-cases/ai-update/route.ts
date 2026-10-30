@@ -4,7 +4,8 @@ import { requireUser } from '@/lib/auth';
 import { ok, bad, parseJson, serverError } from '@/lib/api';
 import { AiError, reviseCase } from '@/lib/ai';
 import { resolveAiConfig } from '@/lib/aiConfig';
-import { resolveParent } from '@/lib/aiGenerate';
+import { parseAttachments, resolveParent } from '@/lib/aiGenerate';
+import { MAX_REQUIREMENT_CHARS } from '@/lib/aiLimits';
 import { caseWriteDenied } from '@/lib/caseAccess';
 import { normalizeRevision, RevisionError, type CaseSnapshot } from '@/lib/caseRevision';
 import { listWorkspaceOptions } from '@/lib/options';
@@ -14,6 +15,9 @@ export const dynamic = 'force-dynamic';
 interface Body {
   caseId?: string;
   instruction?: string;
+  /** Optional reference document (requirement / spec) as text, and/or PDFs / images. */
+  reference?: string;
+  attachments?: { name?: string; mediaType?: string; data?: string }[];
 }
 
 // POST /api/test-cases/ai-update
@@ -28,7 +32,19 @@ export async function POST(req: Request) {
 
     const body = await parseJson<Body>(req);
     if (!body) return bad('Invalid request body');
-    const instruction = body.instruction?.trim() ?? '';
+    const reference = body.reference?.trim() ?? '';
+    if (reference.length > MAX_REQUIREMENT_CHARS)
+      return bad(
+        `The reference document is too long (${MAX_REQUIREMENT_CHARS.toLocaleString('en-US')} characters max).`,
+      );
+    const parsed = parseAttachments(body.attachments);
+    if ('error' in parsed) return bad(parsed.error);
+    const attachments = parsed.attachments;
+    const hasReference = reference.length > 0 || attachments.length > 0;
+    // With a reference document the instruction is optional: the document is the brief.
+    const instruction =
+      body.instruction?.trim() ||
+      (hasReference ? 'Align this test case with the reference document.' : '');
     if (instruction.length < 5) return bad('Tell the AI what to change (a few words at least).');
     if (instruction.length > 2000)
       return bad('The instruction is too long (2,000 characters max).');
@@ -80,7 +96,17 @@ export async function POST(req: Request) {
       labels: row.labels,
     };
 
-    const raw = await reviseCase({ instruction, parentPath: parent.path, current, options }, cfg);
+    const raw = await reviseCase(
+      {
+        instruction,
+        parentPath: parent.path,
+        current,
+        options,
+        ...(reference ? { reference } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+      },
+      cfg,
+    );
     const revision = normalizeRevision(raw, current, options);
 
     return ok({
