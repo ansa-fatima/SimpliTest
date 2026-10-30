@@ -159,6 +159,7 @@ export interface TestPlan {
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  projectId: string;
   createdById: string | null;
   createdByName: string | null;
 }

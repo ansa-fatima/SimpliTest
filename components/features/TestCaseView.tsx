@@ -1,6 +1,7 @@
 'use client';
 
 import { caseCode } from '@/components/features/tc-helpers';
+import { caseUrl } from '@/lib/caseLink';
 import { useEffect, useState } from 'react';
 import { TestCase, RunResult } from '@/types';
 import { api } from '@/lib/client';
@@ -108,6 +109,7 @@ export function TestCaseView({
   }, [tc.apiId]);
 
   const [showCopyTo, setShowCopyTo] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [showAi, setShowAi] = useState(false);
   const [copying, setCopying] = useState(false);
 
@@ -183,6 +185,24 @@ export function TestCaseView({
             </div>
 
             <div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0 sm:flex-nowrap">
+              {tc.caseNum ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(caseUrl(tc.caseNum!));
+                      setLinkCopied(true);
+                      setTimeout(() => setLinkCopied(false), 2000);
+                    } catch {
+                      window.prompt('Copy this link:', caseUrl(tc.caseNum!));
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2"
+                >
+                  <i className={`ti ${linkCopied ? 'ti-check' : 'ti-link'} text-[15px]`} />
+                  {linkCopied ? 'Link copied' : 'Copy link'}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setShowCopyTo(true)}

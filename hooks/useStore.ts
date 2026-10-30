@@ -342,7 +342,12 @@ export function useStore() {
         const activeId =
           (stored && projects.some(p => p.id === stored) ? stored : projects[0]?.id) ?? null;
         if (activeId) await reloadPortals(activeId);
-        setState(s => ({ ...s, user, authChecked: true, page: 'dashboard' }));
+        setState(s => ({
+          ...s,
+          user,
+          authChecked: true,
+          page: s.page === 'login' ? 'dashboard' : s.page,
+        }));
       } catch {
         setState(s => ({ ...s, authChecked: true, page: 'login' }));
       }

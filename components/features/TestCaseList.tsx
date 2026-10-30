@@ -11,6 +11,13 @@ import { TestCaseForm, TestCaseFormValues } from '@/components/features/TestCase
 import { useCaseOptions, CaseOption } from '@/components/features/CaseClassification';
 import { Ico } from '@/components/features/tc-icons';
 import {
+  caseHref,
+  folderHref,
+  folderUrl,
+  clearInitialFolder,
+  peekInitialFolder,
+} from '@/lib/caseLink';
+import {
   avatarGradient,
   caseCode,
   optionPillClass,
@@ -288,6 +295,44 @@ export function TestCaseList({
     return null;
   }, [tree, elevated, curMod, curSuite]);
 
+  // A shared folder link (/?folder=s:<id>) is read once, on mount, and applied as
+  // soon as the tree is here.
+  const pendingFolder = useRef(peekInitialFolder());
+  useEffect(() => {
+    const f = pendingFolder.current;
+    if (!f || tree.length === 0) return;
+    pendingFolder.current = null;
+    clearInitialFolder();
+    const findSuite = (suites: ApiSuite[]): ApiSuite | null => {
+      for (const sx of suites) {
+        if (sx.id === f.id) return sx;
+        const inChild = findSuite(sx.children);
+        if (inChild) return inChild;
+      }
+      return null;
+    };
+    for (const p of tree) {
+      if (f.kind === 'portal' && p.id === f.id) {
+        setElevated({ kind: 'portal', portalId: p.id });
+        return;
+      }
+      for (const m of p.modules) {
+        if (f.kind === 'module' && m.id === f.id) {
+          setElevated({ kind: 'module', portalId: p.id, moduleId: m.id });
+          return;
+        }
+        const sx = f.kind === 'suite' ? findSuite(m.suites) : null;
+        if (sx) {
+          setElevated(null);
+          onNavigate(m.name, sx.name);
+          return;
+        }
+      }
+    }
+    alert('That folder was not found in this workspace.');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tree]);
+
   // Convenience accessors — null when the active selection doesn't include that level.
   const activeSuite = activeNode?.kind === 'suite' ? activeNode.suite : null;
   const activeModule =
@@ -363,6 +408,33 @@ export function TestCaseList({
   }, [openFilter]);
 
   // Reset to page 1 whenever filters or active selection change.
+  const activeFolderId = activeNode
+    ? activeNode.kind === 'suite'
+      ? activeNode.suite.id
+      : activeNode.kind === 'module'
+        ? activeNode.module.id
+        : activeNode.portal.id
+    : null;
+  const activeFolderKind = activeNode?.kind ?? null;
+  const [folderLinkCopied, setFolderLinkCopied] = useState(false);
+  // The address bar always names the open folder, so its URL can be copied and sent.
+  useEffect(() => {
+    if (!activeFolderId || !activeFolderKind || pendingFolder.current) return;
+    window.history.replaceState(
+      window.history.state,
+      '',
+      folderHref(activeFolderKind, activeFolderId),
+    );
+  }, [activeFolderId, activeFolderKind]);
+  useEffect(
+    () => () => {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.has('folder') && !sp.has('case'))
+        window.history.replaceState(window.history.state, '', window.location.pathname);
+    },
+    [],
+  );
+
   const activeSelectionKey =
     activeNode?.kind === 'suite'
       ? activeNode.suite.id
@@ -1626,6 +1698,29 @@ export function TestCaseList({
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm"
+                        title="Copy a link to this folder"
+                        onClick={async () => {
+                          const id =
+                            activeNode.kind === 'suite'
+                              ? activeNode.suite.id
+                              : activeNode.kind === 'module'
+                                ? activeNode.module.id
+                                : activeNode.portal.id;
+                          const url = folderUrl(activeNode.kind, id);
+                          try {
+                            await navigator.clipboard.writeText(url);
+                            setFolderLinkCopied(true);
+                            setTimeout(() => setFolderLinkCopied(false), 2000);
+                          } catch {
+                            window.prompt('Copy this link:', url);
+                          }
+                        }}
+                      >
+                        {folderLinkCopied ? 'Link copied' : 'Copy link'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
                         onClick={() => setQuickAdd('')}
                         title="Type a title and press Enter to add a draft case"
                       >
@@ -1732,7 +1827,20 @@ export function TestCaseList({
                             >
                               <Ico name="check" />
                             </button>
-                            <span className="cid">{caseCode(tc.caseNum)}</span>
+                            <a
+                              className="cid cid-link"
+                              href={caseHref(tc.caseNum)}
+                              title={`${caseCode(tc.caseNum)} — right-click to copy the link`}
+                              onClick={e => {
+                                // Ctrl / Cmd / middle click opens the link in a new tab; a plain
+                                // click is the row's normal "open this case".
+                                if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0)
+                                  e.stopPropagation();
+                                else e.preventDefault();
+                              }}
+                            >
+                              {caseCode(tc.caseNum)}
+                            </a>
                             <span className="ctitle">
                               {tc.title}
                               {tc.status === 'Draft' && <span className="draft-tag">· draft</span>}
