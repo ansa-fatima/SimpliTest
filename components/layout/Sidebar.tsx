@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef, useState } from 'react';
 import { Page } from '@/types';
 import { cn } from '@/lib/utils';
 import { SIco, SIconName } from '@/components/layout/sts-icons';
@@ -55,11 +56,29 @@ export function Sidebar({
   onShowMembers,
   onShowSettings,
 }: SidebarProps) {
+  // The rail opens while the pointer is over it. Choosing an item closes it straight away
+  // and keeps it closed until the pointer has left and come back.
+  const [open, setOpen] = useState(false);
+  const picked = useRef(false);
   return (
     <div className="stv3 stv3-host">
       <aside className="sidebar">
         {/* Hovering (or tabbing into) the rail slides it open over the page, with labels. */}
-        <div className="sidebar-panel">
+        <div
+          className={cn('sidebar-panel', open && 'open')}
+          onMouseEnter={() => {
+            if (!picked.current) setOpen(true);
+          }}
+          onMouseLeave={() => {
+            picked.current = false;
+            setOpen(false);
+          }}
+          onClickCapture={e => {
+            if (!(e.target as HTMLElement).closest('.side-btn')) return;
+            picked.current = true;
+            setOpen(false);
+          }}
+        >
           <SideBtn
             active={page === 'projects'}
             onClick={onShowProjects}
@@ -138,7 +157,12 @@ function SideBtn({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={e => {
+        onClick();
+        // A mouse click leaves the button focused; drop it so the rail closes as soon as the
+        // pointer leaves. (Keyboard activation, detail === 0, keeps its focus.)
+        if (e.detail > 0) e.currentTarget.blur();
+      }}
       title={label}
       aria-label={label}
       className={cn('side-btn', active && 'active')}
