@@ -17,6 +17,7 @@ export function planDto(p: PlanWithCreator): TestPlan {
     completedAt: p.completedAt?.toISOString() ?? null,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
+    projectId: p.projectId,
     createdById: p.createdById,
     createdByName: p.createdBy ? p.createdBy.name || p.createdBy.username : null,
   };

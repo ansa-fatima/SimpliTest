@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { TestCycle } from '@/types';
+import { ApiTestCase, TestCycle } from '@/types';
 import { useStore } from '@/hooks/useStore';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Topbar } from '@/components/layout/Topbar';
@@ -28,6 +28,9 @@ import { Profile } from '@/components/features/Profile';
 import { ManualCycleSummaryModal } from '@/components/features/ManualCycleSummaryModal';
 import { UpdateQuickLogModal } from '@/components/features/QuickLogModal';
 import { Toast } from '@/components/ui/Toast';
+import { api } from '@/lib/client';
+import { parseCaseRef, parseFolderRef } from '@/lib/caseLink';
+import { parseNavParams, queryForPage, type NavParams } from '@/lib/navLink';
 
 export default function Home() {
   // The summary modal's own "Edit" button opens this in place, instead of
@@ -82,6 +85,7 @@ export default function Home() {
     deleteCycle,
     submitResult,
     switchProject,
+    showToast,
     createProject,
     deleteProject,
     switchPortal,
@@ -134,6 +138,137 @@ export default function Home() {
     previousPage,
   } = state;
 
+  // A shared link (/?case=10504) names a case. Read it once on load, before anything
+  // rewrites the address bar; it is opened as soon as the user is signed in.
+  const pendingCase = useRef<string | null>(
+    typeof window === 'undefined'
+      ? null
+      : parseCaseRef(new URLSearchParams(window.location.search).get('case')),
+  );
+  useEffect(() => {
+    const ref = pendingCase.current;
+    if (!ref || !user || !authChecked || projects.length === 0) return;
+    pendingCase.current = null;
+    void (async () => {
+      try {
+        const c = await api.get<
+          ApiTestCase & {
+            portal?: { projectId: string } | null;
+            module?: { portal: { projectId: string } } | null;
+            suite?: { module: { portal: { projectId: string } } } | null;
+          }
+        >(`/api/test-cases/${ref}`);
+        const pid =
+          c.suite?.module.portal.projectId ?? c.module?.portal.projectId ?? c.portal?.projectId;
+        if (pid && pid !== currentProjectId) await switchProject(pid);
+        viewApiCase(c, [c]);
+      } catch {
+        showToast(`Test case ${ref} was not found, or you do not have access to it.`, 'error');
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authChecked, projects.length]);
+
+  // A shared folder link (/?folder=s:<id>): switch to its workspace if needed, then show
+  // the repository -- which reads the folder from the address bar and selects it.
+  const pendingFolder = useRef<string | null>(
+    typeof window === 'undefined'
+      ? null
+      : (new URLSearchParams(window.location.search).get('folder') ?? null),
+  );
+  useEffect(() => {
+    const raw = pendingFolder.current;
+    if (!raw || !user || !authChecked || projects.length === 0) return;
+    pendingFolder.current = null;
+    if (!parseFolderRef(raw)) {
+      showToast('That folder link is not valid.', 'error');
+      return;
+    }
+    void (async () => {
+      try {
+        const { projectId } = await api.get<{ projectId: string }>(
+          `/api/folder-link?ref=${encodeURIComponent(raw)}`,
+        );
+        if (projectId !== currentProjectId) await switchProject(projectId);
+        showTestCases();
+      } catch (e) {
+        showToast((e as Error).message, 'error');
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authChecked, projects.length]);
+
+  // Any other screen link (/?view=runs, /?plan=<id>, /?cycle=<id>, ...). Read once on load.
+  const pendingNav = useRef<NavParams | null>(
+    typeof window === 'undefined' ? null : parseNavParams(window.location.search),
+  );
+  // An action that has to wait until the workspace it belongs to is the current one.
+  const afterSwitch = useRef<{ projectId: string; nav: NavParams } | null>(null);
+
+  const runNav = (n: NavParams) => {
+    if (n.cycle) return openCycle(n.cycle);
+    if (n.overview) return openCycleOverview(n.overview);
+    if (n.plan) return openPlan(n.plan);
+    switch (n.view) {
+      case 'cases':
+        return showTestCases();
+      case 'runs':
+        return showTestRunsBoard();
+      case 'quicklogs':
+        return showQuickLogs();
+      case 'plans':
+        return showTestPlans();
+      case 'reports':
+        return showReports(n.tab);
+      case 'team':
+        return showMembers();
+      case 'roles':
+        return showRoles();
+      case 'settings':
+        return showSettings();
+      case 'profile':
+        return showProfile();
+      case 'todo':
+        return showTodo();
+      case 'projects':
+        return showProjects();
+    }
+  };
+
+  useEffect(() => {
+    const n = pendingNav.current;
+    if (!n || !user || !authChecked || projects.length === 0) return;
+    pendingNav.current = null;
+    void (async () => {
+      try {
+        // Runs and plans belong to one workspace: find it, switch if it is not the current one.
+        let projectId: string | undefined;
+        const id = n.cycle ?? n.overview;
+        if (id) projectId = (await api.get<{ projectId?: string }>(`/api/cycles/${id}`)).projectId;
+        else if (n.plan)
+          projectId = (await api.get<{ plan: { projectId?: string } }>(`/api/plans/${n.plan}`)).plan
+            .projectId;
+        if (projectId && projectId !== currentProjectId) {
+          afterSwitch.current = { projectId, nav: n };
+          await switchProject(projectId);
+          return;
+        }
+        runNav(n);
+      } catch (e) {
+        showToast((e as Error).message, 'error');
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authChecked, projects.length]);
+
+  useEffect(() => {
+    const a = afterSwitch.current;
+    if (!a || a.projectId !== currentProjectId) return;
+    afterSwitch.current = null;
+    runNav(a.nav);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentProjectId]);
+
   // Browser history: every in-app page change pushes a history entry, and the
   // browser Back button walks back to the previous section (same rule as the
   // in-app Back buttons) instead of leaving the app.
@@ -170,6 +305,32 @@ export default function Home() {
   };
 
   const newRunPlan = newRunPlanId ? (plans.find(p => p.id === newRunPlanId) ?? null) : null;
+
+  // The address bar always names the open screen, so its URL can be copied, bookmarked or
+  // sent. The repository adds its own folder to the address (see TestCaseList).
+  const openCaseNum = page === 'view' ? currentTC?.caseNum : undefined;
+  const openCycleId = currentCycle?.id;
+  const openOverviewId = cycleOverview?.cycle.id;
+  useEffect(() => {
+    if (typeof window === 'undefined' || page === 'login') return;
+    const sp = new URLSearchParams(window.location.search);
+    // The deep link is still being opened: leave the address alone until it has been.
+    if (pendingCase.current || pendingFolder.current || pendingNav.current || afterSwitch.current)
+      return;
+    // A run's id is not known until it has loaded; keep the address as it is meanwhile.
+    if ((page === 'cycleOverview' && !openOverviewId) || (page === 'cycle' && !openCycleId)) return;
+    // The repository owns `folder`; only fall back to ?view=cases when none is selected.
+    if (page === 'list' && sp.has('folder')) return;
+    const query = queryForPage(page, {
+      caseNum: openCaseNum,
+      cycleId: openCycleId,
+      overviewId: openOverviewId,
+      planId: currentPlanId ?? undefined,
+      reportsTab: reportsInitialTab,
+    });
+    if (window.location.search !== query)
+      window.history.replaceState(window.history.state, '', window.location.pathname + query);
+  }, [page, openCaseNum, openCycleId, openOverviewId, currentPlanId, reportsInitialTab]);
 
   // Show a tiny loading state while we check the session on mount.
   if (!authChecked) {

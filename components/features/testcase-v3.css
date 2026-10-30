@@ -1537,3 +1537,12 @@
     white-space: nowrap;
   }
 }
+
+/* Test case code in the list is a real link (copy / open in a new tab). */
+.stv3 a.cid-link {
+  text-decoration: none;
+}
+.stv3 a.cid-link:hover {
+  text-decoration: underline;
+  color: var(--brand-700);
+}

@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { Prisma, Priority, Severity, TestType, CaseStatus } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
+import { parseCaseRef } from '@/lib/caseLink';
 import { projectIdForCaseParent, resolveCaseOption } from '@/lib/testCaseOptions';
 
 interface Ctx {
@@ -65,11 +66,13 @@ const caseInclude = {
   customType: { select: { name: true, color: true } },
 } as const;
 
-// GET /api/test-cases/:id
+// GET /api/test-cases/:id -- :id is the database id, or the case number ("10504" /
+// "C-10504") so a shared link can name a case by the number people see.
 export async function GET(_req: Request, { params }: Ctx) {
   try {
+    const num = parseCaseRef(params.id);
     const tc = await prisma.testCase.findUnique({
-      where: { id: params.id },
+      where: num ? { caseNum: Number(num) } : { id: params.id },
       include: caseInclude,
     });
     if (!tc) return notFound('Test case not found');
