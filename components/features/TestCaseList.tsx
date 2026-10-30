@@ -6,6 +6,7 @@ import { api } from '@/lib/client';
 import { exportApiTestCases } from '@/lib/export';
 import { ImportCsvModal } from '@/components/features/ImportCsvModal';
 import { AiGeneratePanel } from '@/components/features/AiGeneratePanel';
+import { AiImproveFolderPanel } from '@/components/features/AiImproveFolderPanel';
 import { TestCaseForm, TestCaseFormValues } from '@/components/features/TestCaseForm';
 import { useCaseOptions, CaseOption } from '@/components/features/CaseClassification';
 import { Ico } from '@/components/features/tc-icons';
@@ -468,6 +469,7 @@ export function TestCaseList({
   const [showImport, setShowImport] = useState(false);
   const [showNewCase, setShowNewCase] = useState(false);
   const [showAi, setShowAi] = useState(false);
+  const [showImproveAll, setShowImproveAll] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   // ─── Actions ───────────────────────────────────────────────
@@ -1109,6 +1111,22 @@ export function TestCaseList({
                   <path d="M12 2L14.5 9.5 22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z" />
                 </svg>
                 Generate with AI
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowImproveAll(true)}
+                disabled={!projectId || !activeNode || total === 0}
+                title={
+                  activeNode
+                    ? 'Improve every test case in this folder with AI, optionally using a requirement document'
+                    : 'Pick a portal, module or suite first'
+                }
+              >
+                <svg viewBox="0 0 24 24">
+                  <path d="M12 2L14.5 9.5 22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z" />
+                </svg>
+                Improve all with AI
               </button>
               <button
                 type="button"
@@ -1821,6 +1839,30 @@ export function TestCaseList({
           onChanged={() => {
             void fetchCases();
             void reloadTree();
+          }}
+        />
+      )}
+      {showImproveAll && activeNode && (
+        <AiImproveFolderPanel
+          projectId={projectId ?? ''}
+          parentType={activeNode.kind}
+          parentId={
+            activeNode.kind === 'suite'
+              ? activeNode.suite.id
+              : activeNode.kind === 'module'
+                ? activeNode.module.id
+                : activeNode.portal.id
+          }
+          parentPath={[
+            activeNode.portal.name,
+            activeNode.kind !== 'portal' ? activeNode.module.name : null,
+            activeNode.kind === 'suite' ? activeNode.suite.name : null,
+          ]
+            .filter(Boolean)
+            .join(' › ')}
+          onClose={() => setShowImproveAll(false)}
+          onChanged={() => {
+            void fetchCases();
           }}
         />
       )}

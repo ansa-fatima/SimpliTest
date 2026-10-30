@@ -164,6 +164,43 @@ async function existingCasesUnder(type: ParentType, id: string): Promise<Existin
 }
 
 /** Validates the request and gathers everything generation needs. */
+/**
+ * Validates attached PDFs / images (base64) from a request body. Shared by Generate
+ * with AI and Improve with AI, so the same limits and checks apply to both.
+ */
+export function parseAttachments(
+  raw: unknown,
+): { attachments: AiAttachment[] } | { error: string } {
+  const attachments: AiAttachment[] = [];
+  for (const a of Array.isArray(raw) ? (raw as GenerateBody['attachments'] & object[]) : []) {
+    if (
+      !a ||
+      typeof a.data !== 'string' ||
+      !(ATTACHMENT_TYPES as readonly string[]).includes(a.mediaType ?? '')
+    )
+      return { error: 'Only PDF and PNG / JPG / WEBP / GIF files can be attached.' };
+    // Size first (cheap), then the characters -- a negated-class search, since a
+    // greedy regex over a multi-megabyte string overflows the stack.
+    if (Math.floor((a.data.length * 3) / 4) > MAX_ATTACHMENT_BYTES)
+      return { error: `${a.name ?? 'A file'} is too large (5 MB max per file).` };
+    const pad = a.data.indexOf('=');
+    if (
+      a.data.length === 0 ||
+      /[^A-Za-z0-9+/=]/.test(a.data) ||
+      (pad !== -1 && pad < a.data.length - 2)
+    )
+      return { error: 'An attached file could not be read.' };
+    attachments.push({
+      name: (a.name ?? 'file').slice(0, 80),
+      mediaType: a.mediaType as string,
+      data: a.data,
+    });
+  }
+  if (attachments.length > MAX_ATTACHMENTS)
+    return { error: `Attach at most ${MAX_ATTACHMENTS} files.` };
+  return { attachments };
+}
+
 export async function prepareGeneration(
   body: GenerateBody,
   user: { id: string; role: string },
@@ -171,32 +208,9 @@ export async function prepareGeneration(
   const requirement = body.requirement?.trim() ?? '';
 
   // Attached files (PDF / screenshots) -- validated before anything is sent on.
-  const attachments: AiAttachment[] = [];
-  for (const a of Array.isArray(body.attachments) ? body.attachments : []) {
-    if (
-      !a ||
-      typeof a.data !== 'string' ||
-      !(ATTACHMENT_TYPES as readonly string[]).includes(a.mediaType ?? '')
-    )
-      return fail('Only PDF and PNG / JPG / WEBP / GIF files can be attached.');
-    // Size first (cheap), then the characters -- a negated-class search, since a
-    // greedy regex over a multi-megabyte string overflows the stack.
-    if (Math.floor((a.data.length * 3) / 4) > MAX_ATTACHMENT_BYTES)
-      return fail(`${a.name ?? 'A file'} is too large (5 MB max per file).`);
-    const pad = a.data.indexOf('=');
-    if (
-      a.data.length === 0 ||
-      /[^A-Za-z0-9+/=]/.test(a.data) ||
-      (pad !== -1 && pad < a.data.length - 2)
-    )
-      return fail('An attached file could not be read.');
-    attachments.push({
-      name: (a.name ?? 'file').slice(0, 80),
-      mediaType: a.mediaType as string,
-      data: a.data,
-    });
-  }
-  if (attachments.length > MAX_ATTACHMENTS) return fail(`Attach at most ${MAX_ATTACHMENTS} files.`);
+  const parsed = parseAttachments(body.attachments);
+  if ('error' in parsed) return fail(parsed.error);
+  const attachments = parsed.attachments;
 
   if (requirement.length < 15 && attachments.length === 0)
     return fail('Describe the requirement in a bit more detail.');

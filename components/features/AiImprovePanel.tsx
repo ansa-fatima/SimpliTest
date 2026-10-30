@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 // each with a checkbox. Nothing is written until the user applies, and the
 // change can be undone straight afterwards.
 
-type Field =
+export type Field =
   | 'title'
   | 'desc'
   | 'preconditions'
@@ -20,7 +20,7 @@ type Field =
   | 'type'
   | 'labels';
 
-interface Snapshot {
+export interface Snapshot {
   title: string;
   desc: string;
   preconditions: string;
@@ -32,7 +32,7 @@ interface Snapshot {
   labels: string[];
 }
 
-interface Suggestion {
+export interface Suggestion {
   caseId: string;
   current: Snapshot;
   proposed: Snapshot;
@@ -58,7 +58,7 @@ export interface AiImprovePanelProps {
   onChanged: () => void;
 }
 
-const PRESETS = [
+export const PRESETS = [
   'Add negative and edge-case steps',
   'Make the steps clearer and more specific',
   'Fix wording, grammar and typos',
@@ -66,7 +66,7 @@ const PRESETS = [
   'Shorten it without losing any check',
 ];
 
-const FIELD_LABEL: Record<Field, string> = {
+export const FIELD_LABEL: Record<Field, string> = {
   title: 'Title',
   desc: 'Description',
   preconditions: 'Preconditions',
@@ -78,7 +78,21 @@ const FIELD_LABEL: Record<Field, string> = {
   labels: 'Labels',
 };
 
-const labelCls = 'mb-1 block text-[11px] font-semibold uppercase tracking-wide text-text-2';
+const NL = String.fromCharCode(10);
+
+/** Quick ideas are combinable: each click adds the idea as its own line, a second click removes it. */
+export const hasPreset = (text: string, p: string) => text.split(NL).some(l => l.trim() === p);
+export const togglePreset = (text: string, p: string): string => {
+  if (hasPreset(text, p))
+    return text
+      .split(NL)
+      .filter(l => l.trim() !== p)
+      .join(NL)
+      .trim();
+  return text.trim() ? text.trimEnd() + NL + p : p;
+};
+
+export const labelCls = 'mb-1 block text-[11px] font-semibold uppercase tracking-wide text-text-2';
 
 export function AiImprovePanel({ caseId, code, title, onClose, onChanged }: AiImprovePanelProps) {
   const [stage, setStage] = useState<'form' | 'loading' | 'review' | 'saving' | 'done'>('form');
@@ -214,15 +228,23 @@ export function AiImprovePanel({ caseId, code, title, onClose, onChanged }: AiIm
                 />
               </div>
               <div>
-                <span className={labelCls}>Quick ideas</span>
+                <span className={labelCls}>
+                  Quick ideas <span className="normal-case text-text-3">(pick several)</span>
+                </span>
                 <div className="flex flex-wrap gap-2">
                   {PRESETS.map(p => (
                     <button
                       key={p}
                       type="button"
                       disabled={stage === 'loading'}
-                      onClick={() => setInstruction(p)}
-                      className="rounded-full border border-border bg-surface px-3 py-1.5 text-left text-[12px] text-text-2 hover:bg-surface-2 hover:text-text disabled:opacity-50"
+                      aria-pressed={hasPreset(instruction, p)}
+                      onClick={() => setInstruction(togglePreset(instruction, p))}
+                      className={cn(
+                        'rounded-full border px-3 py-1.5 text-left text-[12px] disabled:opacity-50',
+                        hasPreset(instruction, p)
+                          ? 'border-primary bg-primary-light font-medium text-primary-text'
+                          : 'border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text',
+                      )}
                     >
                       {p}
                     </button>
@@ -397,7 +419,7 @@ export function AiImprovePanel({ caseId, code, title, onClose, onChanged }: AiIm
 
 // ── One changed field: current vs suggested, side by side (stacked on phones) ──
 
-function FieldDiff({
+export function FieldDiff({
   field,
   current,
   proposed,
@@ -531,7 +553,7 @@ function FieldValue({
   );
 }
 
-function SparkIcon() {
+export function SparkIcon() {
   return (
     <svg
       viewBox="0 0 24 24"

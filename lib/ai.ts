@@ -144,13 +144,8 @@ function userPrompt(req: GenerateRequest): string {
   return lines.join('\n');
 }
 
-// Attached files first, then the written prompt -- the model reads them as part
-// of the requirement.
-function userContent(req: GenerateRequest): string | unknown[] {
-  const text = userPrompt(req);
-  const files = req.attachments ?? [];
-  if (files.length === 0) return text;
-  const blocks: unknown[] = files.map(f =>
+function attachmentBlocks(files: AiAttachment[]): unknown[] {
+  return files.map(f =>
     f.mediaType === 'application/pdf'
       ? {
           type: 'document',
@@ -161,6 +156,15 @@ function userContent(req: GenerateRequest): string | unknown[] {
           source: { type: 'base64', media_type: f.mediaType, data: f.data },
         },
   );
+}
+
+// Attached files first, then the written prompt -- the model reads them as part
+// of the requirement.
+function userContent(req: GenerateRequest): string | unknown[] {
+  const text = userPrompt(req);
+  const files = req.attachments ?? [];
+  if (files.length === 0) return text;
+  const blocks: unknown[] = attachmentBlocks(files);
   blocks.push({
     type: 'text',
     text:
@@ -924,6 +928,10 @@ export interface ReviseRequest {
     labels: string[];
   };
   options: OptionNames;
+  /** Optional reference document (requirement / spec), as text. */
+  reference?: string;
+  /** Optional PDFs / images that are part of the reference document. */
+  attachments?: AiAttachment[];
 }
 
 /**
@@ -932,6 +940,7 @@ export interface ReviseRequest {
  * the model did not touch simply come back unchanged.
  */
 export async function reviseCase(req: ReviseRequest, cfg: AiConfig): Promise<unknown> {
+  const hasReference = !!req.reference?.trim() || (req.attachments?.length ?? 0) > 0;
   const system = [
     'You edit ONE manual test case in a test management tool.',
     "Apply ONLY the user's instruction, then return the COMPLETE case by calling the return_revision tool.",
@@ -940,19 +949,39 @@ export async function reviseCase(req: ReviseRequest, cfg: AiConfig): Promise<unk
     `priority must be one of: ${req.options.priority.join(', ')}. severity must be one of: ${req.options.severity.join(', ')}. type must be one of: ${req.options.type.join(', ')}. Keep the current value unless the instruction is about it.`,
     'summary: one short sentence saying what you changed. If the instruction does not apply to this case, return the case unchanged and set summary to "No change needed" plus a few words on why.',
     'Never add real personal data, passwords or secrets; use placeholders.',
+    ...(hasReference
+      ? [
+          'A REFERENCE DOCUMENT is provided (requirement / specification). Use it as the source of truth: fix steps or expected results that contradict it, add missing checks it clearly requires, and make wording consistent with its terms.',
+          'Only use what the document actually says. If the document does not cover this case, return it unchanged with summary "No change needed" and say the document does not cover it. Never invent behaviour.',
+        ]
+      : []),
   ].join('\n');
 
-  const user = [
+  const text = [
     `Location in the product: ${req.parentPath || '(not specified)'}`,
     '',
     'INSTRUCTION:',
     '"""',
     req.instruction.trim(),
     '"""',
+    ...(req.reference?.trim()
+      ? ['', 'REFERENCE DOCUMENT:', '"""', req.reference.trim(), '"""']
+      : []),
     '',
     'CURRENT CASE (json):',
     JSON.stringify(req.current, null, 2),
   ].join('\n');
+  const files = req.attachments ?? [];
+  const user: string | unknown[] =
+    files.length === 0
+      ? text
+      : [
+          ...attachmentBlocks(files),
+          {
+            type: 'text',
+            text: `The attached file${files.length > 1 ? 's' : ''} (${files.map(f => f.name).join(', ')}) ${files.length > 1 ? 'are' : 'is'} the reference document.\n\n${text}`,
+          },
+        ];
 
   const caseProps = {
     title: { type: 'string' },
