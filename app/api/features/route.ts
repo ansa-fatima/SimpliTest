@@ -1,3 +1,4 @@
+import { bodyOf, guardWrite, projectOfModule, str } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 
@@ -26,6 +27,10 @@ export async function GET(req: Request) {
 //   • With parentSuiteId    → new sub-folder under that suite (inherits moduleId).
 export async function POST(req: Request) {
   try {
+    const denied = await guardWrite('manageTestCases', async () =>
+      projectOfModule(str((await bodyOf(req))?.moduleId)),
+    );
+    if (denied) return denied;
     const body = await parseJson<{
       name?: string;
       moduleId?: string;

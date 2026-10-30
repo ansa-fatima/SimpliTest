@@ -1,3 +1,4 @@
+import { guardWrite, projectOfModule } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
@@ -22,6 +23,8 @@ export async function GET(_req: Request, { params }: Ctx) {
 // PATCH /api/modules/:id — rename
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('manageTestCases', () => projectOfModule(params.id));
+    if (denied) return denied;
     const body = await parseJson<{ name?: string }>(req);
     const name = body?.name?.trim();
     if (!name) return bad('name is required');
@@ -39,6 +42,8 @@ export async function PATCH(req: Request, { params }: Ctx) {
 // DELETE /api/modules/:id — cascades to features + test cases
 export async function DELETE(_req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('manageTestCases', () => projectOfModule(params.id));
+    if (denied) return denied;
     await prisma.module.delete({ where: { id: params.id } });
     return ok({ deleted: true });
   } catch (e) {

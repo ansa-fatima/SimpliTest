@@ -1,3 +1,4 @@
+import { guardWrite, projectOfSuite } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
@@ -25,6 +26,8 @@ export async function GET(_req: Request, { params }: Ctx) {
 // PATCH /api/features/:id — rename and/or move to a different module
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('manageTestCases', () => projectOfSuite(params.id));
+    if (denied) return denied;
     const body = await parseJson<{ name?: string; moduleId?: string }>(req);
     const data: { name?: string; moduleId?: string } = {};
     if (body?.name !== undefined) {
@@ -45,6 +48,8 @@ export async function PATCH(req: Request, { params }: Ctx) {
 // DELETE /api/features/:id — cascades to test cases
 export async function DELETE(_req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('manageTestCases', () => projectOfSuite(params.id));
+    if (denied) return denied;
     await prisma.suite.delete({ where: { id: params.id } });
     return ok({ deleted: true });
   } catch (e) {

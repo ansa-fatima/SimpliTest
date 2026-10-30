@@ -1,3 +1,4 @@
+import { bodyOf, guardWrite, str } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { Prisma } from '@prisma/client';
 import { ok, bad, parseJson, serverError } from '@/lib/api';
@@ -57,6 +58,10 @@ function parseSteps(steps: unknown): unknown {
 // Returns { created: number, skipped: { row: number, reason: string }[] }
 export async function POST(req: Request) {
   try {
+    const denied = await guardWrite('manageTestCases', async () =>
+      str((await bodyOf(req))?.projectId),
+    );
+    if (denied) return denied;
     const body = await parseJson<ImportBody>(req);
     if (!body || !Array.isArray(body.rows) || body.rows.length === 0) {
       return bad('rows array is required');

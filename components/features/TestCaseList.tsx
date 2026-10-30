@@ -1,5 +1,7 @@
 'use client';
 
+import { Gate } from '@/components/ui/Gate';
+import { useMyPermissions } from '@/hooks/useMyPermissions';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiTestCase, UserSummary } from '@/types';
 import { api } from '@/lib/client';
@@ -10,13 +12,7 @@ import { AiImproveFolderPanel } from '@/components/features/AiImproveFolderPanel
 import { TestCaseForm, TestCaseFormValues } from '@/components/features/TestCaseForm';
 import { useCaseOptions, CaseOption } from '@/components/features/CaseClassification';
 import { Ico } from '@/components/features/tc-icons';
-import {
-  caseHref,
-  folderHref,
-  folderUrl,
-  clearInitialFolder,
-  peekInitialFolder,
-} from '@/lib/caseLink';
+import { casePath, clearInitialFolder, folderPath, peekInitialFolder, slugify } from '@/lib/urls';
 import {
   avatarGradient,
   caseCode,
@@ -81,6 +77,8 @@ interface DragHandlers {
 
 interface TestCaseListProps {
   projectId: string | null;
+  /** The workspace's slug -- the first part of every address in the repository. */
+  projectSlug?: string | null;
   projectName: string;
   /** Selected suite key in the legacy "ModuleName:SuiteName" form (kept for back-compat). */
   currentKey: string;
@@ -112,6 +110,7 @@ const STATUS_OPTIONS = [
 
 export function TestCaseList({
   projectId,
+  projectSlug,
   projectName,
   currentKey,
   onNavigate,
@@ -123,6 +122,9 @@ export function TestCaseList({
   // custom ones added in Settings > Test Configuration (see lib/options.ts).
   // Drives the filter chips, the bulk-edit dropdown, and badge colors.
   const caseOptions = useCaseOptions(projectId ?? '');
+  // What this user's role allows (Teams > Roles). The server enforces it too.
+  const { can } = useMyPermissions(projectId);
+  const canEdit = can('manageTestCases');
 
   // ─── Tree (in-page hierarchy) ──────────────────────────────
   const [tree, setTree] = useState<ApiPortal[]>([]);
@@ -295,41 +297,61 @@ export function TestCaseList({
     return null;
   }, [tree, elevated, curMod, curSuite]);
 
-  // A shared folder link (/?folder=s:<id>) is read once, on mount, and applied as
-  // soon as the tree is here.
+  // An address that named a folder (/workspaces/<ws>/test-cases/<portal>/<module>/<section>,
+  // or an older ?folder=s:<id> link) is read once on load and applied when the tree is here.
   const pendingFolder = useRef(peekInitialFolder());
   useEffect(() => {
     const f = pendingFolder.current;
     if (!f || tree.length === 0) return;
     pendingFolder.current = null;
     clearInitialFolder();
-    const findSuite = (suites: ApiSuite[]): ApiSuite | null => {
-      for (const sx of suites) {
-        if (sx.id === f.id) return sx;
-        const inChild = findSuite(sx.children);
-        if (inChild) return inChild;
-      }
-      return null;
-    };
-    for (const p of tree) {
-      if (f.kind === 'portal' && p.id === f.id) {
-        setElevated({ kind: 'portal', portalId: p.id });
-        return;
-      }
-      for (const m of p.modules) {
-        if (f.kind === 'module' && m.id === f.id) {
-          setElevated({ kind: 'module', portalId: p.id, moduleId: m.id });
-          return;
+
+    // Older links name the folder by id.
+    if (f.folderRef) {
+      const kind = f.folderRef[0];
+      const id = f.folderRef.slice(2);
+      const findById = (suites: ApiSuite[]): ApiSuite | null => {
+        for (const sx of suites) {
+          if (sx.id === id) return sx;
+          const inChild = findById(sx.children);
+          if (inChild) return inChild;
         }
-        const sx = f.kind === 'suite' ? findSuite(m.suites) : null;
-        if (sx) {
-          setElevated(null);
-          onNavigate(m.name, sx.name);
-          return;
+        return null;
+      };
+      for (const p of tree) {
+        if (kind === 'p' && p.id === id) return setElevated({ kind: 'portal', portalId: p.id });
+        for (const m of p.modules) {
+          if (kind === 'm' && m.id === id)
+            return setElevated({ kind: 'module', portalId: p.id, moduleId: m.id });
+          const sx = kind === 's' ? findById(m.suites) : null;
+          if (sx) {
+            setElevated(null);
+            return onNavigate(m.name, sx.name);
+          }
         }
       }
+      alert('That folder was not found in this workspace.');
+      return;
     }
-    alert('That folder was not found in this workspace.');
+
+    // Names: portal / module / section / sub-section ..., each matched by its slug.
+    const [pSlug, mSlug, ...suiteSlugs] = f.folder ?? [];
+    const portal = tree.find(p => slugify(p.name) === pSlug);
+    if (!portal) return void alert('That folder was not found in this workspace.');
+    if (!mSlug) return setElevated({ kind: 'portal', portalId: portal.id });
+    const mod = portal.modules.find(m => slugify(m.name) === mSlug);
+    if (!mod) return void alert('That folder was not found in this workspace.');
+    if (suiteSlugs.length === 0)
+      return setElevated({ kind: 'module', portalId: portal.id, moduleId: mod.id });
+    let level: ApiSuite[] = mod.suites;
+    let found: ApiSuite | null = null;
+    for (const slug of suiteSlugs) {
+      found = level.find(x => slugify(x.name) === slug) ?? null;
+      if (!found) return void alert('That folder was not found in this workspace.');
+      level = found.children;
+    }
+    setElevated(null);
+    onNavigate(mod.name, found!.name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tree]);
 
@@ -408,32 +430,33 @@ export function TestCaseList({
   }, [openFilter]);
 
   // Reset to page 1 whenever filters or active selection change.
-  const activeFolderId = activeNode
-    ? activeNode.kind === 'suite'
-      ? activeNode.suite.id
-      : activeNode.kind === 'module'
-        ? activeNode.module.id
-        : activeNode.portal.id
-    : null;
-  const activeFolderKind = activeNode?.kind ?? null;
   const [folderLinkCopied, setFolderLinkCopied] = useState(false);
+  // Names from the portal down to the open folder (nested sections included).
+  const folderNames = useMemo(() => {
+    if (!activeNode) return [] as string[];
+    const names: string[] = [activeNode.portal.name];
+    if (activeNode.kind === 'portal') return names;
+    names.push(activeNode.module.name);
+    if (activeNode.kind === 'module') return names;
+    const chain: string[] = [];
+    let cursor: ApiSuite | undefined = activeNode.suite;
+    const flat: ApiSuite[] = [];
+    const collect = (ss: ApiSuite[]) => ss.forEach(x => (flat.push(x), collect(x.children)));
+    collect(activeNode.module.suites);
+    while (cursor) {
+      chain.unshift(cursor.name);
+      const parentId: string | null = cursor.parentId;
+      cursor = parentId ? flat.find(x => x.id === parentId) : undefined;
+    }
+    return [...names, ...chain];
+  }, [activeNode]);
+  const folderKey = folderNames.join('/');
   // The address bar always names the open folder, so its URL can be copied and sent.
   useEffect(() => {
-    if (!activeFolderId || !activeFolderKind || pendingFolder.current) return;
-    window.history.replaceState(
-      window.history.state,
-      '',
-      folderHref(activeFolderKind, activeFolderId),
-    );
-  }, [activeFolderId, activeFolderKind]);
-  useEffect(
-    () => () => {
-      const sp = new URLSearchParams(window.location.search);
-      if (sp.has('folder') && !sp.has('case'))
-        window.history.replaceState(window.history.state, '', window.location.pathname);
-    },
-    [],
-  );
+    if (!projectSlug || folderNames.length === 0 || pendingFolder.current) return;
+    window.history.replaceState(window.history.state, '', folderPath(projectSlug, folderNames));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folderKey, projectSlug]);
 
   const activeSelectionKey =
     activeNode?.kind === 'suite'
@@ -1172,51 +1195,57 @@ export function TestCaseList({
               </h1>
             </div>
             <div className="page-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setShowAi(true)}
-                disabled={!projectId || !activeNode}
-                title={
-                  activeNode
-                    ? 'Generate test cases from a requirement'
-                    : 'Pick a portal, module or suite first'
-                }
-              >
-                <svg viewBox="0 0 24 24">
-                  <path d="M12 2L14.5 9.5 22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z" />
-                </svg>
-                Generate with AI
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => {
-                  setImproveCases(null);
-                  setShowImproveAll(true);
-                }}
-                disabled={!projectId || !activeNode || total === 0}
-                title={
-                  activeNode
-                    ? 'Improve every test case in this folder with AI, optionally using a requirement document'
-                    : 'Pick a portal, module or suite first'
-                }
-              >
-                <svg viewBox="0 0 24 24">
-                  <path d="M12 2L14.5 9.5 22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z" />
-                </svg>
-                Improve all with AI
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setShowImport(true)}
-                disabled={!projectId}
-                title="Import test cases from a CSV file"
-              >
-                <Ico name="download" />
-                Import
-              </button>
+              <Gate allowed={canEdit}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowAi(true)}
+                  disabled={!projectId || !activeNode}
+                  title={
+                    activeNode
+                      ? 'Generate test cases from a requirement'
+                      : 'Pick a portal, module or suite first'
+                  }
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M12 2L14.5 9.5 22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z" />
+                  </svg>
+                  Generate with AI
+                </button>
+              </Gate>
+              <Gate allowed={canEdit}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setImproveCases(null);
+                    setShowImproveAll(true);
+                  }}
+                  disabled={!projectId || !activeNode || total === 0}
+                  title={
+                    activeNode
+                      ? 'Improve every test case in this folder with AI, optionally using a requirement document'
+                      : 'Pick a portal, module or suite first'
+                  }
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M12 2L14.5 9.5 22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z" />
+                  </svg>
+                  Improve all with AI
+                </button>
+              </Gate>
+              <Gate allowed={canEdit}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowImport(true)}
+                  disabled={!projectId}
+                  title="Import test cases from a CSV file"
+                >
+                  <Ico name="download" />
+                  Import
+                </button>
+              </Gate>
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -1231,18 +1260,20 @@ export function TestCaseList({
                 <Ico name="upload" />
                 Export
               </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={addSuiteUnderActive}
-                disabled={!activeModule}
-                title={
-                  activeModule ? `Add suite under ${activeModule.name}` : 'Pick a module first'
-                }
-              >
-                <Ico name="plus" />
-                New suite
-              </button>
+              <Gate allowed={canEdit}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={addSuiteUnderActive}
+                  disabled={!activeModule}
+                  title={
+                    activeModule ? `Add suite under ${activeModule.name}` : 'Pick a module first'
+                  }
+                >
+                  <Ico name="plus" />
+                  New suite
+                </button>
+              </Gate>
             </div>
           </div>
 
@@ -1267,55 +1298,65 @@ export function TestCaseList({
               </span>
             </div>
             <div className="tb-group">
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                disabled={selected.size === 0 || bulkBusy || !activeNode}
-                title="Improve the selected test cases with AI"
-                onClick={() => {
-                  setImproveCases(
-                    cases
-                      .filter(c => selected.has(c.id))
-                      .map(c => ({ id: c.id, caseNum: c.caseNum, title: c.title })),
-                  );
-                  setShowImproveAll(true);
-                }}
-              >
-                <Ico name="sparkle" /> Improve
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                disabled={selected.size === 0 || bulkBusy}
-                onClick={() => setShowBulkEdit(true)}
-              >
-                <Ico name="pencil" /> Edit fields
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                disabled={selected.size === 0 || bulkBusy}
-                onClick={bulkDuplicate}
-              >
-                <Ico name="copy" /> Duplicate
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                disabled={selected.size === 0 || bulkBusy}
-                onClick={() => setShowBulkMove(true)}
-              >
-                <Ico name="move" /> Move
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                style={{ color: 'var(--err)' }}
-                disabled={selected.size === 0 || bulkBusy}
-                onClick={bulkDelete}
-              >
-                <Ico name="trash" /> Delete
-              </button>
+              <Gate allowed={canEdit}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={selected.size === 0 || bulkBusy || !activeNode}
+                  title="Improve the selected test cases with AI"
+                  onClick={() => {
+                    setImproveCases(
+                      cases
+                        .filter(c => selected.has(c.id))
+                        .map(c => ({ id: c.id, caseNum: c.caseNum, title: c.title })),
+                    );
+                    setShowImproveAll(true);
+                  }}
+                >
+                  <Ico name="sparkle" /> Improve
+                </button>
+              </Gate>
+              <Gate allowed={canEdit}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={selected.size === 0 || bulkBusy}
+                  onClick={() => setShowBulkEdit(true)}
+                >
+                  <Ico name="pencil" /> Edit fields
+                </button>
+              </Gate>
+              <Gate allowed={canEdit}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={selected.size === 0 || bulkBusy}
+                  onClick={bulkDuplicate}
+                >
+                  <Ico name="copy" /> Duplicate
+                </button>
+              </Gate>
+              <Gate allowed={canEdit}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={selected.size === 0 || bulkBusy}
+                  onClick={() => setShowBulkMove(true)}
+                >
+                  <Ico name="move" /> Move
+                </button>
+              </Gate>
+              <Gate allowed={canEdit}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  style={{ color: 'var(--err)' }}
+                  disabled={selected.size === 0 || bulkBusy}
+                  onClick={bulkDelete}
+                >
+                  <Ico name="trash" /> Delete
+                </button>
+              </Gate>
             </div>
             <div className="tb-group">
               <FilterSelect
@@ -1673,40 +1714,42 @@ export function TestCaseList({
                       </span>
                     </div>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => {
-                          if (activeNode.kind === 'suite')
-                            startRename('rename-suite', activeNode.suite.id, activeNode.suite.name);
-                          else if (activeNode.kind === 'module')
-                            startRename(
-                              'rename-module',
-                              activeNode.module.id,
-                              activeNode.module.name,
-                            );
-                          else
-                            startRename(
-                              'rename-portal',
-                              activeNode.portal.id,
-                              activeNode.portal.name,
-                            );
-                        }}
-                      >
-                        Edit {activeNode.kind === 'suite' ? 'section' : activeNode.kind}
-                      </button>
+                      <Gate allowed={canEdit}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => {
+                            if (activeNode.kind === 'suite')
+                              startRename(
+                                'rename-suite',
+                                activeNode.suite.id,
+                                activeNode.suite.name,
+                              );
+                            else if (activeNode.kind === 'module')
+                              startRename(
+                                'rename-module',
+                                activeNode.module.id,
+                                activeNode.module.name,
+                              );
+                            else
+                              startRename(
+                                'rename-portal',
+                                activeNode.portal.id,
+                                activeNode.portal.name,
+                              );
+                          }}
+                        >
+                          Edit {activeNode.kind === 'suite' ? 'section' : activeNode.kind}
+                        </button>
+                      </Gate>
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm"
                         title="Copy a link to this folder"
                         onClick={async () => {
-                          const id =
-                            activeNode.kind === 'suite'
-                              ? activeNode.suite.id
-                              : activeNode.kind === 'module'
-                                ? activeNode.module.id
-                                : activeNode.portal.id;
-                          const url = folderUrl(activeNode.kind, id);
+                          const url = projectSlug
+                            ? window.location.origin + folderPath(projectSlug, folderNames)
+                            : window.location.href;
                           try {
                             await navigator.clipboard.writeText(url);
                             setFolderLinkCopied(true);
@@ -1718,21 +1761,25 @@ export function TestCaseList({
                       >
                         {folderLinkCopied ? 'Link copied' : 'Copy link'}
                       </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => setQuickAdd('')}
-                        title="Type a title and press Enter to add a draft case"
-                      >
-                        Quick add
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => setShowNewCase(true)}
-                      >
-                        <Ico name="plus" /> New case
-                      </button>
+                      <Gate allowed={canEdit}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => setQuickAdd('')}
+                          title="Type a title and press Enter to add a draft case"
+                        >
+                          Quick add
+                        </button>
+                      </Gate>
+                      <Gate allowed={canEdit}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setShowNewCase(true)}
+                        >
+                          <Ico name="plus" /> New case
+                        </button>
+                      </Gate>
                     </div>
                   </div>
 
@@ -1829,7 +1876,7 @@ export function TestCaseList({
                             </button>
                             <a
                               className="cid cid-link"
-                              href={caseHref(tc.caseNum)}
+                              href={projectSlug ? casePath(projectSlug, tc.caseNum, tc.title) : '#'}
                               title={`${caseCode(tc.caseNum)} — right-click to copy the link`}
                               onClick={e => {
                                 // Ctrl / Cmd / middle click opens the link in a new tab; a plain

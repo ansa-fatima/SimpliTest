@@ -1,7 +1,8 @@
 'use client';
 
+import { Gate } from '@/components/ui/Gate';
+import { useMyPermissions } from '@/hooks/useMyPermissions';
 import { caseCode } from '@/components/features/tc-helpers';
-import { caseUrl } from '@/lib/caseLink';
 import { useEffect, useState } from 'react';
 import { TestCase, RunResult } from '@/types';
 import { api } from '@/lib/client';
@@ -109,6 +110,8 @@ export function TestCaseView({
   }, [tc.apiId]);
 
   const [showCopyTo, setShowCopyTo] = useState(false);
+  const { can } = useMyPermissions(projectId ?? null);
+  const canEdit = can('manageTestCases');
   const [linkCopied, setLinkCopied] = useState(false);
   const [showAi, setShowAi] = useState(false);
   const [copying, setCopying] = useState(false);
@@ -190,11 +193,11 @@ export function TestCaseView({
                   type="button"
                   onClick={async () => {
                     try {
-                      await navigator.clipboard.writeText(caseUrl(tc.caseNum!));
+                      await navigator.clipboard.writeText(window.location.href);
                       setLinkCopied(true);
                       setTimeout(() => setLinkCopied(false), 2000);
                     } catch {
-                      window.prompt('Copy this link:', caseUrl(tc.caseNum!));
+                      window.prompt('Copy this link:', window.location.href);
                     }
                   }}
                   className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2"
@@ -203,52 +206,60 @@ export function TestCaseView({
                   {linkCopied ? 'Link copied' : 'Copy link'}
                 </button>
               ) : null}
-              <button
-                type="button"
-                onClick={() => setShowCopyTo(true)}
-                className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2"
-              >
-                <i className="ti ti-copy text-[15px]" />
-                Copy
-              </button>
-              {tc.apiId && (
+              <Gate allowed={canEdit}>
                 <button
                   type="button"
-                  onClick={() => setShowAi(true)}
-                  aria-label="Improve with AI"
-                  className="inline-flex items-center gap-1.5 rounded-[7px] border border-primary/30 bg-primary-light px-3 py-[7px] text-[13px] font-medium text-primary-text transition-colors hover:opacity-90"
+                  onClick={() => setShowCopyTo(true)}
+                  className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] text-text transition-colors hover:bg-surface-2"
                 >
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="14"
-                    height="14"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 2L14.5 9.5 22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z" />
-                  </svg>
-                  Improve<span className="hidden sm:inline"> with AI</span>
+                  <i className="ti ti-copy text-[15px]" />
+                  Copy
                 </button>
+              </Gate>
+              {tc.apiId && (
+                <Gate allowed={canEdit}>
+                  <button
+                    type="button"
+                    onClick={() => setShowAi(true)}
+                    aria-label="Improve with AI"
+                    className="inline-flex items-center gap-1.5 rounded-[7px] border border-primary/30 bg-primary-light px-3 py-[7px] text-[13px] font-medium text-primary-text transition-colors hover:opacity-90"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="14"
+                      height="14"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 2L14.5 9.5 22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z" />
+                    </svg>
+                    Improve<span className="hidden sm:inline"> with AI</span>
+                  </button>
+                </Gate>
               )}
-              <button
-                type="button"
-                onClick={onEdit}
-                className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] font-medium text-text transition-colors hover:bg-surface-2"
-              >
-                <i className="ti ti-pencil text-[15px]" />
-                Edit
-              </button>
-              <button
-                type="button"
-                onClick={onDelete}
-                title="Delete test case"
-                aria-label="Delete test case"
-                className="flex h-[33px] w-[33px] flex-shrink-0 items-center justify-center rounded-[7px] border border-danger/20 bg-danger-bg text-danger transition-colors hover:bg-danger/10"
-              >
-                <i className="ti ti-trash text-[15px]" />
-              </button>
+              <Gate allowed={canEdit}>
+                <button
+                  type="button"
+                  onClick={onEdit}
+                  className="inline-flex items-center gap-1.5 rounded-[7px] border border-border bg-surface px-3 py-[7px] text-[13px] font-medium text-text transition-colors hover:bg-surface-2"
+                >
+                  <i className="ti ti-pencil text-[15px]" />
+                  Edit
+                </button>
+              </Gate>
+              <Gate allowed={canEdit}>
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  title="Delete test case"
+                  aria-label="Delete test case"
+                  className="flex h-[33px] w-[33px] flex-shrink-0 items-center justify-center rounded-[7px] border border-danger/20 bg-danger-bg text-danger transition-colors hover:bg-danger/10"
+                >
+                  <i className="ti ti-trash text-[15px]" />
+                </button>
+              </Gate>
             </div>
           </div>
 

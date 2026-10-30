@@ -1,3 +1,4 @@
+import { bodyOf, guardWrite, str } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
 
@@ -34,6 +35,8 @@ export async function GET(req: Request) {
 // POST /api/qa-portals -- { name, projectId }
 export async function POST(req: Request) {
   try {
+    const denied = await guardWrite('settings', async () => str((await bodyOf(req))?.projectId));
+    if (denied) return denied;
     const body = await parseJson<{ name?: string; projectId?: string }>(req);
     const name = body?.name?.trim();
     const projectId = body?.projectId?.trim();

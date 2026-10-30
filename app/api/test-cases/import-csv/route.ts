@@ -1,3 +1,4 @@
+import { bodyOf, guardWrite, str } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { Prisma } from '@prisma/client';
 import { ok, bad, parseJson, serverError } from '@/lib/api';
@@ -39,6 +40,10 @@ interface ImportBody {
 
 export async function POST(req: Request) {
   try {
+    const denied = await guardWrite('manageTestCases', async () =>
+      str((await bodyOf(req))?.projectId),
+    );
+    if (denied) return denied;
     const body = await parseJson<ImportBody>(req);
     if (!body?.projectId) return bad('projectId is required');
     if (!body?.csv || typeof body.csv !== 'string')

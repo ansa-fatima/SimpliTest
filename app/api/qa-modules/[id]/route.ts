@@ -1,3 +1,4 @@
+import { guardWrite, projectOfQaModule } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
@@ -22,6 +23,8 @@ export async function GET(_req: Request, { params }: Ctx) {
 // PATCH /api/qa-modules/:id -- rename.
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('settings', () => projectOfQaModule(params.id));
+    if (denied) return denied;
     const body = await parseJson<{ name?: string }>(req);
     const name = body?.name?.trim();
     if (!name) return bad('name is required');
@@ -39,6 +42,8 @@ export async function PATCH(req: Request, { params }: Ctx) {
 // DELETE /api/qa-modules/:id -- cascades to features.
 export async function DELETE(_req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('settings', () => projectOfQaModule(params.id));
+    if (denied) return denied;
     await prisma.qaModule.delete({ where: { id: params.id } });
     return ok({ deleted: true });
   } catch (e) {

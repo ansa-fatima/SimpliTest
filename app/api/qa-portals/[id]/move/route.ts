@@ -1,3 +1,4 @@
+import { guardWrite, projectOfQaPortal } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
@@ -10,6 +11,8 @@ interface Ctx {
 // project. See /api/qa-modules/:id/move for the per-portal twin.
 export async function POST(req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('settings', () => projectOfQaPortal(params.id));
+    if (denied) return denied;
     const body = await parseJson<{ direction?: 'up' | 'down' }>(req);
     const direction = body?.direction;
     if (direction !== 'up' && direction !== 'down') {

@@ -1,3 +1,4 @@
+import { guardWrite, projectOfQaModule } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
 
@@ -13,6 +14,8 @@ interface Ctx {
 // compare.
 export async function POST(req: Request, { params }: Ctx) {
   try {
+    const denied = await guardWrite('settings', () => projectOfQaModule(params.id));
+    if (denied) return denied;
     const body = await parseJson<{ direction?: 'up' | 'down' }>(req);
     const direction = body?.direction;
     if (direction !== 'up' && direction !== 'down') {

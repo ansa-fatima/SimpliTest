@@ -1,5 +1,6 @@
 'use client';
 
+import { useMyPermissions } from '@/hooks/useMyPermissions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { TestCycle, ApiTestRun, CycleSummary, RunResult, Module } from '@/types';
 import { api } from '@/lib/client';
@@ -643,7 +644,8 @@ function ExecPane({
   const elapsed = useElapsed();
   // A finished run stays editable on purpose: retesting a failed case after a
   // fix is the normal workflow, and the API accepts results on a Completed run.
-  const readOnly = false;
+  // Recording a result needs the "Execute Tests" permission.
+  const readOnly = !useMyPermissions(projectId).can('executeTests');
 
   const steps = stepLines(tc.steps);
   const preconditions = (tc.preconditions ?? '')

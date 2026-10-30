@@ -1,3 +1,4 @@
+import { bodyOf, guardWrite, str } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { Prisma, CycleScopeType, CycleStatus, CycleMode } from '@prisma/client';
 import { ok, bad, parseJson, prismaError, serverError } from '@/lib/api';
@@ -199,6 +200,11 @@ export async function GET(req: Request) {
 // Auto-populates one TestRun per matched test case.
 export async function POST(req: Request) {
   try {
+    const denied = await guardWrite(
+      (await bodyOf(req))?.mode === 'Manual' ? 'executeTests' : 'createCycles',
+      async () => str((await bodyOf(req))?.projectId),
+    );
+    if (denied) return denied;
     const body = await parseJson<{
       name?: string;
       description?: string;

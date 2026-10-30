@@ -1,3 +1,4 @@
+import { guardCycleWrite, guardWrite } from '@/lib/guards';
 import { prisma } from '@/lib/db';
 import { CycleStatus, CycleScopeType } from '@prisma/client';
 import { ok, bad, notFound, parseJson, prismaError, serverError } from '@/lib/api';
@@ -57,6 +58,8 @@ export async function GET(_req: Request, { params }: Ctx) {
 // Counts default to 0 if a negative or non-numeric value is sent.
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
+    const denied = await guardCycleWrite(params.id, 'edit');
+    if (denied) return denied;
     const body = await parseJson<Record<string, unknown>>(req);
     if (!body) return bad('invalid JSON body');
 
@@ -220,6 +223,8 @@ export async function PATCH(req: Request, { params }: Ctx) {
 // Use PATCH status='Archived' for soft-delete instead.
 export async function DELETE(_req: Request, { params }: Ctx) {
   try {
+    const denied = await guardCycleWrite(params.id, 'delete');
+    if (denied) return denied;
     await prisma.testCycle.delete({ where: { id: params.id } });
     return ok({ deleted: true });
   } catch (e) {

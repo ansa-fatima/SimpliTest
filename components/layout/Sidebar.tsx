@@ -58,59 +58,67 @@ export function Sidebar({
   return (
     <div className="stv3 stv3-host">
       <aside className="sidebar">
-        <SideBtn
-          active={page === 'projects'}
-          onClick={onShowProjects}
-          icon="briefcase"
-          label="Projects"
-        />
-        <SideBtn
-          active={page === 'dashboard'}
-          onClick={onShowDashboard}
-          icon="overview"
-          label="Overview"
-        />
-        <SideBtn active={page === 'todo'} onClick={onShowTodo} icon="todo" label="My to-do" />
-        <SideBtn
-          active={TESTCASE_PAGES.includes(page)}
-          onClick={onShowTestCases}
-          icon="file"
-          label="Test cases"
-        />
-        <SideBtn
-          active={TESTRUNS_BOARD_PAGES.includes(page)}
-          onClick={onShowTestRunsBoard}
-          icon="play"
-          label="Test runs"
-        />
-        <SideBtn
-          active={page === 'testPlans'}
-          onClick={onShowTestPlans}
-          icon="flag"
-          label="Test plans"
-        />
-        <SideBtn
-          active={page === 'quickLogs'}
-          onClick={onShowQuickLogs}
-          icon="zap"
-          label="Quick logs"
-        />
-        <SideBtn active={page === 'reports'} onClick={onShowReports} icon="chart" label="Reports" />
+        {/* Hovering (or tabbing into) the rail slides it open over the page, with labels. */}
+        <div className="sidebar-panel">
+          <SideBtn
+            active={page === 'projects'}
+            onClick={onShowProjects}
+            icon="briefcase"
+            label="Projects"
+          />
+          <SideBtn
+            active={page === 'dashboard'}
+            onClick={onShowDashboard}
+            icon="overview"
+            label="Overview"
+          />
+          <SideBtn active={page === 'todo'} onClick={onShowTodo} icon="todo" label="My to-do" />
+          <SideBtn
+            active={TESTCASE_PAGES.includes(page)}
+            onClick={onShowTestCases}
+            icon="file"
+            label="Test cases"
+          />
+          <SideBtn
+            active={TESTRUNS_BOARD_PAGES.includes(page)}
+            onClick={onShowTestRunsBoard}
+            icon="play"
+            label="Test runs"
+          />
+          <SideBtn
+            active={page === 'testPlans'}
+            onClick={onShowTestPlans}
+            icon="flag"
+            label="Test plans"
+          />
+          <SideBtn
+            active={page === 'quickLogs'}
+            onClick={onShowQuickLogs}
+            icon="zap"
+            label="Quick logs"
+          />
+          <SideBtn
+            active={page === 'reports'}
+            onClick={onShowReports}
+            icon="chart"
+            label="Reports"
+          />
 
-        <div className="side-divider" />
+          <div className="side-divider" />
 
-        <SideBtn
-          active={page === 'members' || page === 'roles'}
-          onClick={onShowMembers}
-          icon="users"
-          label="Teams"
-        />
-        <SideBtn
-          active={page === 'settings'}
-          onClick={onShowSettings}
-          icon="settings"
-          label="Settings"
-        />
+          <SideBtn
+            active={page === 'members' || page === 'roles'}
+            onClick={onShowMembers}
+            icon="users"
+            label="Teams"
+          />
+          <SideBtn
+            active={page === 'settings'}
+            onClick={onShowSettings}
+            icon="settings"
+            label="Settings"
+          />
+        </div>
       </aside>
     </div>
   );
@@ -136,6 +144,7 @@ function SideBtn({
       className={cn('side-btn', active && 'active')}
     >
       <SIco name={icon} />
+      <span className="side-label">{label}</span>
     </button>
   );
 }
